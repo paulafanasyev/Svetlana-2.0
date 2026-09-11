@@ -1,275 +1,99 @@
-import { useState } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { aiGateway, type AIProvider } from '../services/AIGateway';
 import {
-  Cpu, Globe, Server, Wifi, WifiOff, Check, Settings, Key,
-  Zap, Shield, Database, Cloud, HardDrive, ChevronDown, ChevronRight,
-  Plus, Trash2, TestTube, AlertCircle, CheckCircle2, X
+  Cpu, Server, Settings, Key, Zap, Cloud, HardDrive,
+  TestTube, AlertCircle, CheckCircle2, X, Plus, Trash2,
+  Loader2, Wifi, WifiOff, ArrowRight
 } from 'lucide-react';
 
-// ==================== TYPES ====================
-interface AIProvider {
-  id: string;
-  name: string;
-  type: 'online' | 'offline';
-  icon: string;
-  description: string;
-  models: string[];
-  endpoint?: string;
-  apiKeyRequired: boolean;
-  status: 'available' | 'configured' | 'error' | 'unavailable';
-}
-
-interface ProviderConfig {
-  apiKey: string;
-  endpoint: string;
-  selectedModel: string;
-  temperature: number;
-  maxTokens: number;
-  enabled: boolean;
-}
-
-// ==================== DATA ====================
-const ONLINE_PROVIDERS: AIProvider[] = [
-  {
-    id: 'openai',
-    name: 'OpenAI',
-    type: 'online',
-    icon: '🟢',
-    description: 'GPT-4o, GPT-4, GPT-3.5 Turbo',
-    models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo'],
-    apiKeyRequired: true,
-    status: 'available',
-  },
-  {
-    id: 'anthropic',
-    name: 'Anthropic',
-    type: 'online',
-    icon: '🟠',
-    description: 'Claude 3.5 Sonnet, Claude 3 Opus, Haiku',
-    models: ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'claude-3-haiku-20240307'],
-    apiKeyRequired: true,
-    status: 'available',
-  },
-  {
-    id: 'google',
-    name: 'Google AI',
-    type: 'online',
-    icon: '🔵',
-    description: 'Gemini 1.5 Pro, Gemini 1.5 Flash',
-    models: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro'],
-    apiKeyRequired: true,
-    status: 'available',
-  },
-  {
-    id: 'mistral',
-    name: 'Mistral AI',
-    type: 'online',
-    icon: '🟣',
-    description: 'Mistral Large, Medium, Small',
-    models: ['mistral-large-latest', 'mistral-medium-latest', 'mistral-small-latest', 'open-mistral-nemo'],
-    apiKeyRequired: true,
-    status: 'available',
-  },
-  {
-    id: 'groq',
-    name: 'Groq',
-    type: 'online',
-    icon: '⚡',
-    description: 'Ultra-fast inference: Llama, Mixtral',
-    models: ['llama-3.1-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
-    apiKeyRequired: true,
-    status: 'available',
-  },
-  {
-    id: 'openrouter',
-    name: 'OpenRouter',
-    type: 'online',
-    icon: '🌐',
-    description: 'Unified API for 100+ models',
-    models: ['openai/gpt-4o', 'anthropic/claude-3.5-sonnet', 'google/gemini-pro', 'meta-llama/llama-3-70b'],
-    apiKeyRequired: true,
-    status: 'available',
-  },
-  {
-    id: 'deepseek',
-    name: 'DeepSeek',
-    type: 'online',
-    icon: '🔷',
-    description: 'DeepSeek V3, DeepSeek Coder',
-    models: ['deepseek-chat', 'deepseek-coder'],
-    apiKeyRequired: true,
-    status: 'available',
-  },
+// ==================== PRESET PROVIDERS ====================
+const PRESET_PROVIDERS: Omit<AIProvider, 'enabled' | 'apiKey'>[] = [
+  // Online
+  { id: 'openai', name: 'OpenAI', type: 'online', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  { id: 'anthropic', name: 'Anthropic', type: 'online', endpoint: 'https://api.anthropic.com/v1', model: 'claude-3-5-sonnet-20241022' },
+  { id: 'google', name: 'Google AI', type: 'online', endpoint: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-1.5-flash' },
+  { id: 'mistral', name: 'Mistral AI', type: 'online', endpoint: 'https://api.mistral.ai/v1', model: 'mistral-small-latest' },
+  { id: 'groq', name: 'Groq', type: 'online', endpoint: 'https://api.groq.com/openai/v1', model: 'llama-3.1-70b-versatile' },
+  { id: 'openrouter', name: 'OpenRouter', type: 'online', endpoint: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' },
+  { id: 'deepseek', name: 'DeepSeek', type: 'online', endpoint: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  // Offline
+  { id: 'ollama', name: 'Ollama', type: 'offline', endpoint: 'http://localhost:11434', model: 'llama3.1:8b' },
+  { id: 'lmstudio', name: 'LM Studio', type: 'offline', endpoint: 'http://localhost:1234', model: 'local-model' },
+  { id: 'llamacpp', name: 'llama.cpp', type: 'offline', endpoint: 'http://localhost:8080', model: 'local-model' },
+  { id: 'localai', name: 'LocalAI', type: 'offline', endpoint: 'http://localhost:8080', model: 'gpt-4' },
+  { id: 'vllm', name: 'vLLM', type: 'offline', endpoint: 'http://localhost:8000', model: 'local-model' },
+  { id: 'textgenwebui', name: 'Text Gen WebUI', type: 'offline', endpoint: 'http://localhost:5000', model: 'local-model' },
 ];
 
-const OFFLINE_PROVIDERS: AIProvider[] = [
-  {
-    id: 'ollama',
-    name: 'Ollama',
-    type: 'offline',
-    icon: '🦙',
-    description: 'Local LLM runner — Llama, Mistral, Phi, etc.',
-    models: ['llama3.1:70b', 'llama3.1:8b', 'mistral:7b', 'phi3:14b', 'qwen2:7b', 'codellama:13b'],
-    endpoint: 'http://localhost:11434',
-    apiKeyRequired: false,
-    status: 'available',
-  },
-  {
-    id: 'lmstudio',
-    name: 'LM Studio',
-    type: 'offline',
-    icon: '🎯',
-    description: 'Desktop app for running local models',
-    models: ['Any GGUF model loaded in LM Studio'],
-    endpoint: 'http://localhost:1234',
-    apiKeyRequired: false,
-    status: 'available',
-  },
-  {
-    id: 'llamacpp',
-    name: 'llama.cpp Server',
-    type: 'offline',
-    icon: '🦄',
-    description: 'High-performance C++ inference server',
-    models: ['Any GGUF model file'],
-    endpoint: 'http://localhost:8080',
-    apiKeyRequired: false,
-    status: 'available',
-  },
-  {
-    id: 'localai',
-    name: 'LocalAI',
-    type: 'offline',
-    icon: '🏠',
-    description: 'OpenAI-compatible local API server',
-    models: ['Any supported model via config'],
-    endpoint: 'http://localhost:8080',
-    apiKeyRequired: false,
-    status: 'available',
-  },
-  {
-    id: 'vllm',
-    name: 'vLLM',
-    type: 'offline',
-    icon: '🚀',
-    description: 'High-throughput LLM serving engine',
-    models: ['Any HuggingFace model'],
-    endpoint: 'http://localhost:8000',
-    apiKeyRequired: false,
-    status: 'available',
-  },
-  {
-    id: 'textgenwebui',
-    name: 'Text Generation WebUI',
-    type: 'offline',
-    icon: '🖥️',
-    description: 'Oobabooga — Gradio-based LLM interface',
-    models: ['Any loaded model'],
-    endpoint: 'http://localhost:5000',
-    apiKeyRequired: false,
-    status: 'available',
-  },
-];
+const MODEL_OPTIONS: Record<string, string[]> = {
+  openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo'],
+  anthropic: ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'claude-3-haiku-20240307'],
+  google: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro'],
+  mistral: ['mistral-large-latest', 'mistral-medium-latest', 'mistral-small-latest', 'open-mistral-nemo'],
+  groq: ['llama-3.1-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
+  openrouter: ['openai/gpt-4o', 'anthropic/claude-3.5-sonnet', 'google/gemini-pro', 'meta-llama/llama-3-70b'],
+  deepseek: ['deepseek-chat', 'deepseek-coder'],
+  ollama: ['llama3.1:70b', 'llama3.1:8b', 'mistral:7b', 'phi3:14b', 'qwen2:7b', 'codellama:13b'],
+  lmstudio: ['local-model'],
+  llamacpp: ['local-model'],
+  localai: ['gpt-4', 'gpt-3.5-turbo'],
+  vllm: ['local-model'],
+  textgenwebui: ['local-model'],
+};
 
-// ==================== COMPONENTS ====================
-
-function ProviderCard({ provider, config, onConfigure }: {
-  provider: AIProvider;
-  config?: ProviderConfig;
-  onConfigure: (id: string) => void;
-}) {
-  const isConfigured = config?.enabled;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className={`glass-card rounded-xl p-5 transition-all hover:border-indigo-500/30 ${
-        isConfigured ? 'border-emerald-500/30' : ''
-      }`}
-    >
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">{provider.icon}</span>
-          <div>
-            <h3 className="font-semibold">{provider.name}</h3>
-            <p className="text-xs text-sv-muted">{provider.description}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {isConfigured && (
-            <span className="flex items-center gap-1 text-xs text-emerald-400">
-              <CheckCircle2 className="w-3 h-3" /> Active
-            </span>
-          )}
-          <button
-            onClick={() => onConfigure(provider.id)}
-            className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted hover:text-sv-text transition-colors"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {provider.models.slice(0, 4).map(model => (
-          <span key={model} className="px-2 py-0.5 text-xs rounded bg-white/5 border border-white/10 text-sv-muted font-mono">
-            {model}
-          </span>
-        ))}
-        {provider.models.length > 4 && (
-          <span className="px-2 py-0.5 text-xs rounded bg-white/5 border border-white/10 text-sv-muted">
-            +{provider.models.length - 4} more
-          </span>
-        )}
-      </div>
-
-      <div className="mt-3 flex items-center gap-2 text-xs">
-        {provider.type === 'offline' ? (
-          <>
-            <HardDrive className="w-3 h-3 text-cyan-400" />
-            <span className="text-cyan-400">Local</span>
-            {provider.endpoint && (
-              <span className="text-sv-muted font-mono ml-2">{provider.endpoint}</span>
-            )}
-          </>
-        ) : (
-          <>
-            <Cloud className="w-3 h-3 text-purple-400" />
-            <span className="text-purple-400">Cloud</span>
-            {provider.apiKeyRequired && (
-              <span className="text-sv-muted ml-2 flex items-center gap-1">
-                <Key className="w-3 h-3" /> API Key required
-              </span>
-            )}
-          </>
-        )}
-      </div>
-    </motion.div>
-  );
-}
-
-function ConfigModal({ provider, config, onSave, onClose }: {
-  provider: AIProvider;
-  config: ProviderConfig;
-  onSave: (config: ProviderConfig) => void;
+// ==================== CONFIG MODAL ====================
+function ConfigModal({ provider, onSave, onClose }: {
+  provider: Omit<AIProvider, 'enabled'> & { enabled?: boolean };
+  onSave: (p: AIProvider) => void;
   onClose: () => void;
 }) {
-  const [localConfig, setLocalConfig] = useState<ProviderConfig>(config);
-  const [testResult, setTestResult] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [apiKey, setApiKey] = useState(provider.apiKey || '');
+  const [endpoint, setEndpoint] = useState(provider.endpoint);
+  const [model, setModel] = useState(provider.model);
+  const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [testError, setTestError] = useState('');
 
-  const handleTest = () => {
-    setTestResult('testing');
-    setTimeout(() => {
-      if (provider.type === 'offline') {
-        // Simulate checking local endpoint
-        setTestResult(Math.random() > 0.3 ? 'success' : 'error');
+  const handleTest = async () => {
+    setTestStatus('testing');
+    setTestError('');
+
+    // Save temporarily for testing
+    const tempProvider: AIProvider = {
+      ...provider,
+      apiKey,
+      endpoint,
+      model,
+      enabled: true,
+    };
+
+    try {
+      aiGateway.addProvider(tempProvider);
+      const success = await aiGateway.testConnection(provider.id);
+      if (success) {
+        setTestStatus('success');
       } else {
-        // Simulate API key validation
-        setTestResult(localConfig.apiKey.length > 10 ? 'success' : 'error');
+        setTestStatus('error');
+        setTestError('Connection failed');
       }
-    }, 1500);
+      aiGateway.removeProvider(provider.id);
+    } catch (err: any) {
+      setTestStatus('error');
+      setTestError(err.message || 'Unknown error');
+    }
   };
+
+  const handleSave = () => {
+    onSave({
+      ...provider,
+      apiKey,
+      endpoint,
+      model,
+      enabled: true,
+    });
+  };
+
+  const models = MODEL_OPTIONS[provider.id] || [provider.model];
 
   return (
     <motion.div
@@ -285,12 +109,9 @@ function ConfigModal({ provider, config, onSave, onClose }: {
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">{provider.icon}</span>
-            <div>
-              <h3 className="text-lg font-semibold">{provider.name}</h3>
-              <p className="text-xs text-sv-muted">{provider.type === 'offline' ? 'Offline / Local' : 'Online / Cloud'}</p>
-            </div>
+          <div>
+            <h3 className="text-lg font-semibold">{provider.name}</h3>
+            <p className="text-xs text-sv-muted">{provider.type === 'offline' ? 'Offline / Local' : 'Online / Cloud API'}</p>
           </div>
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-white/10 text-sv-muted">
             <X className="w-5 h-5" />
@@ -298,104 +119,83 @@ function ConfigModal({ provider, config, onSave, onClose }: {
         </div>
 
         <div className="space-y-4">
-          {/* API Key (for online providers) */}
-          {provider.apiKeyRequired && (
+          {provider.type === 'online' && (
             <div>
               <label className="text-sm text-sv-muted mb-1 block">API Key</label>
               <div className="relative">
                 <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-sv-muted" />
                 <input
                   type="password"
-                  value={localConfig.apiKey}
-                  onChange={e => setLocalConfig({ ...localConfig, apiKey: e.target.value })}
-                  placeholder="sk-..."
+                  value={apiKey}
+                  onChange={e => setApiKey(e.target.value)}
+                  placeholder={provider.id === 'ollama' ? 'Not required' : 'sk-...'}
                   className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-sm focus:outline-none focus:border-indigo-500/50"
                 />
               </div>
+              <p className="text-xs text-sv-muted mt-1">
+                {provider.id === 'openai' && 'Get key at platform.openai.com/api-keys'}
+                {provider.id === 'anthropic' && 'Get key at console.anthropic.com'}
+                {provider.id === 'google' && 'Get key at aistudio.google.com'}
+                {provider.id === 'groq' && 'Get key at console.groq.com'}
+                {provider.id === 'openrouter' && 'Get key at openrouter.ai/keys'}
+                {provider.id === 'deepseek' && 'Get key at platform.deepseek.com'}
+                {provider.id === 'mistral' && 'Get key at console.mistral.ai'}
+              </p>
             </div>
           )}
 
-          {/* Endpoint (for offline providers) */}
-          {provider.type === 'offline' && (
-            <div>
-              <label className="text-sm text-sv-muted mb-1 block">Endpoint URL</label>
-              <div className="relative">
-                <Server className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-sv-muted" />
-                <input
-                  type="text"
-                  value={localConfig.endpoint}
-                  onChange={e => setLocalConfig({ ...localConfig, endpoint: e.target.value })}
-                  placeholder="http://localhost:11434"
-                  className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-sm font-mono focus:outline-none focus:border-indigo-500/50"
-                />
-              </div>
+          <div>
+            <label className="text-sm text-sv-muted mb-1 block">Endpoint URL</label>
+            <div className="relative">
+              <Server className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-sv-muted" />
+              <input
+                type="text"
+                value={endpoint}
+                onChange={e => setEndpoint(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-sm font-mono focus:outline-none focus:border-indigo-500/50"
+              />
             </div>
-          )}
+          </div>
 
-          {/* Model Selection */}
           <div>
             <label className="text-sm text-sv-muted mb-1 block">Model</label>
             <select
-              value={localConfig.selectedModel}
-              onChange={e => setLocalConfig({ ...localConfig, selectedModel: e.target.value })}
-              className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-sm focus:outline-none focus:border-indigo-500/50 appearance-none"
+              value={model}
+              onChange={e => setModel(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-sm focus:outline-none focus:border-indigo-500/50"
             >
-              {provider.models.map(model => (
-                <option key={model} value={model} className="bg-sv-darker">{model}</option>
+              {models.map(m => (
+                <option key={m} value={m} className="bg-sv-darker">{m}</option>
               ))}
             </select>
-          </div>
-
-          {/* Temperature */}
-          <div>
-            <label className="text-sm text-sv-muted mb-1 block">Temperature: {localConfig.temperature}</label>
-            <input
-              type="range"
-              min="0"
-              max="2"
-              step="0.1"
-              value={localConfig.temperature}
-              onChange={e => setLocalConfig({ ...localConfig, temperature: parseFloat(e.target.value) })}
-              className="w-full accent-indigo-500"
-            />
-          </div>
-
-          {/* Max Tokens */}
-          <div>
-            <label className="text-sm text-sv-muted mb-1 block">Max Tokens: {localConfig.maxTokens}</label>
-            <input
-              type="range"
-              min="256"
-              max="128000"
-              step="256"
-              value={localConfig.maxTokens}
-              onChange={e => setLocalConfig({ ...localConfig, maxTokens: parseInt(e.target.value) })}
-              className="w-full accent-indigo-500"
-            />
+            {provider.id === 'ollama' && (
+              <p className="text-xs text-sv-muted mt-1">
+                Install Ollama: <code className="text-cyan-400">curl fsSL https://ollama.com/install.sh | sh</code>
+                <br />Pull model: <code className="text-cyan-400">ollama pull llama3.1:8b</code>
+              </p>
+            )}
           </div>
 
           {/* Test Connection */}
           <button
             onClick={handleTest}
-            disabled={testResult === 'testing'}
+            disabled={testStatus === 'testing'}
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-sm transition-colors"
           >
-            {testResult === 'testing' ? (
+            {testStatus === 'testing' ? (
               <>
-                <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}>
-                  <Settings className="w-4 h-4" />
-                </motion.div>
+                <Loader2 className="w-4 h-4 animate-spin" />
                 Testing connection...
               </>
-            ) : testResult === 'success' ? (
+            ) : testStatus === 'success' ? (
               <>
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                 <span className="text-emerald-400">Connection successful!</span>
               </>
-            ) : testResult === 'error' ? (
+            ) : testStatus === 'error' ? (
               <>
                 <AlertCircle className="w-4 h-4 text-red-400" />
-                <span className="text-red-400">Connection failed</span>
+                <span className="text-red-400">{testError || 'Connection failed'}</span>
               </>
             ) : (
               <>
@@ -406,7 +206,6 @@ function ConfigModal({ provider, config, onSave, onClose }: {
           </button>
         </div>
 
-        {/* Actions */}
         <div className="flex gap-3 mt-6">
           <button
             onClick={onClose}
@@ -415,7 +214,7 @@ function ConfigModal({ provider, config, onSave, onClose }: {
             Cancel
           </button>
           <button
-            onClick={() => onSave({ ...localConfig, enabled: true })}
+            onClick={handleSave}
             className="flex-1 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors"
           >
             Save & Enable
@@ -426,36 +225,96 @@ function ConfigModal({ provider, config, onSave, onClose }: {
   );
 }
 
+// ==================== PROVIDER CARD ====================
+function ProviderCard({ provider, onConfigure, onRemove, isActive }: {
+  provider: AIProvider;
+  onConfigure: () => void;
+  onRemove: () => void;
+  isActive: boolean;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={`glass-card rounded-xl p-5 transition-all hover:border-indigo-500/30 ${
+        isActive ? 'border-emerald-500/30 shadow-lg shadow-emerald-500/5' : ''
+      }`}
+    >
+      <div className="flex items-start justify-between">
+        <div className="flex items-center gap-3">
+          <div className={`p-2 rounded-lg ${provider.type === 'offline' ? 'bg-cyan-500/10' : 'bg-purple-500/10'}`}>
+            {provider.type === 'offline' ? <HardDrive className="w-5 h-5 text-cyan-400" /> : <Cloud className="w-5 h-5 text-purple-400" />}
+          </div>
+          <div>
+            <h3 className="font-semibold">{provider.name}</h3>
+            <p className="text-xs text-sv-muted font-mono">{provider.model}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          {isActive && (
+            <span className="flex items-center gap-1 px-2 py-0.5 text-xs rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+              <Zap className="w-3 h-3" /> Active
+            </span>
+          )}
+          <button onClick={onConfigure} className="p-1.5 rounded-lg hover:bg-white/10 text-sv-muted">
+            <Settings className="w-4 h-4" />
+          </button>
+          <button onClick={onRemove} className="p-1.5 rounded-lg hover:bg-red-500/10 text-sv-muted hover:text-red-400">
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center gap-2 text-xs">
+        <span className={`px-2 py-0.5 rounded ${provider.type === 'offline' ? 'bg-cyan-500/10 text-cyan-400' : 'bg-purple-500/10 text-purple-400'}`}>
+          {provider.type === 'offline' ? 'Local' : 'Cloud'}
+        </span>
+        <span className="text-sv-muted font-mono truncate">{provider.endpoint}</span>
+      </div>
+    </motion.div>
+  );
+}
+
 // ==================== MAIN PAGE ====================
 export default function AIProvidersPage() {
   const [activeTab, setActiveTab] = useState<'online' | 'offline'>('online');
-  const [configs, setConfigs] = useState<Record<string, ProviderConfig>>({});
-  const [configuringProvider, setConfiguringProvider] = useState<AIProvider | null>(null);
+  const [providers, setProviders] = useState<AIProvider[]>(aiGateway.getAllProviders());
+  const [configuringProvider, setConfiguringProvider] = useState<(Omit<AIProvider, 'enabled'> & { enabled?: boolean }) | null>(null);
 
-  const allProviders = activeTab === 'online' ? ONLINE_PROVIDERS : OFFLINE_PROVIDERS;
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setProviders(aiGateway.getAllProviders());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
-  const handleConfigure = (providerId: string) => {
-    const provider = [...ONLINE_PROVIDERS, ...OFFLINE_PROVIDERS].find(p => p.id === providerId);
-    if (provider) {
-      setConfiguringProvider(provider);
+  const activeProvider = aiGateway.getActiveProvider();
+
+  const handleAddProvider = (presetId: string) => {
+    const preset = PRESET_PROVIDERS.find(p => p.id === presetId);
+    if (preset) {
+      setConfiguringProvider({ ...preset, apiKey: '' });
     }
   };
 
-  const handleSaveConfig = (config: ProviderConfig) => {
-    if (configuringProvider) {
-      setConfigs(prev => ({ ...prev, [configuringProvider.id]: config }));
-      setConfiguringProvider(null);
-    }
+  const handleSaveProvider = (provider: AIProvider) => {
+    aiGateway.addProvider(provider);
+    setProviders(aiGateway.getAllProviders());
+    setConfiguringProvider(null);
   };
 
-  const getDefaultConfig = (provider: AIProvider): ProviderConfig => ({
-    apiKey: '',
-    endpoint: provider.endpoint || '',
-    selectedModel: provider.models[0] || '',
-    temperature: 0.7,
-    maxTokens: 4096,
-    enabled: false,
-  });
+  const handleRemoveProvider = (id: string) => {
+    aiGateway.removeProvider(id);
+    setProviders(aiGateway.getAllProviders());
+  };
+
+  const handleConfigureExisting = (provider: AIProvider) => {
+    setConfiguringProvider(provider);
+  };
+
+  const availablePresets = PRESET_PROVIDERS.filter(
+    p => p.type === activeTab && !providers.find(ep => ep.id === p.id)
+  );
 
   return (
     <div className="space-y-6">
@@ -463,30 +322,45 @@ export default function AIProvidersPage() {
         <Cpu className="w-6 h-6 text-indigo-400" />
         <h2 className="text-2xl font-bold">AI Providers</h2>
       </div>
-      <p className="text-sv-muted">Configure online cloud APIs or offline local models for Svetlana 2.0</p>
+      <p className="text-sv-muted">Configure real AI providers. Chat with Svetlana uses these connections.</p>
 
-      {/* Active Provider Display */}
-      {Object.values(configs).filter(c => c.enabled).length > 0 && (
+      {/* Active Provider */}
+      {activeProvider && (
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           className="glass-card rounded-xl p-4 border border-emerald-500/20"
         >
-          <h3 className="text-sm font-medium text-emerald-400 mb-2 flex items-center gap-2">
-            <Zap className="w-4 h-4" />
-            Active Providers
-          </h3>
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(configs).filter(([, c]) => c.enabled).map(([id, config]) => {
-              const provider = [...ONLINE_PROVIDERS, ...OFFLINE_PROVIDERS].find(p => p.id === id);
-              return provider ? (
-                <div key={id} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                  <span>{provider.icon}</span>
-                  <span className="text-sm">{provider.name}</span>
-                  <span className="text-xs text-sv-muted font-mono">{config.selectedModel}</span>
-                </div>
-              ) : null;
-            })}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Zap className="w-5 h-5 text-emerald-400" />
+              <div>
+                <h3 className="text-sm font-medium text-emerald-400">Active Provider</h3>
+                <p className="text-xs text-sv-muted">{activeProvider.name} — {activeProvider.model}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1 text-xs text-emerald-400">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                Connected
+              </span>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {!activeProvider && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass-card rounded-xl p-4 border border-yellow-500/20"
+        >
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-yellow-400" />
+            <div>
+              <h3 className="text-sm font-medium text-yellow-400">No Active Provider</h3>
+              <p className="text-xs text-sv-muted">Configure a provider below to enable AI chat with Svetlana</p>
+            </div>
           </div>
         </motion.div>
       )}
@@ -502,7 +376,7 @@ export default function AIProvidersPage() {
           }`}
         >
           <Cloud className="w-4 h-4" />
-          Online / Cloud ({ONLINE_PROVIDERS.length})
+          Online / Cloud
         </button>
         <button
           onClick={() => setActiveTab('offline')}
@@ -513,78 +387,112 @@ export default function AIProvidersPage() {
           }`}
         >
           <HardDrive className="w-4 h-4" />
-          Offline / Local ({OFFLINE_PROVIDERS.length})
+          Offline / Local
         </button>
       </div>
 
-      {/* Provider Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {allProviders.map((provider, i) => (
-          <ProviderCard
-            key={provider.id}
-            provider={provider}
-            config={configs[provider.id]}
-            onConfigure={handleConfigure}
-          />
-        ))}
-      </div>
+      {/* Configured Providers */}
+      {providers.filter(p => p.type === activeTab).length > 0 && (
+        <div>
+          <h3 className="text-sm font-medium text-sv-muted mb-3">Configured</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {providers.filter(p => p.type === activeTab).map(provider => (
+              <ProviderCard
+                key={provider.id}
+                provider={provider}
+                isActive={activeProvider?.id === provider.id}
+                onConfigure={() => handleConfigureExisting(provider)}
+                onRemove={() => handleRemoveProvider(provider.id)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Available Providers */}
+      {availablePresets.length > 0 && (
+        <div>
+          <h3 className="text-sm font-medium text-sv-muted mb-3">
+            {providers.filter(p => p.type === activeTab).length > 0 ? 'Add Another' : 'Available Providers'}
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {availablePresets.map(preset => (
+              <motion.button
+                key={preset.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                onClick={() => handleAddProvider(preset.id)}
+                className="p-4 rounded-xl glass-card text-left hover:border-indigo-500/30 transition-all group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className={`p-2 rounded-lg ${preset.type === 'offline' ? 'bg-cyan-500/10' : 'bg-purple-500/10'} group-hover:scale-110 transition-transform`}>
+                    {preset.type === 'offline' ? <HardDrive className="w-4 h-4 text-cyan-400" /> : <Cloud className="w-4 h-4 text-purple-400" />}
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="text-sm font-medium">{preset.name}</h4>
+                    <p className="text-xs text-sv-muted">{preset.model}</p>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-sv-muted group-hover:text-indigo-400 transition-colors" />
+                </div>
+              </motion.button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Quick Start Guide */}
       <div className="glass-card rounded-xl p-6">
-        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Settings className="w-5 h-5 text-sv-muted" />
-          Quick Setup Guide
-        </h3>
+        <h3 className="text-lg font-semibold mb-4">Quick Start</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <h4 className="text-sm font-medium text-purple-400 mb-2 flex items-center gap-2">
-              <Cloud className="w-4 h-4" /> Online Providers
+              <Cloud className="w-4 h-4" /> Cloud Providers
             </h4>
             <ol className="text-sm text-sv-muted space-y-1.5 list-decimal list-inside">
-              <li>Choose a cloud provider (OpenAI, Anthropic, etc.)</li>
-              <li>Get an API key from the provider's website</li>
-              <li>Click the settings icon on the provider card</li>
-              <li>Enter your API key and select a model</li>
-              <li>Click "Test Connection" to verify</li>
+              <li>Click a cloud provider card above</li>
+              <li>Enter your API key</li>
+              <li>Select a model</li>
+              <li>Click "Test Connection"</li>
               <li>Click "Save & Enable"</li>
+              <li>Go to "Аватар & Голос" to chat!</li>
             </ol>
           </div>
           <div>
             <h4 className="text-sm font-medium text-cyan-400 mb-2 flex items-center gap-2">
-              <HardDrive className="w-4 h-4" /> Offline Providers
+              <HardDrive className="w-4 h-4" /> Offline (Ollama)
             </h4>
             <ol className="text-sm text-sv-muted space-y-1.5 list-decimal list-inside">
-              <li>Install Ollama: <span className="font-mono text-cyan-300">curl fsSL https://ollama.com/install.sh | sh</span></li>
-              <li>Pull a model: <span className="font-mono text-cyan-300">ollama pull llama3.1:8b</span></li>
-              <li>Ollama starts automatically on port 11434</li>
-              <li>Click settings on the Ollama card</li>
-              <li>Select your model and test connection</li>
-              <li>Save & enable — works without internet!</li>
+              <li>Install: <code className="text-cyan-300 text-xs">curl fsSL https://ollama.com/install.sh | sh</code></li>
+              <li>Pull: <code className="text-cyan-300 text-xs">ollama pull llama3.1:8b</code></li>
+              <li>Click "Ollama" card above</li>
+              <li>Select model, test connection</li>
+              <li>Save & Enable — works offline!</li>
+              <li>No API key needed</li>
             </ol>
           </div>
         </div>
       </div>
 
-      {/* Comparison Table */}
+      {/* Comparison */}
       <div className="glass-card rounded-xl p-6">
-        <h3 className="text-lg font-semibold mb-4">Online vs Offline Comparison</h3>
+        <h3 className="text-lg font-semibold mb-4">Online vs Offline</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10">
                 <th className="text-left py-2 px-3 text-sv-muted">Feature</th>
-                <th className="text-left py-2 px-3 text-purple-400">Online / Cloud</th>
-                <th className="text-left py-2 px-3 text-cyan-400">Offline / Local</th>
+                <th className="text-left py-2 px-3 text-purple-400">Cloud</th>
+                <th className="text-left py-2 px-3 text-cyan-400">Local</th>
               </tr>
             </thead>
             <tbody className="text-sv-muted">
               {[
-                ['Privacy', 'Data sent to cloud', '100% local, private'],
-                ['Speed', 'Depends on network', 'Depends on hardware'],
-                ['Cost', 'Pay per token', 'Free (hardware cost)'],
-                ['Model Quality', 'State-of-the-art', 'Good (7B-70B range)'],
-                ['Availability', 'Requires internet', 'Works offline'],
-                ['GPU Required', 'No', 'Recommended (8GB+ VRAM)'],
+                ['Privacy', 'Data sent to cloud', '100% local'],
+                ['Speed', 'Network dependent', 'Hardware dependent'],
+                ['Cost', 'Pay per token', 'Free (hardware)'],
+                ['Quality', 'State-of-the-art', 'Good (7B-70B)'],
+                ['Offline', '❌', '✅'],
+                ['GPU', 'Not needed', 'Recommended (8GB+)'],
               ].map(([feature, online, offline]) => (
                 <tr key={feature} className="border-b border-white/5">
                   <td className="py-2 px-3 font-medium text-sv-text">{feature}</td>
@@ -598,14 +506,15 @@ export default function AIProvidersPage() {
       </div>
 
       {/* Config Modal */}
-      {configuringProvider && (
-        <ConfigModal
-          provider={configuringProvider}
-          config={configs[configuringProvider.id] || getDefaultConfig(configuringProvider)}
-          onSave={handleSaveConfig}
-          onClose={() => setConfiguringProvider(null)}
-        />
-      )}
+      <AnimatePresence>
+        {configuringProvider && (
+          <ConfigModal
+            provider={configuringProvider}
+            onSave={handleSaveProvider}
+            onClose={() => setConfiguringProvider(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

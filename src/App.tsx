@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import AIProvidersPage from './pages/AIProvidersPage';
 import AvatarPage from './pages/AvatarPage';
+import { aiGateway } from './services/AIGateway';
 
 // ==================== TYPES ====================
 type Page = 'dashboard' | 'architecture' | 'pipeline' | 'platforms' | 'security' | 'forensic' | 'research' | 'demo' | 'reports' | 'providers' | 'avatar';
@@ -175,7 +176,7 @@ function DashboardPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard label="Core Modules" value={13} icon={Cpu} color="text-indigo-400" />
-        <MetricCard label="AI Providers" value={13} icon={Cpu} color="text-purple-400" />
+        <MetricCard label="AI Providers" value={aiGateway.getAllProviders().length} icon={Cpu} color="text-purple-400" />
         <MetricCard label="Platforms" value={4} icon={Globe} color="text-cyan-400" />
         <MetricCard label="Avatar Emotions" value={6} icon={Sparkles} color="text-pink-400" />
       </div>
@@ -239,6 +240,41 @@ function DashboardPage() {
             <h4 className="font-medium text-sm text-cyan-300">🎤 Голосовое управление</h4>
             <p className="text-xs text-sv-muted mt-1">Speech-to-Text + Text-to-Speech на русском языке</p>
           </div>
+        </div>
+      </motion.div>
+
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }} className="glass-card rounded-xl p-6 border border-indigo-500/20">
+        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+          <Zap className="w-5 h-5 text-yellow-400" />
+          Quick Start — Подключите AI
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="p-4 rounded-lg bg-white/5 border border-white/10">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xs font-bold">1</span>
+              <h4 className="text-sm font-medium">AI Providers</h4>
+            </div>
+            <p className="text-xs text-sv-muted">Выберите провайдер: OpenAI, Anthropic, Groq (бесплатный) или Ollama (офлайн)</p>
+          </div>
+          <div className="p-4 rounded-lg bg-white/5 border border-white/10">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xs font-bold">2</span>
+              <h4 className="text-sm font-medium">API Key</h4>
+            </div>
+            <p className="text-xs text-sv-muted">Введите API ключ и выберите модель. Нажмите "Test Connection"</p>
+          </div>
+          <div className="p-4 rounded-lg bg-white/5 border border-white/10">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xs font-bold">3</span>
+              <h4 className="text-sm font-medium">Чат с Автаром</h4>
+            </div>
+            <p className="text-xs text-sv-muted">Перейдите в "Аватар & Голос" — Светлана ответит через реальный LLM!</p>
+          </div>
+        </div>
+        <div className="mt-4 p-3 rounded-lg bg-yellow-500/5 border border-yellow-500/20">
+          <p className="text-xs text-yellow-400">
+            💡 <strong>Совет:</strong> Для быстрого старта используйте Groq (бесплатные API ключи на console.groq.com) или Ollama для полностью локальной работы без интернета.
+          </p>
         </div>
       </motion.div>
 

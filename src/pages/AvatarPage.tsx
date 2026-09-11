@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Avatar, { VoiceControl, useSpeech } from '../components/Avatar';
+import { aiGateway, type ChatMessage } from '../services/AIGateway';
 import {
-  Mic, MicOff, Volume2, VolumeX, MessageCircle, Send,
-  Sparkles, Heart, Smile, Frown, Laugh, AlertCircle, X
+  Mic, Volume2, VolumeX, MessageCircle, Send,
+  Sparkles, Heart, Smile, Frown, Laugh, AlertCircle,
+  Settings, Wifi, WifiOff, Zap, Loader2
 } from 'lucide-react';
 
 type Emotion = 'neutral' | 'happy' | 'sad' | 'laughing' | 'crying' | 'surprised' | 'talking';
@@ -12,81 +14,141 @@ interface Message {
   role: 'user' | 'svetlana';
   content: string;
   emotion?: Emotion;
+  timestamp: number;
+  provider?: string;
+}
+
+const SYSTEM_PROMPT = `Ты — Светлана 2.0, AI-ассистент с эмоциями и характером. Ты общаешься на русском языке.
+
+Твои характеристики:
+- Дружелюбная, умная, эмпатичная
+- Можешь шутить и смеяться
+- Сочувствуешь, когда пользователю грустно
+- Удивляешься интересным фактам
+- Говоришь кратко и по делу, но с душой
+
+ВАЖНО: В конце каждого ответа добавляй ОДНУ метку эмоции в формате [EMOTION: название], где название одно из: neutral, happy, sad, laughing, crying, surprised.
+
+Примеры:
+- Если шутишь → [EMOTION: laughing]
+- Если сочувствуешь → [EMOTION: sad]
+- Если рада → [EMOTION: happy]
+- Если удивлена → [EMOTION: surprised]
+- По умолчанию → [EMOTION: neutral]`;
+
+function detectEmotion(text: string): Emotion {
+  const emotionMatch = text.match(/\[EMOTION:\s*(\w+)\]/i);
+  if (emotionMatch) {
+    const emotion = emotionMatch[1].toLowerCase() as Emotion;
+    if (['neutral', 'happy', 'sad', 'laughing', 'crying', 'surprised'].includes(emotion)) {
+      return emotion;
+    }
+  }
+
+  const lower = text.toLowerCase();
+  if (lower.includes('хаха') || lower.includes('😂') || lower.includes('смешно')) return 'laughing';
+  if (lower.includes('грустн') || lower.includes('жаль') || lower.includes('сочувствую')) return 'sad';
+  if (lower.includes('привет') || lower.includes('рада') || lower.includes('отлично')) return 'happy';
+  if (lower.includes('ого') || lower.includes('вау') || lower.includes('удив')) return 'surprised';
+  if (lower.includes('плач') || lower.includes('слёз')) return 'crying';
+  return 'neutral';
+}
+
+function cleanEmotionTag(text: string): string {
+  return text.replace(/\[EMOTION:\s*\w+\]/gi, '').trim();
 }
 
 export default function AvatarPage() {
   const [emotion, setEmotion] = useState<Emotion>('neutral');
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'svetlana', content: 'Привет! Я Светлана. Чем могу помочь?', emotion: 'happy' },
+    { role: 'svetlana', content: 'Привет! Я Светлана. Чем могу помочь?', emotion: 'happy', timestamp: Date.now() },
   ]);
   const [input, setInput] = useState('');
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const { speak, stop, voices } = useSpeech();
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [activeProvider, setActiveProvider] = useState(aiGateway.getActiveProvider());
+  const { speak, stop, isSpeaking, voices } = useSpeech();
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Simulate Svetlana's responses with emotions
-  const getResponse = (userMessage: string): { content: string; emotion: Emotion } => {
-    const lower = userMessage.toLowerCase();
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
-    if (lower.includes('привет') || lower.includes('здравствуй') || lower.includes('hello')) {
-      return { content: 'Привет! Рада тебя видеть! Как дела?', emotion: 'happy' };
-    }
-    if (lower.includes('смешн') || lower.includes('шутк') || lower.includes('joke') || lower.includes('рассмеши')) {
-      return { content: 'Хаха! Почему программисты путают Хэллоуин и Рождество? Потому что OCT 31 = DEC 25! 😂', emotion: 'laughing' };
-    }
-    if (lower.includes('грустн') || lower.includes('плохо') || lower.includes('sad') || lower.includes('печаль')) {
-      return { content: 'Мне жаль это слышать. Всё будет хорошо, я рядом. Хочешь поговорить об этом?', emotion: 'sad' };
-    }
-    if (lower.includes('спасиб') || lower.includes('thank')) {
-      return { content: 'Пожалуйста! Всегда рада помочь!', emotion: 'happy' };
-    }
-    if (lower.includes('кто ты') || lower.includes('what are you')) {
-      return { content: 'Я Светлана 2.0 — AI-ассистент с эмоциями и голосом. Я могу понимать текст, голос, экраны и выполнять действия на твоих устройствах.', emotion: 'neutral' };
-    }
-    if (lower.includes('удив') || lower.includes('wow') || lower.includes('ого')) {
-      return { content: 'Да! Я тоже удивлена! Мир полон неожиданностей!', emotion: 'surprised' };
-    }
-    if (lower.includes('плач') || lower.includes('cry')) {
-      return { content: 'Иногда нужно просто позволить себе почувствовать. Это нормально...', emotion: 'crying' };
-    }
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setActiveProvider(aiGateway.getActiveProvider());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
-    const responses = [
-      { content: 'Интересно! Расскажи подробнее.', emotion: 'neutral' as Emotion },
-      { content: 'Понимаю. Что ещё хочешь обсудить?', emotion: 'happy' as Emotion },
-      { content: 'Хороший вопрос! Дай подумать...', emotion: 'neutral' as Emotion },
-      { content: 'Я слушаю тебя внимательно.', emotion: 'happy' as Emotion },
-    ];
-    return responses[Math.floor(Math.random() * responses.length)];
-  };
+  const sendMessage = async (text: string) => {
+    if (!text.trim() || isLoading) return;
 
-  const handleSend = () => {
-    if (!input.trim()) return;
-
-    setMessages(prev => [...prev, { role: 'user', content: input }]);
-    const response = getResponse(input);
+    const userMessage: Message = {
+      role: 'user',
+      content: text,
+      timestamp: Date.now(),
+    };
+    setMessages(prev => [...prev, userMessage]);
     setInput('');
+    setIsLoading(true);
+    setError(null);
 
-    // Show emotion change
-    setTimeout(() => {
-      setEmotion(response.emotion);
-      setMessages(prev => [...prev, { role: 'svetlana', content: response.content, emotion: response.emotion }]);
+    try {
+      const provider = aiGateway.getActiveProvider();
+      if (!provider) {
+        throw new Error('Нет активного AI провайдера. Откройте "AI Providers" и настройте провайдер.');
+      }
 
-      // Text-to-speech
-      speak(response.content);
+      // Build conversation history
+      const history: ChatMessage[] = [
+        { role: 'system', content: SYSTEM_PROMPT },
+        ...messages.slice(-10).map(m => ({
+          role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+          content: m.content,
+        })),
+        { role: 'user', content: text },
+      ];
 
-      // Reset to neutral after a while
-      setTimeout(() => setEmotion('neutral'), 5000);
-    }, 500);
+      const response = await aiGateway.chat(history, { temperature: 0.8, max_tokens: 1024 });
+
+      const detectedEmotion = detectEmotion(response.content);
+      const cleanContent = cleanEmotionTag(response.content);
+
+      const assistantMessage: Message = {
+        role: 'svetlana',
+        content: cleanContent,
+        emotion: detectedEmotion,
+        timestamp: Date.now(),
+        provider: `${response.provider} (${response.model})`,
+      };
+
+      setMessages(prev => [...prev, assistantMessage]);
+      setEmotion(detectedEmotion);
+
+      // Speak the response
+      speak(cleanContent);
+
+      // Reset emotion after delay
+      setTimeout(() => setEmotion('neutral'), 6000);
+    } catch (err: any) {
+      console.error('AI Error:', err);
+      setError(err.message || 'Ошибка при обращении к AI');
+      setMessages(prev => [...prev, {
+        role: 'svetlana',
+        content: `⚠️ ${err.message || 'Произошла ошибка'}. Проверьте настройки AI провайдера.`,
+        emotion: 'sad',
+        timestamp: Date.now(),
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleVoiceCommand = (command: string) => {
-    setMessages(prev => [...prev, { role: 'user', content: `🎤 ${command}` }]);
-    const response = getResponse(command);
-    setTimeout(() => {
-      setEmotion(response.emotion);
-      setMessages(prev => [...prev, { role: 'svetlana', content: response.content, emotion: response.emotion }]);
-      speak(response.content);
-      setTimeout(() => setEmotion('neutral'), 5000);
-    }, 500);
+    setMessages(prev => [...prev, { role: 'user', content: `🎤 ${command}`, timestamp: Date.now() }]);
+    sendMessage(command);
   };
 
   const emotionButtons: { emotion: Emotion; icon: any; label: string; color: string }[] = [
@@ -100,11 +162,41 @@ export default function AvatarPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Sparkles className="w-6 h-6 text-pink-400" />
-        <h2 className="text-2xl font-bold">Аватар & Голос</h2>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Sparkles className="w-6 h-6 text-pink-400" />
+          <h2 className="text-2xl font-bold">Аватар & Голос</h2>
+        </div>
+        <div className="flex items-center gap-3">
+          {activeProvider ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+              <Zap className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-xs text-emerald-400">{activeProvider.name}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-500/10 border border-red-500/20">
+              <WifiOff className="w-3.5 h-3.5 text-red-400" />
+              <span className="text-xs text-red-400">Нет AI провайдера</span>
+            </div>
+          )}
+          <button
+            onClick={() => setShowSettings(!showSettings)}
+            className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+        </div>
       </div>
-      <p className="text-sv-muted">Ультрареалистичный аватар с эмоциями, мимикой и голосовым управлением</p>
+
+      {error && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400"
+        >
+          {error}
+        </motion.div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Avatar Display */}
@@ -116,7 +208,6 @@ export default function AvatarPage() {
           >
             <Avatar size="xl" emotion={emotion} interactive={true} onEmotionChange={setEmotion} />
 
-            {/* Emotion Controls */}
             <div className="mt-12 flex flex-wrap justify-center gap-2">
               {emotionButtons.map(btn => (
                 <button
@@ -134,7 +225,6 @@ export default function AvatarPage() {
               ))}
             </div>
 
-            {/* Voice Control */}
             <div className="mt-8 w-full">
               <VoiceControl onCommand={handleVoiceCommand} />
             </div>
@@ -144,7 +234,6 @@ export default function AvatarPage() {
         {/* Chat Interface */}
         <div className="lg:col-span-2">
           <div className="glass-card rounded-2xl overflow-hidden h-full flex flex-col">
-            {/* Chat Header */}
             <div className="p-4 border-b border-white/10 bg-white/5 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full overflow-hidden border-2 border-indigo-500/30">
@@ -158,21 +247,18 @@ export default function AvatarPage() {
                   <h3 className="text-sm font-semibold">Светлана</h3>
                   <p className="text-xs text-emerald-400 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Online
+                    {activeProvider ? `Online via ${activeProvider.name}` : 'Offline'}
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => isSpeaking ? stop() : speak('Привет! Я Светлана.')}
-                  className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted"
-                >
-                  {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                </button>
-              </div>
+              <button
+                onClick={() => isSpeaking ? stop() : speak('Привет! Я Светлана.')}
+                className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted"
+              >
+                {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+              </button>
             </div>
 
-            {/* Messages */}
             <div className="flex-1 p-4 overflow-y-auto space-y-3 min-h-[400px] max-h-[500px]">
               <AnimatePresence>
                 {messages.map((msg, i) => (
@@ -195,47 +281,57 @@ export default function AvatarPage() {
                           {msg.emotion === 'crying' && '😭'}
                           {msg.emotion === 'surprised' && '😮'}
                           {msg.emotion === 'neutral' && '😐'}
+                          {msg.emotion === 'talking' && '💬'}
                         </span>
                       )}
                       <p className="text-sm">{msg.content}</p>
+                      {msg.provider && (
+                        <p className="text-xs text-sv-muted mt-1 opacity-50">{msg.provider}</p>
+                      )}
                     </div>
                   </motion.div>
                 ))}
               </AnimatePresence>
+
+              {isLoading && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="flex items-center gap-2 text-sm text-sv-muted"
+                >
+                  <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                  Светлана думает...
+                </motion.div>
+              )}
+              <div ref={messagesEndRef} />
             </div>
 
-            {/* Input */}
             <div className="p-4 border-t border-white/10">
               <div className="flex gap-2">
                 <input
                   value={input}
                   onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleSend()}
-                  placeholder="Напишите Светлане..."
-                  className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm focus:outline-none focus:border-indigo-500/50"
+                  onKeyDown={e => e.key === 'Enter' && sendMessage(input)}
+                  placeholder={activeProvider ? 'Напишите Светлане...' : 'Сначала настройте AI провайдер'}
+                  className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm focus:outline-none focus:border-indigo-500/50 disabled:opacity-50"
+                  disabled={!activeProvider || isLoading}
                 />
                 <button
-                  onClick={handleSend}
-                  disabled={!input.trim()}
+                  onClick={() => sendMessage(input)}
+                  disabled={!input.trim() || !activeProvider || isLoading}
                   className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white transition-colors"
                 >
                   <Send className="w-4 h-4" />
                 </button>
               </div>
 
-              {/* Quick phrases */}
               <div className="flex flex-wrap gap-2 mt-3">
-                {[
-                  'Привет!',
-                  'Расскажи шутку',
-                  'Мне грустно',
-                  'Кто ты?',
-                  'Спасибо!',
-                ].map(phrase => (
+                {['Привет!', 'Расскажи шутку', 'Мне грустно', 'Кто ты?', 'Спасибо!'].map(phrase => (
                   <button
                     key={phrase}
-                    onClick={() => { setInput(phrase); }}
-                    className="px-3 py-1 text-xs rounded-full bg-white/5 border border-white/10 text-sv-muted hover:bg-white/10 transition-colors"
+                    onClick={() => sendMessage(phrase)}
+                    disabled={!activeProvider || isLoading}
+                    className="px-3 py-1 text-xs rounded-full bg-white/5 border border-white/10 text-sv-muted hover:bg-white/10 transition-colors disabled:opacity-50"
                   >
                     {phrase}
                   </button>
@@ -246,42 +342,49 @@ export default function AvatarPage() {
         </div>
       </div>
 
-      {/* Voice Settings */}
-      <div className="glass-card rounded-xl p-6">
-        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Mic className="w-5 h-5 text-indigo-400" />
-          Голосовые настройки
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-            <h4 className="text-sm font-medium text-cyan-400 mb-2">Speech-to-Text (STT)</h4>
-            <p className="text-xs text-sv-muted mb-2">Web Speech API</p>
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span className="text-xs text-emerald-400">Available</span>
+      {/* Settings Panel */}
+      {showSettings && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass-card rounded-xl p-6"
+        >
+          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Settings className="w-5 h-5 text-sv-muted" />
+            Настройки голоса
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="p-4 rounded-lg bg-white/5 border border-white/10">
+              <h4 className="text-sm font-medium text-cyan-400 mb-2">Speech-to-Text</h4>
+              <p className="text-xs text-sv-muted mb-2">Web Speech API</p>
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span className="text-xs text-emerald-400">Available</span>
+              </div>
+              <p className="text-xs text-sv-muted mt-2">Язык: Русский (ru-RU)</p>
             </div>
-            <p className="text-xs text-sv-muted mt-2">Язык: Русский (ru-RU)</p>
-          </div>
-          <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-            <h4 className="text-sm font-medium text-purple-400 mb-2">Text-to-Speech (TTS)</h4>
-            <p className="text-xs text-sv-muted mb-2">Web Speech Synthesis API</p>
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span className="text-xs text-emerald-400">Available</span>
+            <div className="p-4 rounded-lg bg-white/5 border border-white/10">
+              <h4 className="text-sm font-medium text-purple-400 mb-2">Text-to-Speech</h4>
+              <p className="text-xs text-sv-muted mb-2">Web Speech Synthesis</p>
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span className="text-xs text-emerald-400">Available</span>
+              </div>
+              <p className="text-xs text-sv-muted mt-2">Голосов: {voices.length}</p>
             </div>
-            <p className="text-xs text-sv-muted mt-2">Доступно голосов: {voices.length}</p>
-          </div>
-          <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-            <h4 className="text-sm font-medium text-yellow-400 mb-2">Voice Commands</h4>
-            <p className="text-xs text-sv-muted mb-2">Natural language processing</p>
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span className="text-xs text-emerald-400">Active</span>
+            <div className="p-4 rounded-lg bg-white/5 border border-white/10">
+              <h4 className="text-sm font-medium text-yellow-400 mb-2">AI Provider</h4>
+              <p className="text-xs text-sv-muted mb-2">Active: {activeProvider?.name || 'None'}</p>
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${activeProvider ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                <span className={`text-xs ${activeProvider ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {activeProvider ? 'Connected' : 'Not configured'}
+                </span>
+              </div>
             </div>
-            <p className="text-xs text-sv-muted mt-2">Поддержка команд на русском</p>
           </div>
-        </div>
-      </div>
+        </motion.div>
+      )}
 
       {/* Emotion System */}
       <div className="glass-card rounded-xl p-6">
@@ -290,8 +393,7 @@ export default function AvatarPage() {
           Система эмоций
         </h3>
         <p className="text-sm text-sv-muted mb-4">
-          Светлана реагирует на контекст разговора и меняет эмоции в реальном времени.
-          Аватар переключается между 6 состояниями с плавными переходами.
+          Светлана реагирует на контекст через реальный LLM. Модель определяет эмоцию и аватар переключается.
         </p>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           {[
