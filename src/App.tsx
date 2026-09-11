@@ -13,11 +13,12 @@ import AvatarPage from './pages/AvatarPage';
 import OrchestratorPage from './pages/OrchestratorPage';
 import AndroidPage from './pages/AndroidPage';
 import E2ETestPage from './pages/E2ETestPage';
+import AndroidConnectionPage from './pages/AndroidConnectionPage';
 import { aiGateway } from './services/AIGateway';
 import { getStatusCounts } from './services/FeatureStatus';
 
 // ==================== TYPES ====================
-type Page = 'dashboard' | 'architecture' | 'pipeline' | 'platforms' | 'security' | 'forensic' | 'research' | 'demo' | 'reports' | 'providers' | 'avatar' | 'orchestrator' | 'android' | 'e2etest';
+type Page = 'dashboard' | 'architecture' | 'pipeline' | 'platforms' | 'security' | 'forensic' | 'research' | 'demo' | 'reports' | 'providers' | 'avatar' | 'orchestrator' | 'android' | 'e2etest' | 'android-connection';
 
 interface PipelineStep {
   id: string;
@@ -1077,7 +1078,8 @@ export default function App() {
     { id: 'providers', label: 'AI Providers', icon: Cpu },
     { id: 'orchestrator', label: 'Orchestrator', icon: Workflow },
     { id: 'e2etest', label: 'E2E Tests', icon: CheckCircle2 },
-    { id: 'android', label: 'Android Hands', icon: Smartphone },
+    { id: 'android-connection', label: 'Android Connection', icon: Smartphone },
+    { id: 'android', label: 'Android Hands (Code)', icon: Smartphone },
     { id: 'architecture', label: 'Architecture', icon: Layers },
     { id: 'pipeline', label: 'Pipeline', icon: Workflow },
     { id: 'platforms', label: 'Platforms', icon: Globe },
@@ -1095,6 +1097,7 @@ export default function App() {
       case 'providers': return <AIProvidersPage />;
       case 'orchestrator': return <OrchestratorPage />;
       case 'e2etest': return <E2ETestPage />;
+      case 'android-connection': return <AndroidConnectionPage />;
       case 'android': return <AndroidPage />;
       case 'architecture': return <ArchitecturePage />;
       case 'pipeline': return <PipelinePage />;
