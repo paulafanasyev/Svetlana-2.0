@@ -1,4 +1,6 @@
-// Tool Registry - Real tool abstraction layer
+// Tool Registry - Tool abstraction layer
+// Real tool implementations are in RealTools.ts and use PlatformHands via HandsManager
+// This file only defines the contract and registry - NO stub implementations
 
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 
@@ -19,6 +21,14 @@ export interface ToolResult {
   error?: string;
   requiresConfirmation?: boolean;
   confirmationMessage?: string;
+  observation?: any;
+  verification?: {
+    status: 'PASS' | 'FAIL' | 'PENDING';
+    confidence: number;
+    details?: string;
+  };
+  requestId?: string;
+  timestamp?: number;
 }
 
 export interface Tool {
@@ -29,13 +39,13 @@ export interface Tool {
   riskLevel: RiskLevel;
   category: 'navigation' | 'interaction' | 'data' | 'system' | 'communication';
   
-  // Execute the tool
+  // Execute the tool - MUST use real PlatformHands, NO stubs
   execute(params: Record<string, any>): Promise<ToolResult>;
   
-  // Verify the result
+  // Verify the result with real observation
   verify?(params: Record<string, any>, result: ToolResult): Promise<boolean>;
   
-  // Check if tool is available
+  // Check if tool is available - MUST check real connection
   isAvailable(): Promise<boolean>;
 }
 
@@ -45,6 +55,14 @@ export interface ToolExecutionContext {
   environment: Record<string, any>;
 }
 
+// Structured tool call format for LLM function calling
+export interface StructuredToolCall {
+  tool: string;
+  arguments: Record<string, any>;
+  requestId: string;
+  timestamp: number;
+}
+
 class ToolRegistry {
   private tools: Map<string, Tool> = new Map();
   private context: ToolExecutionContext = {
@@ -52,6 +70,13 @@ class ToolRegistry {
     permissions: [],
     environment: {},
   };
+  private executionLog: Array<{
+    requestId: string;
+    toolId: string;
+    params: any;
+    result: ToolResult;
+    timestamp: number;
+  }> = [];
 
   registerTool(tool: Tool) {
     this.tools.set(tool.id, tool);
@@ -78,127 +103,191 @@ class ToolRegistry {
   }
 
   async executeTool(id: string, params: Record<string, any>): Promise<ToolResult> {
+    const requestId = `exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const tool = this.tools.get(id);
+    
     if (!tool) {
-      return {
+      const result: ToolResult = {
         success: false,
-        error: `Tool ${id} not found`,
+        error: `Tool ${id} not found in registry`,
+        requestId,
+        timestamp: Date.now(),
       };
+      this.logExecution(requestId, id, params, result);
+      return result;
     }
 
-    // Check availability
+    // Check availability - this checks REAL connection
     const available = await tool.isAvailable();
     if (!available) {
-      return {
+      const result: ToolResult = {
         success: false,
-        error: `Tool ${id} is not available`,
+        error: `Tool ${id} is not available. Ensure Android device is connected via Android Connection page.`,
+        requestId,
+        timestamp: Date.now(),
       };
+      this.logExecution(requestId, id, params, result);
+      return result;
     }
 
     // Validate input
     const validation = this.validateInput(tool, params);
     if (!validation.valid) {
-      return {
+      const result: ToolResult = {
         success: false,
         error: validation.error,
+        requestId,
+        timestamp: Date.now(),
       };
+      this.logExecution(requestId, id, params, result);
+      return result;
     }
 
-    // Check risk level
-    if (tool.riskLevel === 'critical') {
-      return {
+    // Check risk level - high/critical require confirmation
+    if (tool.riskLevel === 'critical' || tool.riskLevel === 'high') {
+      const result: ToolResult = {
         success: false,
         requiresConfirmation: true,
-        confirmationMessage: `Critical action: ${tool.name}. Requires user confirmation.`,
+        confirmationMessage: this.getConfirmationMessage(tool, params),
+        requestId,
+        timestamp: Date.now(),
       };
+      this.logExecution(requestId, id, params, result);
+      return result;
     }
 
-    if (tool.riskLevel === 'high') {
-      return {
-        success: false,
-        requiresConfirmation: true,
-        confirmationMessage: `High-risk action: ${tool.name}. Requires user confirmation.`,
-      };
-    }
-
-    // Execute
+    // Execute - this calls REAL PlatformHands
     try {
       const result = await tool.execute(params);
+      result.requestId = requestId;
+      result.timestamp = Date.now();
       
       // Verify if verification function exists
       if (tool.verify && result.success) {
         const verified = await tool.verify(params, result);
+        result.verification = {
+          status: verified ? 'PASS' : 'FAIL',
+          confidence: verified ? 1.0 : 0.0,
+          details: verified ? 'Verified via observation' : 'Verification failed',
+        };
+        
         if (!verified) {
-          return {
-            success: false,
-            error: 'Verification failed',
-            data: result.data,
-          };
+          result.success = false;
+          result.error = 'Verification failed after execution';
         }
       }
 
+      this.logExecution(requestId, id, params, result);
       return result;
     } catch (error: any) {
-      return {
+      const result: ToolResult = {
         success: false,
         error: error.message || 'Tool execution failed',
+        requestId,
+        timestamp: Date.now(),
       };
+      this.logExecution(requestId, id, params, result);
+      return result;
     }
+  }
+
+  // Execute with explicit confirmation (for high/critical tools)
+  async executeWithConfirmation(id: string, params: Record<string, any>): Promise<ToolResult> {
+    const requestId = `exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const tool = this.tools.get(id);
+    
+    if (!tool) {
+      return { success: false, error: `Tool ${id} not found`, requestId, timestamp: Date.now() };
+    }
+
+    const available = await tool.isAvailable();
+    if (!available) {
+      return { success: false, error: `Tool ${id} not available`, requestId, timestamp: Date.now() };
+    }
+
+    try {
+      const result = await tool.execute(params);
+      result.requestId = requestId;
+      result.timestamp = Date.now();
+      
+      if (tool.verify && result.success) {
+        const verified = await tool.verify(params, result);
+        result.verification = {
+          status: verified ? 'PASS' : 'FAIL',
+          confidence: verified ? 1.0 : 0.0,
+        };
+        if (!verified) {
+          result.success = false;
+          result.error = 'Verification failed';
+        }
+      }
+
+      this.logExecution(requestId, id, params, result);
+      return result;
+    } catch (error: any) {
+      return { success: false, error: error.message, requestId, timestamp: Date.now() };
+    }
+  }
+
+  private getConfirmationMessage(tool: Tool, params: Record<string, any>): string {
+    const riskLabels: Record<RiskLevel, string> = {
+      low: 'Low risk',
+      medium: 'Medium risk',
+      high: '⚡ HIGH RISK',
+      critical: '⚠️ CRITICAL',
+    };
+
+    return `${riskLabels[tool.riskLevel]}: ${tool.name}\n\n` +
+      `This action will be performed on your Android device.\n` +
+      `Parameters: ${JSON.stringify(params, null, 2)}\n\n` +
+      `Do you confirm?`;
   }
 
   private validateInput(tool: Tool, params: Record<string, any>): { valid: boolean; error?: string } {
     const schema = tool.inputSchema;
     
-    // Check required fields
     if (schema.required) {
       for (const field of schema.required) {
-        if (!(field in params)) {
-          return {
-            valid: false,
-            error: `Missing required parameter: ${field}`,
-          };
+        if (!(field in params) || params[field] === undefined || params[field] === null) {
+          return { valid: false, error: `Missing required parameter: ${field}` };
         }
       }
     }
 
-    // Check types
     for (const [key, prop] of Object.entries(schema.properties)) {
-      if (key in params) {
+      if (key in params && params[key] !== undefined && params[key] !== null) {
         const value = params[key];
         const expectedType = prop.type;
 
         if (expectedType === 'string' && typeof value !== 'string') {
-          return {
-            valid: false,
-            error: `Parameter ${key} must be a string`,
-          };
+          return { valid: false, error: `Parameter ${key} must be a string` };
         }
-
         if (expectedType === 'number' && typeof value !== 'number') {
-          return {
-            valid: false,
-            error: `Parameter ${key} must be a number`,
-          };
+          return { valid: false, error: `Parameter ${key} must be a number` };
         }
-
         if (expectedType === 'boolean' && typeof value !== 'boolean') {
-          return {
-            valid: false,
-            error: `Parameter ${key} must be a boolean`,
-          };
+          return { valid: false, error: `Parameter ${key} must be a boolean` };
         }
-
-        // Check enum
         if (prop.enum && !prop.enum.includes(value)) {
-          return {
-            valid: false,
-            error: `Parameter ${key} must be one of: ${prop.enum.join(', ')}`,
-          };
+          return { valid: false, error: `Parameter ${key} must be one of: ${prop.enum.join(', ')}` };
         }
       }
     }
 
     return { valid: true };
+  }
+
+  private logExecution(requestId: string, toolId: string, params: any, result: ToolResult) {
+    this.executionLog.push({
+      requestId,
+      toolId,
+      params,
+      result,
+      timestamp: Date.now(),
+    });
+    if (this.executionLog.length > 1000) {
+      this.executionLog.shift();
+    }
   }
 
   setContext(context: Partial<ToolExecutionContext>) {
@@ -209,7 +298,11 @@ class ToolRegistry {
     return { ...this.context };
   }
 
-  // Generate tool descriptions for LLM
+  getExecutionLog(limit: number = 50): typeof this.executionLog {
+    return this.executionLog.slice(-limit);
+  }
+
+  // Generate tool descriptions for LLM function calling
   generateToolDescriptions(): string {
     const tools = this.getAllTools();
     return tools.map(tool => {
@@ -219,241 +312,27 @@ class ToolRegistry {
 
       return `${tool.id}: ${tool.description}
   Risk: ${tool.riskLevel}
+  Category: ${tool.category}
   Parameters:
 ${params}`;
     }).join('\n\n');
   }
+
+  // Generate JSON schema for LLM function calling
+  generateFunctionCallingSchema(): object[] {
+    return this.getAllTools().map(tool => ({
+      type: 'function',
+      function: {
+        name: tool.id,
+        description: tool.description,
+        parameters: {
+          type: 'object',
+          properties: tool.inputSchema.properties,
+          required: tool.inputSchema.required,
+        },
+      },
+    }));
+  }
 }
 
 export const toolRegistry = new ToolRegistry();
-
-// ============ BUILT-IN TOOLS ============
-
-// Navigation tools
-export const openAppTool: Tool = {
-  id: 'open_app',
-  name: 'Open Application',
-  description: 'Open a specific application by name or package',
-  category: 'navigation',
-  riskLevel: 'low',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      appName: {
-        type: 'string',
-        description: 'Name of the application to open',
-      },
-      packageName: {
-        type: 'string',
-        description: 'Package name (e.g., com.example.app)',
-      },
-    },
-    required: ['appName'],
-  },
-  async execute(params) {
-    // This would integrate with PlatformHands
-    return {
-      success: true,
-      data: { opened: params.appName },
-    };
-  },
-  async isAvailable() {
-    return true; // Would check if platform hands are available
-  },
-};
-
-export const navigateToUrlTool: Tool = {
-  id: 'navigate_url',
-  name: 'Navigate to URL',
-  description: 'Open a URL in the browser',
-  category: 'navigation',
-  riskLevel: 'low',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      url: {
-        type: 'string',
-        description: 'URL to navigate to',
-      },
-    },
-    required: ['url'],
-  },
-  async execute(params) {
-    if (typeof window !== 'undefined') {
-      window.open(params.url, '_blank');
-      return { success: true, data: { url: params.url } };
-    }
-    return { success: false, error: 'Cannot open URL in this environment' };
-  },
-  async isAvailable() {
-    return typeof window !== 'undefined';
-  },
-};
-
-// Interaction tools
-export const tapElementTool: Tool = {
-  id: 'tap_element',
-  name: 'Tap UI Element',
-  description: 'Tap on a UI element by text or ID',
-  category: 'interaction',
-  riskLevel: 'low',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      elementText: {
-        type: 'string',
-        description: 'Text content of the element to tap',
-      },
-      elementId: {
-        type: 'string',
-        description: 'ID of the element to tap',
-      },
-    },
-  },
-  async execute(params) {
-    // This would integrate with PlatformHands
-    return {
-      success: true,
-      data: { tapped: params.elementText || params.elementId },
-    };
-  },
-  async isAvailable() {
-    return false; // Requires Android Hands
-  },
-};
-
-export const typeTextTool: Tool = {
-  id: 'type_text',
-  name: 'Type Text',
-  description: 'Type text into the focused input field',
-  category: 'interaction',
-  riskLevel: 'medium',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      text: {
-        type: 'string',
-        description: 'Text to type',
-      },
-      clearFirst: {
-        type: 'boolean',
-        description: 'Clear field before typing',
-      },
-    },
-    required: ['text'],
-  },
-  async execute(params) {
-    // This would integrate with PlatformHands
-    return {
-      success: true,
-      data: { typed: params.text },
-    };
-  },
-  async isAvailable() {
-    return false; // Requires Android Hands
-  },
-};
-
-// Data tools
-export const searchWebTool: Tool = {
-  id: 'search_web',
-  name: 'Search Web',
-  description: 'Search the web for information',
-  category: 'data',
-  riskLevel: 'low',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      query: {
-        type: 'string',
-        description: 'Search query',
-      },
-    },
-    required: ['query'],
-  },
-  async execute(params) {
-    // This would integrate with a search API
-    return {
-      success: true,
-      data: { query: params.query, results: [] },
-    };
-  },
-  async isAvailable() {
-    return true;
-  },
-};
-
-// System tools
-export const takeScreenshotTool: Tool = {
-  id: 'take_screenshot',
-  name: 'Take Screenshot',
-  description: 'Capture the current screen',
-  category: 'system',
-  riskLevel: 'medium',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      saveToGallery: {
-        type: 'boolean',
-        description: 'Save screenshot to gallery',
-      },
-    },
-  },
-  async execute(params) {
-    // This would integrate with PlatformHands
-    return {
-      success: true,
-      data: { screenshot: 'base64_data' },
-    };
-  },
-  async isAvailable() {
-    return false; // Requires Android Hands
-  },
-};
-
-// Communication tools
-export const sendMessageTool: Tool = {
-  id: 'send_message',
-  name: 'Send Message',
-  description: 'Send a message via messaging app',
-  category: 'communication',
-  riskLevel: 'high',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      recipient: {
-        type: 'string',
-        description: 'Recipient name or number',
-      },
-      message: {
-        type: 'string',
-        description: 'Message content',
-      },
-      app: {
-        type: 'string',
-        description: 'Messaging app to use',
-        enum: ['telegram', 'whatsapp', 'sms', 'email'],
-      },
-    },
-    required: ['recipient', 'message', 'app'],
-  },
-  async execute(params) {
-    // This would integrate with PlatformHands
-    return {
-      success: true,
-      data: { sent: true, recipient: params.recipient },
-    };
-  },
-  async isAvailable() {
-    return false; // Requires Android Hands
-  },
-};
-
-// Register built-in tools
-toolRegistry.registerTool(openAppTool);
-toolRegistry.registerTool(navigateToUrlTool);
-toolRegistry.registerTool(tapElementTool);
-toolRegistry.registerTool(typeTextTool);
-toolRegistry.registerTool(searchWebTool);
-toolRegistry.registerTool(takeScreenshotTool);
-toolRegistry.registerTool(sendMessageTool);

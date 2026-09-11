@@ -19,11 +19,19 @@ export interface AIResponse {
   content: string;
   provider: string;
   model: string;
+  toolCalls?: StructuredToolCall[];
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
   };
+}
+
+export interface StructuredToolCall {
+  tool: string;
+  arguments: Record<string, any>;
+  requestId: string;
+  timestamp: number;
 }
 
 class AIGateway {
@@ -464,6 +472,57 @@ class AIGateway {
       console.error(`Connection test failed for ${providerId}:`, error);
       return false;
     }
+  }
+
+  // Structured tool calling - LLM returns JSON with tool calls
+  async chatWithTools(
+    messages: ChatMessage[],
+    tools: object[],
+    options?: { temperature?: number; max_tokens?: number },
+    providerId?: string
+  ): Promise<AIResponse> {
+    const provider = providerId ? this.providers.get(providerId) : this.getActiveProvider();
+    if (!provider) {
+      throw new Error('No AI provider configured');
+    }
+
+    // For now, use regular chat and parse tool calls from response
+    // In production, this would use native function calling API
+    const response = await this.chat(messages, options, providerId);
+    
+    // Try to extract tool calls from response
+    const toolCalls = this.extractToolCalls(response.content);
+    
+    return {
+      ...response,
+      toolCalls,
+    };
+  }
+
+  private extractToolCalls(content: string): StructuredToolCall[] {
+    const toolCalls: StructuredToolCall[] = [];
+    
+    // Try to find JSON tool calls in the response
+    const jsonMatches = content.match(/```json\s*([\s\S]*?)\s*```/g);
+    if (jsonMatches) {
+      for (const match of jsonMatches) {
+        try {
+          const json = JSON.parse(match.replace(/```json\s*|\s*```/g, ''));
+          if (json.tool && json.arguments) {
+            toolCalls.push({
+              tool: json.tool,
+              arguments: json.arguments,
+              requestId: `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              timestamp: Date.now(),
+            });
+          }
+        } catch (e) {
+          // Ignore invalid JSON
+        }
+      }
+    }
+    
+    return toolCalls;
   }
 }
 

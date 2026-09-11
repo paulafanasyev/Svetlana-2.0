@@ -380,10 +380,26 @@ export const sendMessageTool: Tool = {
   },
 };
 
-// Register all real tools
+// Import toolRegistry and register all real tools
+import { toolRegistry } from './ToolRegistry';
+
+// Register all real tools - MUST be called during app initialization
 export function registerRealTools() {
-  // This would be called during app initialization
-  // Tools are exported individually for use in ToolRegistry
-  console.log('[ToolRegistry] Real tools registered');
-  console.log('[ToolRegistry] Tools require Android device connection');
+  toolRegistry.registerTool(openAppTool);
+  toolRegistry.registerTool(tapElementTool);
+  toolRegistry.registerTool(typeTextTool);
+  toolRegistry.registerTool(captureScreenTool);
+  toolRegistry.registerTool(sendMessageTool);
+  
+  console.log('[RealTools] Registered 5 real tools:');
+  console.log('  - open_app (requires Android connection)');
+  console.log('  - tap_element (requires Android connection)');
+  console.log('  - type_text (requires Android connection)');
+  console.log('  - capture_screen (requires Android connection)');
+  console.log('  - send_message (requires Android connection + confirmation)');
+  console.log('[RealTools] All tools use PlatformHands via HandsManager');
+  console.log('[RealTools] NO stub implementations - all require real Android device');
 }
+
+// Auto-register on module load
+registerRealTools();

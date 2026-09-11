@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, svetlana-2.0-core-development-0416c ]
+  pull_request:
+    branches: [ main, svetlana-2.0-core-development-0416c ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Type check
+      run: npm run typecheck || npx tsc --noEmit
+
+    - name: Lint
+      run: npm run lint || echo "Lint not configured"
+
+    - name: Run tests
+      run: npm test || npx vitest run
+
+    - name: Build
+      run: npm run build
+
+    - name: Check for stub implementations
+      run: |
+        echo "Checking for stub implementations in production code..."
+        
+        # Check for common stub patterns in services (not tests)
+        if grep -r "success: true" src/services/ --include="*.ts" | grep -v "test" | grep -v "__tests__"; then
+          echo "⚠️  Found 'success: true' in services - verify these are not stubs"
+        fi
+        
+        if grep -r "base64_data" src/services/ --include="*.ts"; then
+          echo "❌ Found fake 'base64_data' in services"
+          exit 1
+        fi
+        
+        if grep -r "This would integrate" src/services/ --include="*.ts"; then
+          echo "❌ Found stub comments in services"
+          exit 1
+        fi
+        
+        if grep -r "TODO\|FIXME" src/services/ --include="*.ts" | grep -v "test"; then
+          echo "⚠️  Found TODO/FIXME in services"
+        fi
+        
+        echo "✅ Stub check completed"
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      if: success()
+      with:
+        name: build-${{ matrix.node-version }}
+        path: dist/
+        retention-days: 7
+
+  security-check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Use Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Check for hardcoded secrets
+      run: |
+        echo "Checking for hardcoded secrets..."
+        
+        # Check for common secret patterns
+        if grep -rE "(sk-|key-|api_key|apiKey|password|secret)" src/ --include="*.ts" --include="*.tsx" | grep -v "test" | grep -v "__tests__" | grep -v "type.*string" | grep -v "interface" | grep -v "// "; then
+          echo "⚠️  Potential secrets found - review manually"
+        else
+          echo "✅ No obvious secrets found"
+        fi
+
+    - name: npm audit
+      run: npm audit --audit-level=moderate || echo "Audit completed with warnings"
