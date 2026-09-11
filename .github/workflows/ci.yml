@@ -83,3 +83,5 @@ jobs:
         else
           echo "✅ No obvious secrets found"
         fi
+
+# Trigger next verified CI run after green Run #15.
