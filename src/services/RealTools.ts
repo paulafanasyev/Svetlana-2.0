@@ -4,9 +4,7 @@ import { handsManager } from './HandsManager';
 
 async function requireHands(): Promise<void> {
   const connected = await handsManager.isConnected();
-  if (!connected) {
-    throw new Error('Android device not connected. Please connect via Settings → Android Connection.');
-  }
+  if (!connected) throw new Error('Android device not connected. Please connect via Settings → Android Connection.');
 }
 
 export const openAppTool: Tool = {
@@ -18,13 +16,10 @@ export const openAppTool: Tool = {
     if (!result.success) return { success: false, error: result.error || 'Failed to launch app' };
     await new Promise(r => setTimeout(r, 1000));
     const currentApp = await hands.getCurrentApp();
-    if (currentApp === params.packageName) return { success: true, data: { app: params.packageName, verified: true, timestamp: Date.now() } };
+    if (currentApp === params.packageName) return { success: true, data: { app: params.packageName, currentApp, verified: true, timestamp: Date.now() } };
     return { success: false, error: `Verification failed: expected ${params.packageName}, got ${currentApp}` };
   },
-  async verify(params: { packageName: string }, result: ToolResult): Promise<boolean> {
-    if (!result.success) return false; const hands = handsManager.getHands(); if (!hands) return false;
-    return (await hands.getCurrentApp()) === params.packageName;
-  },
+  async verify(params, result) { return !!result.success && result.data?.verified === true && result.data?.currentApp === params.packageName; },
   async isAvailable() { return await handsManager.isConnected(); },
 };
 
@@ -45,7 +40,7 @@ export const tapElementTool: Tool = {
     const afterTree = await hands.getAccessibilityTree(); const afterApp = await hands.getCurrentApp();
     return { success: true, data: { element: { id: element.id, text: element.text, bounds: element.bounds }, tappedAt: { x: centerX, y: centerY }, beforeTree, afterTree, beforeApp, afterApp, timestamp: Date.now() } };
   },
-  async verify(_params, result: ToolResult): Promise<boolean> {
+  async verify(_params, result) {
     if (!result.success || !result.data?.beforeTree || !result.data?.afterTree) return false;
     const beforeTree = result.data.beforeTree; const afterTree = result.data.afterTree;
     const beforeCount = beforeTree.root?.children?.length || 0; const afterCount = afterTree.root?.children?.length || 0;
@@ -100,9 +95,9 @@ export const swipeTool: Tool = { id: 'swipe', name: 'Swipe', description: 'Perfo
 
 export const pressKeyTool: Tool = { id:'press_key', name:'Press Key', description:'Press a hardware key', category:'interaction', riskLevel:'low', inputSchema:{type:'object',properties:{key:{type:'string',description:'Key name'}},required:['key']}, async execute(p){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const r=await h.pressKey(p.key);return r.success?{success:true,data:{key:p.key}}:{success:false,error:r.error||'Key press failed'};},async verify(_p,r){return r.success},async isAvailable(){return await handsManager.isConnected();}};
 
-export const goHomeTool: Tool = { id:'go_home', name:'Go Home', description:'Navigate to Android home screen', category:'navigation', riskLevel:'low', inputSchema:{type:'object',properties:{}}, async execute(){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const r=await h.goHome();return r.success?{success:true,data:{navigated:true}}:{success:false,error:r.error||'Home navigation failed'};},async verify(_p,r){return r.success&&r.data?.navigated},async isAvailable(){return await handsManager.isConnected();}};
+export const goHomeTool: Tool = { id:'go_home', name:'Go Home', description:'Navigate to Android home screen', category:'navigation', riskLevel:'low', inputSchema:{type:'object',properties:{}}, async execute(){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const beforeApp=await h.getCurrentApp();const r=await h.goHome();if(!r.success)return{success:false,error:r.error||'Home navigation failed'};await new Promise(res=>setTimeout(res,300));const afterApp=await h.getCurrentApp();return afterApp==='com.android.launcher'?{success:true,data:{navigated:true,beforeApp,afterApp,currentApp:afterApp}}:{success:false,error:`Verification failed: expected com.android.launcher, got ${afterApp}`,data:{navigated:false,beforeApp,afterApp,currentApp:afterApp}};},async verify(_p,r){return !!r.success&&r.data?.afterApp==='com.android.launcher'},async isAvailable(){return await handsManager.isConnected();}};
 
-export const goBackTool: Tool = { id:'go_back', name:'Go Back', description:'Navigate back', category:'navigation', riskLevel:'low', inputSchema:{type:'object',properties:{}}, async execute(){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const r=await h.goBack();return r.success?{success:true,data:{navigated:true}}:{success:false,error:r.error||'Back navigation failed'};},async verify(_p,r){return r.success&&r.data?.navigated},async isAvailable(){return await handsManager.isConnected();}};
+export const goBackTool: Tool = { id:'go_back', name:'Go Back', description:'Navigate back', category:'navigation', riskLevel:'low', inputSchema:{type:'object',properties:{}}, async execute(){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const beforeApp=await h.getCurrentApp();const r=await h.goBack();if(!r.success)return{success:false,error:r.error||'Back navigation failed'};await new Promise(res=>setTimeout(res,300));const afterApp=await h.getCurrentApp();const navigated=beforeApp!==afterApp;return navigated?{success:true,data:{navigated,beforeApp,afterApp}}:{success:false,error:`Verification failed: back navigation did not change app (${beforeApp})`,data:{navigated:false,beforeApp,afterApp}};},async verify(_p,r){return !!r.success&&r.data?.navigated===true&&r.data?.beforeApp!==r.data?.afterApp},async isAvailable(){return await handsManager.isConnected();}};
 
 export const searchWebTool: Tool = { id:'search_web', name:'Search Web', description:'Search the web using default browser', category:'data', riskLevel:'low', inputSchema:{type:'object',properties:{query:{type:'string',description:'Search query'}},required:['query']}, async execute(p){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const url=`https://www.google.com/search?q=${encodeURIComponent(p.query)}`;const l=await h.launchApp('com.android.chrome');if(!l.success)return{success:false,error:'Failed to open browser'};await new Promise(r=>setTimeout(r,1000));const t=await h.type(url);if(!t.success)return{success:false,error:'Failed to type search query'};const e=await h.pressKey('enter');return e.success?{success:true,data:{query:p.query,url,browser:'com.android.chrome'}}:{success:false,error:'Failed to submit search'};},async verify(_p,r){return r.success},async isAvailable(){return await handsManager.isConnected();}};
 
