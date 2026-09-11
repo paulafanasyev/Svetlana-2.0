@@ -400,7 +400,7 @@ Open recents.
 
 ### Verification Model
 
-Every action follows:
+Every action follows the strict BEFORE → ACTION → AFTER → COMPARE pattern:
 
 ```
 BEFORE
@@ -415,6 +415,63 @@ EXPECTED STATE?
   ├─ YES → PASS
   └─ NO  → RETRY (max 3) → FAIL
 ```
+
+#### Tool-Specific Verification
+
+**type_text:**
+```
+BEFORE: Capture accessibility tree
+ACTION: Type text into focused input
+AFTER: Wait 500ms, capture accessibility tree
+COMPARE:
+  - Find focused input field (EditText/TextField)
+  - Check if actual text contains expected text
+PASS: Text found in focused field
+FAIL: Text not found or no focused input
+```
+
+**tap_element:**
+```
+BEFORE: Capture beforeTree and beforeApp
+ACTION: Find element, tap on it
+AFTER: Wait 500ms, capture currentTree and currentApp
+COMPARE:
+  - Check if element count changed (beforeTree vs currentTree)
+  - OR check if app changed (beforeApp vs currentApp)
+PASS: UI changed or navigation occurred
+FAIL: No change detected
+```
+
+**send_message:**
+```
+BEFORE: Launch app, find contact, type message, tap send
+ACTION: Complete message sending flow
+AFTER: Wait 1000ms, capture accessibility tree
+COMPARE:
+  - Search for message text in accessibility tree
+  - Verify message actually appeared in chat
+PASS: Message text found in chat
+FAIL: Message not found
+```
+
+**open_app:**
+```
+BEFORE: (none needed)
+ACTION: Launch app via package name
+AFTER: Wait 1000ms, get current app
+COMPARE:
+  - Check if current app matches expected package
+PASS: Correct app is active
+FAIL: Wrong app or app not launched
+```
+
+#### Verification Principles
+
+1. **No Blind Trust**: Never trust `success: true` without evidence
+2. **Real Observation**: Always check actual device state
+3. **State Comparison**: Compare before/after states
+4. **Timeout Handling**: Wait appropriate time for UI updates
+5. **Evidence-Based**: Require proof of success
 
 Example:
 ```
