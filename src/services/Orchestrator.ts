@@ -4,6 +4,10 @@ import { planner, type Task, type TaskStep } from './Planner';
 import { memory } from './Memory';
 import { verification, type VerificationResult } from './Verification';
 import { aiGateway, type ChatMessage } from './AIGateway';
+import { toolRegistry, type Tool } from './ToolRegistry';
+import { policyEngine, type PolicyContext } from './PolicyEngine';
+import { observationManager } from './ObservationLayer';
+import { avatarStateMachine } from './AvatarStateMachine';
 
 export type AgentState = 'idle' | 'understanding' | 'planning' | 'observing' | 'grounding' | 'policy' | 'acting' | 'verifying' | 'reflecting' | 'complete' | 'error';
 
@@ -124,40 +128,92 @@ class Orchestrator {
   }
 
   private async executeStep(step: TaskStep, context?: any): Promise<{ success: boolean; error?: string }> {
-    // OBSERVE
+    // OBSERVE - Real observation
     this.setState('observing');
+    avatarStateMachine.setExecuting();
     this.emit({ type: 'observe', state: 'observing', detail: `Observing before action: ${step.action}`, data: { step } });
-    const preState = await this.observe(context);
-    await this.delay(300);
+    
+    const observationResult = await observationManager.observe();
+    const preState = observationResult.state;
+    
+    this.emit({ type: 'observe_result', state: 'observing', detail: `Observation: ${observationResult.success ? 'SUCCESS' : 'FAILED'}`, data: { observation: observationResult } });
 
-    // GROUND
+    // GROUND - Find target element
     this.setState('grounding');
     this.emit({ type: 'ground', state: 'grounding', detail: `Grounding to target: ${step.target || 'N/A'}` });
-    await this.delay(300);
-
-    // POLICY
-    this.setState('policy');
-    const riskLevel = this.assessRisk(step);
-    this.emit({ type: 'policy', state: 'policy', detail: `Risk assessment: ${riskLevel}`, data: { risk: riskLevel } });
     
-    if (riskLevel === 'critical') {
-      this.emit({ type: 'policy_blocked', state: 'policy', detail: 'Action blocked by policy' });
-      return { success: false, error: 'Action blocked by security policy' };
+    let groundedElement = null;
+    if (step.target) {
+      groundedElement = await observationManager.findElementByText(step.target);
+      this.emit({ type: 'ground_result', state: 'grounding', detail: groundedElement ? `Found: ${groundedElement.text}` : 'Not found', data: { element: groundedElement } });
     }
-    await this.delay(200);
 
-    // ACT
+    // POLICY - Real policy check
+    this.setState('policy');
+    avatarStateMachine.setVerifying();
+    
+    const tool = toolRegistry.getTool(step.action);
+    if (!tool) {
+      this.emit({ type: 'policy_error', state: 'policy', detail: `Tool not found: ${step.action}` });
+      return { success: false, error: `Tool ${step.action} not found` };
+    }
+
+    const policyContext: PolicyContext = {
+      platform: observationManager.getContext().platform,
+      currentApp: preState?.currentApp,
+      environment: context || {},
+    };
+
+    const policyResult = await policyEngine.evaluate(tool, policyContext);
+    this.emit({ type: 'policy', state: 'policy', detail: `Policy: ${policyResult.decision} - ${policyResult.reason}`, data: { policy: policyResult } });
+
+    if (policyResult.decision === 'deny') {
+      avatarStateMachine.setError();
+      this.emit({ type: 'policy_blocked', state: 'policy', detail: `Action blocked: ${policyResult.reason}` });
+      return { success: false, error: policyResult.reason };
+    }
+
+    if (policyResult.decision === 'require_confirmation') {
+      avatarStateMachine.setConfirmationRequired();
+      this.emit({ type: 'policy_confirmation', state: 'policy', detail: policyResult.confirmationMessage || 'Confirmation required' });
+      return { success: false, error: 'Requires user confirmation', };
+    }
+
+    // ACT - Real tool execution
     this.setState('acting');
-    this.emit({ type: 'act', state: 'acting', detail: `Executing: ${step.action}`, data: { step } });
-    const actionResult = await this.act(step);
-    await this.delay(500);
+    avatarStateMachine.setExecuting();
+    this.emit({ type: 'act', state: 'acting', detail: `Executing tool: ${tool.name}`, data: { tool: tool.id, params: step.parameters } });
+    
+    const actionResult = await toolRegistry.executeTool(tool.id, step.parameters || {});
+    
+    this.emit({ type: 'act_result', state: 'acting', detail: `Result: ${actionResult.success ? 'SUCCESS' : 'FAILED'}`, data: { result: actionResult } });
 
-    // VERIFY
+    if (!actionResult.success) {
+      avatarStateMachine.setError();
+      planner.updateStepStatus(this.currentTask!.id, step.id, 'failed', undefined, actionResult.error);
+      return { success: false, error: actionResult.error };
+    }
+
+    // VERIFY - Real verification
     if (this.config.enableVerification) {
       this.setState('verifying');
+      avatarStateMachine.setVerifying();
       this.emit({ type: 'verify', state: 'verifying', detail: 'Verifying action result' });
       
-      const postState = await this.observe(context);
+      // Observe again
+      const postObservation = await observationManager.observe();
+      const postState = postObservation.state;
+
+      // Compare states
+      let verificationSuccess = true;
+      if (preState && postState) {
+        const comparison = observationManager.compareStates(preState, postState);
+        verificationSuccess = comparison.changed;
+        
+        this.emit({ type: 'verify_compare', state: 'verifying', detail: `State changed: ${comparison.changed}`, data: { comparison } });
+      }
+
+      // Use verification module
       const verificationResult = await verification.verify({
         action: step.action,
         expectedState: { success: true },
@@ -170,22 +226,20 @@ class Orchestrator {
         // RETRY
         for (let retry = 0; retry < this.config.maxRetries; retry++) {
           this.emit({ type: 'retry', state: 'verifying', detail: `Retry ${retry + 1}/${this.config.maxRetries}` });
-          await this.delay(1000);
           
-          const retryResult = await this.act(step);
-          const retryPostState = await this.observe(context);
-          const retryVerification = await verification.verify({
-            action: step.action,
-            expectedState: { success: true },
-            actualState: retryResult,
-          });
-
-          if (retryVerification.success) {
+          // Wait before retry (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retry)));
+          
+          const retryResult = await toolRegistry.executeTool(tool.id, step.parameters || {});
+          
+          if (retryResult.success) {
+            avatarStateMachine.setSuccess();
             planner.updateStepStatus(this.currentTask!.id, step.id, 'completed', retryResult);
             return { success: true };
           }
         }
 
+        avatarStateMachine.setError();
         planner.updateStepStatus(this.currentTask!.id, step.id, 'failed', undefined, 'Verification failed after retries');
         return { success: false, error: 'Verification failed after retries' };
       }
@@ -195,33 +249,23 @@ class Orchestrator {
     if (this.config.enableReflection) {
       this.setState('reflecting');
       this.emit({ type: 'reflect', state: 'reflecting', detail: 'Reflecting on action outcome' });
-      await this.delay(300);
+      
+      // Store in memory
+      if (this.config.enableMemory) {
+        memory.addToLongTerm({
+          type: 'action',
+          content: `Executed: ${tool.name} with params: ${JSON.stringify(step.parameters)}`,
+          importance: 0.6,
+        });
+      }
     }
 
+    avatarStateMachine.setSuccess();
     planner.updateStepStatus(this.currentTask!.id, step.id, 'completed', actionResult);
     return { success: true };
   }
 
-  private async observe(context?: any): Promise<any> {
-    // In real implementation, this would capture screen state
-    return { timestamp: Date.now(), context };
-  }
-
-  private async act(step: TaskStep): Promise<any> {
-    // In real implementation, this would execute via PlatformHands
-    return { action: step.action, target: step.target, success: true };
-  }
-
-  private assessRisk(step: TaskStep): 'low' | 'medium' | 'high' | 'critical' {
-    const action = step.action.toLowerCase();
-    
-    if (['tap', 'open', 'scroll'].some(a => action.includes(a))) return 'low';
-    if (['type', 'navigate'].some(a => action.includes(a))) return 'medium';
-    if (['send', 'install', 'delete'].some(a => action.includes(a))) return 'high';
-    if (['pay', 'shell', 'execute'].some(a => action.includes(a))) return 'critical';
-    
-    return 'low';
-  }
+  // Methods removed - now using real ToolRegistry, PolicyEngine, and ObservationLayer
 
   private setState(state: AgentState) {
     this.state = state;
