@@ -1,1 +1,60 @@
 @import "tailwindcss";
+
+@theme {
+  --color-sv-dark: #0a0e1a;
+  --color-sv-darker: #060911;
+  --color-sv-card: #111827;
+  --color-sv-border: #1e293b;
+  --color-sv-accent: #6366f1;
+  --color-sv-accent2: #8b5cf6;
+  --color-sv-green: #10b981;
+  --color-sv-red: #ef4444;
+  --color-sv-yellow: #f59e0b;
+  --color-sv-cyan: #06b6d4;
+  --color-sv-text: #e2e8f0;
+  --color-sv-muted: #94a3b8;
+}
+
+body {
+  background: var(--color-sv-dark);
+  color: var(--color-sv-text);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-sv-darker);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-sv-border);
+  border-radius: 3px;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 5px rgba(99, 102, 241, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.6); }
+}
+
+@keyframes flow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.gradient-flow {
+  background: linear-gradient(90deg, #6366f1, #8b5cf6, #06b6d4, #6366f1);
+  background-size: 200% 200%;
+  animation: flow 3s ease infinite;
+}
+
+.glass-card {
+  background: rgba(17, 24, 39, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(30, 41, 59, 0.8);
+}
