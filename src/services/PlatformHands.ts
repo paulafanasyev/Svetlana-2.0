@@ -92,7 +92,7 @@ export interface UIElement {
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 export interface PlatformHandsConfig {
-  transport: 'websocket' | 'http' | 'mock';
+  transport: 'websocket' | 'http';
   endpoint: string;
   timeout?: number;
   reconnect?: boolean;

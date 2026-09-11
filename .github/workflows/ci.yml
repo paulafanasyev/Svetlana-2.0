@@ -33,7 +33,7 @@ jobs:
       run: npm run lint || echo "Lint not configured"
 
     - name: Run tests
-      run: npm test || npx vitest run
+      run: npm test
 
     - name: Build
       run: npm run build
@@ -42,11 +42,7 @@ jobs:
       run: |
         echo "Checking for stub implementations in production code..."
         
-        # Check for common stub patterns in services (not tests)
-        if grep -r "success: true" src/services/ --include="*.ts" | grep -v "test" | grep -v "__tests__"; then
-          echo "⚠️  Found 'success: true' in services - verify these are not stubs"
-        fi
-        
+        # Check for fake screenshot data
         if grep -r "base64_data" src/services/ --include="*.ts"; then
           echo "❌ Found fake 'base64_data' in services"
           exit 1

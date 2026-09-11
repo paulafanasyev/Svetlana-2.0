@@ -105,6 +105,7 @@ export const tapElementTool: Tool = {
 
     // Capture state before tap
     const beforeTree = await hands.getAccessibilityTree();
+    const beforeApp = await hands.getCurrentApp();
     
     let element;
     if (params.elementText) {
@@ -147,6 +148,8 @@ export const tapElementTool: Tool = {
           bounds: element.bounds,
         },
         tappedAt: { x: centerX, y: centerY },
+        beforeTree,
+        beforeApp,
         beforeElements: beforeTree.root.children?.length || 0,
         afterElements: afterTree.root.children?.length || 0,
         timestamp: Date.now(),
@@ -155,12 +158,30 @@ export const tapElementTool: Tool = {
   },
   async verify(params: { elementText?: string; elementId?: string }, result: ToolResult): Promise<boolean> {
     if (!result.success) return false;
+    
     const hands = handsManager.getHands();
     if (!hands) return false;
     
-    // Verify element is no longer in the same state (UI changed)
+    // Real verification: check if UI actually changed after tap
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
     const currentTree = await hands.getAccessibilityTree();
-    return currentTree.timestamp > result.data.timestamp;
+    const beforeTree = result.data.beforeTree;
+    
+    if (!beforeTree) return false;
+    
+    // Compare element counts - if they changed, UI responded to tap
+    const beforeCount = beforeTree.root.children?.length || 0;
+    const afterCount = currentTree.root.children?.length || 0;
+    
+    // Also check if current app changed (navigation occurred)
+    const currentApp = await hands.getCurrentApp();
+    const beforeApp = result.data.beforeApp;
+    
+    // Verification passes if:
+    // 1. Element count changed, OR
+    // 2. Current app changed (navigation occurred)
+    return (beforeCount !== afterCount) || (currentApp !== beforeApp);
   },
   async isAvailable(): Promise<boolean> {
     return await handsManager.isConnected();
@@ -222,9 +243,42 @@ export const typeTextTool: Tool = {
   },
   async verify(params: { text: string; clearFirst?: boolean }, result: ToolResult): Promise<boolean> {
     if (!result.success) return false;
-    // Verification would require reading the input field content
-    // For now, assume success if no error
-    return true;
+    
+    const hands = handsManager.getHands();
+    if (!hands) return false;
+    
+    // Real verification: check if text actually appeared in the focused field
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    const tree = await hands.getAccessibilityTree();
+    
+    // Find focused input field in the accessibility tree
+    const findFocusedInput = (node: any): any => {
+      if (node.focused && (node.type === 'EditText' || node.type === 'TextField' || node.className?.includes('EditText'))) {
+        return node;
+      }
+      if (node.children) {
+        for (const child of node.children) {
+          const found = findFocusedInput(child);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    
+    const focusedInput = findFocusedInput(tree.root);
+    
+    if (!focusedInput) {
+      // No focused input found - verification fails
+      return false;
+    }
+    
+    // Check if the text matches what we typed
+    const actualText = focusedInput.text || '';
+    const expectedText = params.text;
+    
+    // Verification passes if the actual text contains what we typed
+    return actualText.includes(expectedText);
   },
   async isAvailable(): Promise<boolean> {
     return await handsManager.isConnected();
@@ -371,9 +425,30 @@ export const sendMessageTool: Tool = {
   },
   async verify(params: { app: string; contact: string; message: string }, result: ToolResult): Promise<boolean> {
     if (!result.success) return false;
-    // Verification would require checking if message appears in chat
-    // For now, assume success if no error
-    return result.data.sent === true;
+    
+    const hands = handsManager.getHands();
+    if (!hands) return false;
+    
+    // Real verification: check if message actually appeared in chat
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    const tree = await hands.getAccessibilityTree();
+    
+    // Search for the sent message in the accessibility tree
+    const findMessage = (node: any, searchText: string): boolean => {
+      if (node.text && node.text.includes(searchText)) {
+        return true;
+      }
+      if (node.children) {
+        for (const child of node.children) {
+          if (findMessage(child, searchText)) return true;
+        }
+      }
+      return false;
+    };
+    
+    // Verification passes if the message text is found in the chat
+    return findMessage(tree.root, params.message);
   },
   async isAvailable(): Promise<boolean> {
     return await handsManager.isConnected();
