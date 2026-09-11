@@ -6,11 +6,13 @@ import {
   Cpu, Database, Network, Lock, FileText, Activity, ChevronRight,
   Play, Pause, RotateCcw, Layers, Target, Search, ArrowRight,
   AlertOctagon, BookOpen, BarChart3, Settings, Home, Code2,
-  Globe, Fingerprint, Radio, Box, Workflow, EyeOff
+  Globe, Fingerprint, Radio, Box, Workflow, EyeOff, Sparkles, Cpu as CpuIcon
 } from 'lucide-react';
+import AIProvidersPage from './pages/AIProvidersPage';
+import AvatarPage from './pages/AvatarPage';
 
 // ==================== TYPES ====================
-type Page = 'dashboard' | 'architecture' | 'pipeline' | 'platforms' | 'security' | 'forensic' | 'research' | 'demo' | 'reports';
+type Page = 'dashboard' | 'architecture' | 'pipeline' | 'platforms' | 'security' | 'forensic' | 'research' | 'demo' | 'reports' | 'providers' | 'avatar';
 
 interface PipelineStep {
   id: string;
@@ -173,9 +175,9 @@ function DashboardPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard label="Core Modules" value={13} icon={Cpu} color="text-indigo-400" />
+        <MetricCard label="AI Providers" value={13} icon={Cpu} color="text-purple-400" />
         <MetricCard label="Platforms" value={4} icon={Globe} color="text-cyan-400" />
-        <MetricCard label="Security Policies" value={12} icon={Shield} color="text-emerald-400" />
-        <MetricCard label="Adversarial Tests" value={12} icon={AlertOctagon} color="text-purple-400" />
+        <MetricCard label="Avatar Emotions" value={6} icon={Sparkles} color="text-pink-400" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -218,6 +220,27 @@ function DashboardPage() {
           </div>
         </motion.div>
       </div>
+
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="glass-card rounded-xl p-6">
+        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+          <Sparkles className="w-5 h-5 text-pink-400" />
+          New Features
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="p-4 rounded-lg bg-gradient-to-br from-pink-500/10 to-purple-500/10 border border-pink-500/20">
+            <h4 className="font-medium text-sm text-pink-300">🎭 Ультрареалистичный аватар</h4>
+            <p className="text-xs text-sv-muted mt-1">6 эмоций с плавными переходами: радость, грусть, смех, плач, удивление</p>
+          </div>
+          <div className="p-4 rounded-lg bg-gradient-to-br from-indigo-500/10 to-cyan-500/10 border border-indigo-500/20">
+            <h4 className="font-medium text-sm text-indigo-300">🤖 13 AI провайдеров</h4>
+            <p className="text-xs text-sv-muted mt-1">7 облачных (OpenAI, Anthropic, Google...) + 6 офлайн (Ollama, LM Studio...)</p>
+          </div>
+          <div className="p-4 rounded-lg bg-gradient-to-br from-cyan-500/10 to-emerald-500/10 border border-cyan-500/20">
+            <h4 className="font-medium text-sm text-cyan-300">🎤 Голосовое управление</h4>
+            <p className="text-xs text-sv-muted mt-1">Speech-to-Text + Text-to-Speech на русском языке</p>
+          </div>
+        </div>
+      </motion.div>
 
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="glass-card rounded-xl p-6">
         <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
@@ -1007,6 +1030,8 @@ export default function App() {
 
   const navItems: { id: Page; label: string; icon: any }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: Home },
+    { id: 'avatar', label: 'Аватар & Голос', icon: Sparkles },
+    { id: 'providers', label: 'AI Providers', icon: Cpu },
     { id: 'architecture', label: 'Architecture', icon: Layers },
     { id: 'pipeline', label: 'Pipeline', icon: Workflow },
     { id: 'platforms', label: 'Platforms', icon: Globe },
@@ -1028,6 +1053,8 @@ export default function App() {
       case 'research': return <ResearchPage />;
       case 'demo': return <DemoPage />;
       case 'reports': return <ReportsPage />;
+      case 'providers': return <AIProvidersPage />;
+      case 'avatar': return <AvatarPage />;
     }
   };
 
