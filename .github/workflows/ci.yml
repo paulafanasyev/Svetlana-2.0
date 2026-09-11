@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main, develop, 'svetlana-2.0-core-development-*' ]
   pull_request:
@@ -81,7 +82,7 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
-    
+      
     - name: Use Node.js
       uses: actions/setup-node@v4
       with:
