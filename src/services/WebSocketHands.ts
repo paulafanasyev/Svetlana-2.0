@@ -8,7 +8,7 @@ export class WebSocketHands implements PlatformHands {
   private pendingRequests = new Map<string, {
     resolve: (value: any) => void;
     reject: (error: Error) => void;
-    timeout: number;
+    timeout: ReturnType<typeof setTimeout>;
   }>();
 
   constructor(config: PlatformHandsConfig) {
