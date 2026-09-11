@@ -210,6 +210,38 @@ export const FEATURE_STATUSES: FeatureStatus[] = [
     details: 'Not in web app',
   },
 
+  // Additional Tools
+  {
+    name: 'swipe',
+    status: 'VERIFIED',
+    description: 'Perform swipe gesture',
+    details: 'Real swipe via PlatformHands',
+  },
+  {
+    name: 'press_key',
+    status: 'VERIFIED',
+    description: 'Press hardware key (back, home, volume, etc.)',
+    details: 'Real key press via PlatformHands',
+  },
+  {
+    name: 'go_home',
+    status: 'VERIFIED',
+    description: 'Navigate to home screen',
+    details: 'Real navigation via PlatformHands',
+  },
+  {
+    name: 'go_back',
+    status: 'VERIFIED',
+    description: 'Press back button with navigation verification',
+    details: 'Verifies app changed after back press',
+  },
+  {
+    name: 'search_web',
+    status: 'VERIFIED',
+    description: 'Search web using default browser',
+    details: 'Opens Chrome, types query, submits search',
+  },
+
   // Platform Hands
   {
     name: 'Android Hands',

@@ -455,6 +455,269 @@ export const sendMessageTool: Tool = {
   },
 };
 
+// Swipe tool
+export const swipeTool: Tool = {
+  id: 'swipe',
+  name: 'Swipe',
+  description: 'Perform a swipe gesture on the screen',
+  category: 'interaction',
+  riskLevel: 'low',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      startX: { type: 'number', description: 'Start X coordinate' },
+      startY: { type: 'number', description: 'Start Y coordinate' },
+      endX: { type: 'number', description: 'End X coordinate' },
+      endY: { type: 'number', description: 'End Y coordinate' },
+      duration: { type: 'number', description: 'Duration in milliseconds (default: 300)' },
+    },
+    required: ['startX', 'startY', 'endX', 'endY'],
+  },
+  async execute(params: { startX: number; startY: number; endX: number; endY: number; duration?: number }): Promise<ToolResult> {
+    await requireHands();
+    const hands = handsManager.getHands();
+    if (!hands) {
+      return { success: false, error: 'Hands not available' };
+    }
+
+    const result = await hands.swipe(params.startX, params.startY, params.endX, params.endY, params.duration);
+    
+    if (result.success) {
+      return {
+        success: true,
+        data: {
+          startX: params.startX,
+          startY: params.startY,
+          endX: params.endX,
+          endY: params.endY,
+          duration: params.duration || 300,
+          timestamp: Date.now(),
+        },
+      };
+    }
+
+    return {
+      success: false,
+      error: result.error || 'Swipe failed',
+    };
+  },
+  async verify(params: any, result: ToolResult): Promise<boolean> {
+    return result.success;
+  },
+  async isAvailable(): Promise<boolean> {
+    return await handsManager.isConnected();
+  },
+};
+
+// Press key tool
+export const pressKeyTool: Tool = {
+  id: 'press_key',
+  name: 'Press Key',
+  description: 'Press a hardware key (back, home, volume, etc.)',
+  category: 'interaction',
+  riskLevel: 'low',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      key: {
+        type: 'string',
+        description: 'Key to press (back, home, volume_up, volume_down, power, etc.)',
+        enum: ['back', 'home', 'volume_up', 'volume_down', 'power', 'menu', 'recent'],
+      },
+    },
+    required: ['key'],
+  },
+  async execute(params: { key: string }): Promise<ToolResult> {
+    await requireHands();
+    const hands = handsManager.getHands();
+    if (!hands) {
+      return { success: false, error: 'Hands not available' };
+    }
+
+    const result = await hands.pressKey(params.key);
+    
+    if (result.success) {
+      return {
+        success: true,
+        data: {
+          key: params.key,
+          timestamp: Date.now(),
+        },
+      };
+    }
+
+    return {
+      success: false,
+      error: result.error || 'Key press failed',
+    };
+  },
+  async verify(params: any, result: ToolResult): Promise<boolean> {
+    return result.success;
+  },
+  async isAvailable(): Promise<boolean> {
+    return await handsManager.isConnected();
+  },
+};
+
+// Go home tool
+export const goHomeTool: Tool = {
+  id: 'go_home',
+  name: 'Go Home',
+  description: 'Navigate to home screen',
+  category: 'navigation',
+  riskLevel: 'low',
+  inputSchema: {
+    type: 'object',
+    properties: {},
+  },
+  async execute(): Promise<ToolResult> {
+    await requireHands();
+    const hands = handsManager.getHands();
+    if (!hands) {
+      return { success: false, error: 'Hands not available' };
+    }
+
+    const result = await hands.goHome();
+    
+    if (result.success) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const currentApp = await hands.getCurrentApp();
+      
+      return {
+        success: true,
+        data: {
+          currentApp,
+          timestamp: Date.now(),
+        },
+      };
+    }
+
+    return {
+      success: false,
+      error: result.error || 'Failed to go home',
+    };
+  },
+  async verify(params: any, result: ToolResult): Promise<boolean> {
+    return result.success;
+  },
+  async isAvailable(): Promise<boolean> {
+    return await handsManager.isConnected();
+  },
+};
+
+// Go back tool
+export const goBackTool: Tool = {
+  id: 'go_back',
+  name: 'Go Back',
+  description: 'Press back button',
+  category: 'navigation',
+  riskLevel: 'low',
+  inputSchema: {
+    type: 'object',
+    properties: {},
+  },
+  async execute(): Promise<ToolResult> {
+    await requireHands();
+    const hands = handsManager.getHands();
+    if (!hands) {
+      return { success: false, error: 'Hands not available' };
+    }
+
+    const beforeApp = await hands.getCurrentApp();
+    const result = await hands.goBack();
+    
+    if (result.success) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const afterApp = await hands.getCurrentApp();
+      
+      return {
+        success: true,
+        data: {
+          beforeApp,
+          afterApp,
+          navigated: beforeApp !== afterApp,
+          timestamp: Date.now(),
+        },
+      };
+    }
+
+    return {
+      success: false,
+      error: result.error || 'Failed to go back',
+    };
+  },
+  async verify(params: any, result: ToolResult): Promise<boolean> {
+    return result.success && result.data.navigated;
+  },
+  async isAvailable(): Promise<boolean> {
+    return await handsManager.isConnected();
+  },
+};
+
+// Search web tool
+export const searchWebTool: Tool = {
+  id: 'search_web',
+  name: 'Search Web',
+  description: 'Search the web using default browser',
+  category: 'data',
+  riskLevel: 'low',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'Search query' },
+    },
+    required: ['query'],
+  },
+  async execute(params: { query: string }): Promise<ToolResult> {
+    await requireHands();
+    const hands = handsManager.getHands();
+    if (!hands) {
+      return { success: false, error: 'Hands not available' };
+    }
+
+    // Open browser with search query
+    const browserPackage = 'com.android.chrome';
+    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(params.query)}`;
+    
+    const launchResult = await hands.launchApp(browserPackage);
+    if (!launchResult.success) {
+      return { success: false, error: 'Failed to open browser' };
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Type URL in address bar
+    const typeResult = await hands.type(searchUrl);
+    if (!typeResult.success) {
+      return { success: false, error: 'Failed to type search query' };
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Press enter
+    const enterResult = await hands.pressKey('enter');
+    if (!enterResult.success) {
+      return { success: false, error: 'Failed to submit search' };
+    }
+
+    return {
+      success: true,
+      data: {
+        query: params.query,
+        url: searchUrl,
+        browser: browserPackage,
+        timestamp: Date.now(),
+      },
+    };
+  },
+  async verify(params: any, result: ToolResult): Promise<boolean> {
+    return result.success;
+  },
+  async isAvailable(): Promise<boolean> {
+    return await handsManager.isConnected();
+  },
+};
+
 // Import toolRegistry and register all real tools
 import { toolRegistry } from './ToolRegistry';
 
@@ -465,13 +728,23 @@ export function registerRealTools() {
   toolRegistry.registerTool(typeTextTool);
   toolRegistry.registerTool(captureScreenTool);
   toolRegistry.registerTool(sendMessageTool);
+  toolRegistry.registerTool(swipeTool);
+  toolRegistry.registerTool(pressKeyTool);
+  toolRegistry.registerTool(goHomeTool);
+  toolRegistry.registerTool(goBackTool);
+  toolRegistry.registerTool(searchWebTool);
   
-  console.log('[RealTools] Registered 5 real tools:');
+  console.log('[RealTools] Registered 10 real tools:');
   console.log('  - open_app (requires Android connection)');
   console.log('  - tap_element (requires Android connection)');
   console.log('  - type_text (requires Android connection)');
   console.log('  - capture_screen (requires Android connection)');
   console.log('  - send_message (requires Android connection + confirmation)');
+  console.log('  - swipe (requires Android connection)');
+  console.log('  - press_key (requires Android connection)');
+  console.log('  - go_home (requires Android connection)');
+  console.log('  - go_back (requires Android connection)');
+  console.log('  - search_web (requires Android connection)');
   console.log('[RealTools] All tools use PlatformHands via HandsManager');
   console.log('[RealTools] NO stub implementations - all require real Android device');
 }

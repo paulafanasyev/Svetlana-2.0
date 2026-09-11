@@ -292,39 +292,87 @@ export const webObserver: Observer = {
   },
 };
 
-// Mock Android Observer (placeholder for real implementation)
+// Android Observer - Real implementation via HandsManager
+import { handsManager } from './HandsManager';
+
 export const androidObserver: Observer = {
   id: 'android',
   name: 'Android Observer',
   platform: 'android',
 
   async observe(): Promise<ObservationResult> {
-    // This would integrate with Android AccessibilityService
-    return {
-      success: false,
-      error: 'Android observer requires native implementation',
-      confidence: 0,
-    };
+    const hands = handsManager.getHands();
+    if (!hands) {
+      return {
+        success: false,
+        error: 'Android device not connected',
+        confidence: 0,
+      };
+    }
+
+    try {
+      const tree = await hands.getAccessibilityTree();
+      const currentApp = await hands.getCurrentApp();
+      
+      return {
+        success: true,
+        state: {
+          timestamp: tree.timestamp,
+          platform: 'android',
+          currentApp: currentApp || undefined,
+          elements: tree.root.children || [],
+        },
+        confidence: 1.0,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: (error as Error).message,
+        confidence: 0,
+      };
+    }
   },
 
   async findElementByText(text: string): Promise<UIElement | null> {
-    return null;
+    const hands = handsManager.getHands();
+    if (!hands) return null;
+    
+    try {
+      return await hands.findElementByText(text);
+    } catch (error) {
+      return null;
+    }
   },
 
   async findElementById(id: string): Promise<UIElement | null> {
-    return null;
+    const hands = handsManager.getHands();
+    if (!hands) return null;
+    
+    try {
+      return await hands.findElementById(id);
+    } catch (error) {
+      return null;
+    }
   },
 
   async elementExists(textOrId: string): Promise<boolean> {
-    return false;
+    const element = await this.findElementByText(textOrId) || await this.findElementById(textOrId);
+    return element !== null;
   },
 
   async getCurrentApp(): Promise<string | null> {
-    return null;
+    const hands = handsManager.getHands();
+    if (!hands) return null;
+    
+    try {
+      return await hands.getCurrentApp();
+    } catch (error) {
+      return null;
+    }
   },
 
   async isAvailable(): Promise<boolean> {
-    return false; // Requires Android Hands
+    return await handsManager.isConnected();
   },
 };
 
