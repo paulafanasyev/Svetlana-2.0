@@ -1,18 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mic, MicOff, Volume2, VolumeX, Settings, X } from 'lucide-react';
+import { SVETLANA_IDENTITY, getAvatarStateOverlay, getAvatarStateFromEmotion } from '../services/AvatarIdentity';
 
 type Emotion = 'neutral' | 'happy' | 'sad' | 'laughing' | 'crying' | 'surprised' | 'talking';
 
-const AVATAR_URLS: Record<Emotion, string> = {
-  neutral: 'https://image.qwenlm.ai/generated-images/d8b8a3e6-3ce8-4a10-9263-3f2280c94260/_result.png',
-  happy: 'https://image.qwenlm.ai/generated-images/a4a76574-febd-4ddd-a2b1-b1a9724656c4/_result.png',
-  sad: 'https://image.qwenlm.ai/generated-images/f458198f-ddc1-4210-90ca-440c24e2cb40/_result.png',
-  laughing: 'https://image.qwenlm.ai/generated-images/be770499-b58a-4c3a-aa60-898c2c143a55/_result.png',
-  crying: 'https://image.qwenlm.ai/generated-images/54e23945-f164-4f58-8428-66b62d897e09/_result.png',
-  surprised: 'https://image.qwenlm.ai/generated-images/8e17a302-2a9c-4e7e-9b14-cf51828b2196/_result.png',
-  talking: 'https://image.qwenlm.ai/generated-images/a4a76574-febd-4ddd-a2b1-b1a9724656c4/_result.png',
-};
+// Single master image for all states - unified identity
+const MASTER_AVATAR = SVETLANA_IDENTITY.masterImage;
 
 interface AvatarProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
@@ -50,18 +44,14 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
         className={`relative ${sizeClasses[size]} rounded-full overflow-hidden cursor-pointer shadow-2xl shadow-indigo-500/20 border-4 border-indigo-500/30`}
         onClick={() => interactive && setShowControls(!showControls)}
       >
-        <AnimatePresence mode="wait">
-          <motion.img
-            key={currentEmotion}
-            src={AVATAR_URLS[currentEmotion]}
-            alt={`Svetlana - ${currentEmotion}`}
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 1.05 }}
-            transition={{ duration: 0.3 }}
-            className="w-full h-full object-cover"
-          />
-        </AnimatePresence>
+        {/* Single master identity with state overlays */}
+        <motion.img
+          src={MASTER_AVATAR}
+          alt="Svetlana"
+          className={`w-full h-full object-cover transition-all duration-300 ${getAvatarStateOverlay(getAvatarStateFromEmotion(currentEmotion)).overlay || ''}`}
+          animate={getAvatarStateOverlay(getAvatarStateFromEmotion(currentEmotion)).animation === 'pulse' ? { scale: [1, 1.02, 1] } : {}}
+          transition={getAvatarStateOverlay(getAvatarStateFromEmotion(currentEmotion)).animation === 'pulse' ? { duration: 2, repeat: Infinity } : {}}
+        />
 
         {/* Talking overlay animation */}
         {isTalking && (

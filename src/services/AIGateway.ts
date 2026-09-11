@@ -110,17 +110,45 @@ class AIGateway {
     }
   }
 
-  async chat(messages: ChatMessage[], options?: { temperature?: number; max_tokens?: number }): Promise<AIResponse> {
-    const provider = this.getActiveProvider();
+  async chat(messages: ChatMessage[], options?: { temperature?: number; max_tokens?: number }, providerId?: string): Promise<AIResponse> {
+    // Use specified provider or fall back to active provider
+    const provider = providerId ? this.providers.get(providerId) : this.getActiveProvider();
     if (!provider) {
-      throw new Error('No active AI provider configured');
+      throw new Error('No AI provider configured');
     }
 
+    try {
+      const response = await this.callProvider(provider, messages, options);
+      return response;
+    } catch (error: any) {
+      // Try fallback providers if available
+      if (!providerId && this.providers.size > 1) {
+        const fallbackProviders = this.getFallbackProviders(provider.id);
+        for (const fallback of fallbackProviders) {
+          try {
+            console.warn(`Provider ${provider.name} failed, trying fallback: ${fallback.name}`);
+            const fallbackResponse = await this.callProvider(fallback, messages, options);
+            return fallbackResponse;
+          } catch (fallbackError) {
+            console.error(`Fallback ${fallback.name} also failed:`, fallbackError);
+            continue;
+          }
+        }
+      }
+      throw error;
+    }
+  }
+
+  private async callProvider(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
     switch (provider.id) {
       case 'openai':
         return this.callOpenAI(provider, messages, options);
       case 'anthropic':
         return this.callAnthropic(provider, messages, options);
+      case 'google':
+        return this.callGoogle(provider, messages, options);
+      case 'mistral':
+        return this.callMistral(provider, messages, options);
       case 'groq':
         return this.callGroq(provider, messages, options);
       case 'openrouter':
@@ -129,9 +157,19 @@ class AIGateway {
         return this.callDeepSeek(provider, messages, options);
       case 'ollama':
         return this.callOllama(provider, messages, options);
+      case 'lmstudio':
+        return this.callLMStudio(provider, messages, options);
       default:
         throw new Error(`Provider ${provider.id} not implemented`);
     }
+  }
+
+  private getFallbackProviders(excludeId: string): AIProvider[] {
+    const fallbackOrder = ['openai', 'anthropic', 'groq', 'openrouter', 'deepseek', 'ollama'];
+    return fallbackOrder
+      .filter(id => id !== excludeId && this.providers.has(id))
+      .map(id => this.providers.get(id)!)
+      .filter(p => p.enabled);
   }
 
   private async callOpenAI(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
@@ -313,6 +351,105 @@ class AIGateway {
     };
   }
 
+  private async callGoogle(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    // Google Gemini API
+    const systemMessage = messages.find(m => m.role === 'system');
+    const chatMessages = messages.filter(m => m.role !== 'system');
+    
+    const contents = chatMessages.map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }]
+    }));
+
+    const response = await fetch(
+      `${provider.endpoint}/models/${provider.model}:generateContent?key=${provider.apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents,
+          systemInstruction: systemMessage ? { parts: [{ text: systemMessage.content }] } : undefined,
+          generationConfig: {
+            temperature: options?.temperature ?? 0.7,
+            maxOutputTokens: options?.max_tokens,
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Google API error: ${error.error?.message || response.statusText}`);
+    }
+
+    const data = await response.json();
+    return {
+      content: data.candidates[0].content.parts[0].text,
+      provider: provider.name,
+      model: provider.model,
+      usage: data.usageMetadata ? {
+        prompt_tokens: data.usageMetadata.promptTokenCount,
+        completion_tokens: data.usageMetadata.candidatesTokenCount,
+        total_tokens: data.usageMetadata.totalTokenCount,
+      } : undefined,
+    };
+  }
+
+  private async callMistral(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    const response = await fetch(`${provider.endpoint}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${provider.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: provider.model,
+        messages,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.max_tokens ?? 4096,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Mistral API error: ${error.message || response.statusText}`);
+    }
+
+    const data = await response.json();
+    return {
+      content: data.choices[0].message.content,
+      provider: provider.name,
+      model: provider.model,
+      usage: data.usage,
+    };
+  }
+
+  private async callLMStudio(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    // LM Studio uses OpenAI-compatible API
+    const response = await fetch(`${provider.endpoint}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: provider.model,
+        messages,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.max_tokens ?? 4096,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`LM Studio API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return {
+      content: data.choices[0].message.content,
+      provider: provider.name,
+      model: provider.model,
+      usage: data.usage,
+    };
+  }
+
   async testConnection(providerId: string): Promise<boolean> {
     const provider = this.providers.get(providerId);
     if (!provider) return false;
@@ -321,7 +458,7 @@ class AIGateway {
       const testMessages: ChatMessage[] = [
         { role: 'user', content: 'Hello' }
       ];
-      await this.chat(testMessages);
+      await this.chat(testMessages, undefined, providerId);
       return true;
     } catch (error) {
       console.error(`Connection test failed for ${providerId}:`, error);

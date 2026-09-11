@@ -147,7 +147,6 @@ export default function AvatarPage() {
   };
 
   const handleVoiceCommand = (command: string) => {
-    setMessages(prev => [...prev, { role: 'user', content: `🎤 ${command}`, timestamp: Date.now() }]);
     sendMessage(command);
   };
 

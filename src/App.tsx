@@ -13,6 +13,7 @@ import AvatarPage from './pages/AvatarPage';
 import OrchestratorPage from './pages/OrchestratorPage';
 import AndroidPage from './pages/AndroidPage';
 import { aiGateway } from './services/AIGateway';
+import { getStatusCounts } from './services/FeatureStatus';
 
 // ==================== TYPES ====================
 type Page = 'dashboard' | 'architecture' | 'pipeline' | 'platforms' | 'security' | 'forensic' | 'research' | 'demo' | 'reports' | 'providers' | 'avatar' | 'orchestrator' | 'android';
@@ -226,23 +227,26 @@ function DashboardPage() {
 
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="glass-card rounded-xl p-6">
         <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-pink-400" />
-          New Features
+          <Activity className="w-5 h-5 text-emerald-400" />
+          Реальный статус реализации
         </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="p-4 rounded-lg bg-gradient-to-br from-pink-500/10 to-purple-500/10 border border-pink-500/20">
-            <h4 className="font-medium text-sm text-pink-300">🎭 Ультрареалистичный аватар</h4>
-            <p className="text-xs text-sv-muted mt-1">6 эмоций с плавными переходами: радость, грусть, смех, плач, удивление</p>
-          </div>
-          <div className="p-4 rounded-lg bg-gradient-to-br from-indigo-500/10 to-cyan-500/10 border border-indigo-500/20">
-            <h4 className="font-medium text-sm text-indigo-300">🤖 13 AI провайдеров</h4>
-            <p className="text-xs text-sv-muted mt-1">7 облачных (OpenAI, Anthropic, Google...) + 6 офлайн (Ollama, LM Studio...)</p>
-          </div>
-          <div className="p-4 rounded-lg bg-gradient-to-br from-cyan-500/10 to-emerald-500/10 border border-cyan-500/20">
-            <h4 className="font-medium text-sm text-cyan-300">🎤 Голосовое управление</h4>
-            <p className="text-xs text-sv-muted mt-1">Speech-to-Text + Text-to-Speech на русском языке</p>
-          </div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {[
+            { status: 'VERIFIED', count: getStatusCounts().VERIFIED, color: 'emerald' },
+            { status: 'PARTIAL', count: getStatusCounts().PARTIAL, color: 'yellow' },
+            { status: 'CODE_READY', count: getStatusCounts().CODE_READY, color: 'cyan' },
+            { status: 'ARCHITECTURE', count: getStatusCounts().ARCHITECTURE, color: 'blue' },
+            { status: 'NOT_IMPLEMENTED', count: getStatusCounts().NOT_IMPLEMENTED, color: 'red' },
+          ].map(item => (
+            <div key={item.status} className={`p-3 rounded-lg bg-${item.color}-500/10 border border-${item.color}-500/30`}>
+              <p className={`text-2xl font-bold text-${item.color}-400`}>{item.count}</p>
+              <p className="text-xs text-sv-muted">{item.status}</p>
+            </div>
+          ))}
         </div>
+        <p className="text-xs text-sv-muted mt-3">
+          Честная оценка: {getStatusCounts().VERIFIED} проверенных компонентов, {getStatusCounts().NOT_IMPLEMENTED} не реализовано
+        </p>
       </motion.div>
 
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }} className="glass-card rounded-xl p-6 border border-indigo-500/20">
