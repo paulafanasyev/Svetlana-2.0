@@ -10,10 +10,12 @@ import {
 } from 'lucide-react';
 import AIProvidersPage from './pages/AIProvidersPage';
 import AvatarPage from './pages/AvatarPage';
+import OrchestratorPage from './pages/OrchestratorPage';
+import AndroidPage from './pages/AndroidPage';
 import { aiGateway } from './services/AIGateway';
 
 // ==================== TYPES ====================
-type Page = 'dashboard' | 'architecture' | 'pipeline' | 'platforms' | 'security' | 'forensic' | 'research' | 'demo' | 'reports' | 'providers' | 'avatar';
+type Page = 'dashboard' | 'architecture' | 'pipeline' | 'platforms' | 'security' | 'forensic' | 'research' | 'demo' | 'reports' | 'providers' | 'avatar' | 'orchestrator' | 'android';
 
 interface PipelineStep {
   id: string;
@@ -1068,6 +1070,8 @@ export default function App() {
     { id: 'dashboard', label: 'Dashboard', icon: Home },
     { id: 'avatar', label: 'Аватар & Голос', icon: Sparkles },
     { id: 'providers', label: 'AI Providers', icon: Cpu },
+    { id: 'orchestrator', label: 'Orchestrator', icon: Workflow },
+    { id: 'android', label: 'Android Hands', icon: Smartphone },
     { id: 'architecture', label: 'Architecture', icon: Layers },
     { id: 'pipeline', label: 'Pipeline', icon: Workflow },
     { id: 'platforms', label: 'Platforms', icon: Globe },
@@ -1081,6 +1085,10 @@ export default function App() {
   const renderPage = () => {
     switch (page) {
       case 'dashboard': return <DashboardPage />;
+      case 'avatar': return <AvatarPage />;
+      case 'providers': return <AIProvidersPage />;
+      case 'orchestrator': return <OrchestratorPage />;
+      case 'android': return <AndroidPage />;
       case 'architecture': return <ArchitecturePage />;
       case 'pipeline': return <PipelinePage />;
       case 'platforms': return <PlatformsPage />;
@@ -1089,8 +1097,6 @@ export default function App() {
       case 'research': return <ResearchPage />;
       case 'demo': return <DemoPage />;
       case 'reports': return <ReportsPage />;
-      case 'providers': return <AIProvidersPage />;
-      case 'avatar': return <AvatarPage />;
     }
   };
 

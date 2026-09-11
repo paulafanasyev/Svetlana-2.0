@@ -5,13 +5,13 @@ import { Mic, MicOff, Volume2, VolumeX, Settings, X } from 'lucide-react';
 type Emotion = 'neutral' | 'happy' | 'sad' | 'laughing' | 'crying' | 'surprised' | 'talking';
 
 const AVATAR_URLS: Record<Emotion, string> = {
-  neutral: 'https://image.qwenlm.ai/generated-images/07c5ccbd-c93d-47c6-b0b7-2452fcdb7f1d/_result.png',
-  happy: 'https://image.qwenlm.ai/generated-images/b4d5c26b-810f-41d3-8b0a-518ddd3d3a33/_result.png',
-  sad: 'https://image.qwenlm.ai/generated-images/fbe5540e-13d9-4096-8303-0f91049cb75a/_result.png',
-  laughing: 'https://image.qwenlm.ai/generated-images/cb1cc6cd-c2c3-498a-a0e4-aa912a977e29/_result.png',
+  neutral: 'https://image.qwenlm.ai/generated-images/d8b8a3e6-3ce8-4a10-9263-3f2280c94260/_result.png',
+  happy: 'https://image.qwenlm.ai/generated-images/a4a76574-febd-4ddd-a2b1-b1a9724656c4/_result.png',
+  sad: 'https://image.qwenlm.ai/generated-images/f458198f-ddc1-4210-90ca-440c24e2cb40/_result.png',
+  laughing: 'https://image.qwenlm.ai/generated-images/be770499-b58a-4c3a-aa60-898c2c143a55/_result.png',
   crying: 'https://image.qwenlm.ai/generated-images/54e23945-f164-4f58-8428-66b62d897e09/_result.png',
   surprised: 'https://image.qwenlm.ai/generated-images/8e17a302-2a9c-4e7e-9b14-cf51828b2196/_result.png',
-  talking: 'https://image.qwenlm.ai/generated-images/b4d5c26b-810f-41d3-8b0a-518ddd3d3a33/_result.png',
+  talking: 'https://image.qwenlm.ai/generated-images/a4a76574-febd-4ddd-a2b1-b1a9724656c4/_result.png',
 };
 
 interface AvatarProps {
