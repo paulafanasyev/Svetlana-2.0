@@ -3,6 +3,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { HandsManager } from '../services/HandsManager';
+import { handsManager } from '../services/HandsManager';
 import { WebSocketHands } from '../services/WebSocketHands';
 import { HTTPHands } from '../services/HTTPHands';
 import { toolRegistry } from '../services/ToolRegistry';
@@ -166,6 +167,10 @@ describe('Integration: Tool Execution Flow', () => {
     const sendMessage = toolRegistry.getTool('send_message');
     expect(sendMessage).toBeDefined();
     expect(sendMessage?.riskLevel).toBe('high');
+    
+    // Mock connection to allow tool execution
+    vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
+    vi.spyOn(handsManager, 'getHands').mockReturnValue({} as any);
     
     const result = await toolRegistry.executeTool('send_message', {
       app: 'org.telegram.messenger',
