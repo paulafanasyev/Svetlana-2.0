@@ -1,9 +1,9 @@
-"""Svetlana training smoke run.
+"""Svetlana Google Gemma 4 E2B smoke training.
 
-Designed for Kaggle/Unsloth. It detects the available GPU and uses a current
-Qwen3.5 small model with bf16 LoRA rather than assuming a P100 or 4-bit QLoRA.
-This script is intentionally a smoke run: it proves the training pipeline can
-start and export an adapter; it does not prove production quality.
+Target: Google Gemma 4 E2B instruction-tuned model with 4-bit LoRA on a
+free Tesla T4/Colab-class GPU. LiteRT-LM is the later edge runtime/export
+target. This smoke run proves model loading, SFT/LoRA training and adapter
+export; it does not prove production quality or LiteRT-LM conversion.
 """
 import json
 import os
@@ -11,16 +11,17 @@ import platform
 from pathlib import Path
 
 import torch
+import unsloth
 from datasets import load_dataset
 from unsloth import FastLanguageModel
 from trl import SFTTrainer, SFTConfig
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "datasets" / "svetlana_seed.jsonl"
-OUT = ROOT / "outputs" / "svetlana_smoke"
+OUT = ROOT / "outputs" / "svetlana_gemma4_e2b_smoke"
 MAX_SEQ = int(os.getenv("SVETLANA_MAX_SEQ_LENGTH", "1024"))
 MAX_STEPS = int(os.getenv("SVETLANA_MAX_STEPS", "20"))
-MODEL = os.getenv("SVETLANA_BASE_MODEL", "unsloth/Qwen3.5-0.8B")
+MODEL = os.getenv("SVETLANA_BASE_MODEL", "google/gemma-4-E2B-it")
 
 if not torch.cuda.is_available():
     raise RuntimeError("No CUDA GPU detected. Do not label this as a GPU training run.")
@@ -33,17 +34,19 @@ print(json.dumps({
     "cuda": torch.version.cuda,
     "python": platform.python_version(),
     "model": MODEL,
+    "unsloth": unsloth.__version__,
 }, ensure_ascii=False))
 
-# Current Unsloth guidance for Qwen3.5 recommends bf16 LoRA and discourages
-# 4-bit QLoRA because of quantization differences.
+# Gemma 4 E2B full BF16 weights are too large for a 16-GB-class T4 once
+# optimizer/training state is included. Use 4-bit base weights + LoRA.
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=MODEL,
     max_seq_length=MAX_SEQ,
-    load_in_4bit=False,
-    load_in_16bit=True,
+    load_in_4bit=True,
+    load_in_16bit=False,
     full_finetuning=False,
 )
+
 model = FastLanguageModel.get_peft_model(
     model,
     r=16,
@@ -57,6 +60,7 @@ model = FastLanguageModel.get_peft_model(
 )
 
 dataset = load_dataset("json", data_files=str(DATA), split="train")
+print(json.dumps({"event": "dataset", "train_examples": len(dataset)}, ensure_ascii=False))
 
 trainer = SFTTrainer(
     model=model,
@@ -75,9 +79,12 @@ trainer = SFTTrainer(
         seed=3407,
         dataset_num_proc=1,
         report_to="none",
-        assistant_only_loss=True,
+        # Current Unsloth/TRL does not support assistant-only loss for
+        # Gemma 4's vision-language model class.
+        assistant_only_loss=False,
     ),
 )
+
 result = trainer.train()
 print(json.dumps({
     "event": "train_complete",
