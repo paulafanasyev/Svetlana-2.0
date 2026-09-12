@@ -1,17 +1,31 @@
-# Kaggle run: Svetlana v0.1
+# Svetlana GPU smoke training: Google Colab + Gemma 4 E2B
 
-1. Open a Kaggle Notebook and enable GPU.
-2. As of 2026-09-12, Kaggle states T4x2 is the replacement for P100, with two 16 GB GPUs; P100 is scheduled to retire on 2026-09-15.
-3. Clone this repository and checkout `svetlana-self-employed-crm-foundation`.
-4. Install current Unsloth using its current installation instructions rather than pinning an old release.
-5. Select the base model only after checking the current Unsloth model-specific fine-tuning guide and the actual accelerator.
-6. Train first on `training/datasets/svetlana_seed.jsonl` as a smoke test.
-7. Do not claim the model is trained until a Kaggle run ID, logs and exported artifact are available.
-8. For the next run, add the official NPD seed and a held-out evaluation set; never train on the held-out set.
+The training smoke path now uses Google's `google/gemma-4-E2B-it` with 4-bit LoRA. The current free execution environment is Google Colab with a Tesla T4.
 
-Recommended first experiment: a small, reproducible SFT/LoRA run with fixed seed 3407, one training configuration, and an explicit artifact checksum. The purpose is to validate the pipeline before spending GPU time on a large corpus.
+## Run
 
-References:
-- https://docs.unsloth.ai/basics/tutorial
-- https://docs.unsloth.ai/get-started/installing-%2B-updating/pip-install
-- https://www.kaggle.com/product-announcements/735239
+1. Open Google Colab and attach a GPU runtime.
+2. Clone `paulafanasyev/Svetlana-2.0` branch `gpu-training-auto-run`.
+3. Install current Unsloth.
+4. Run `training/kaggle/train_svetlana_smoke.py`.
+5. The script must print real hardware/model/training/export events.
+6. Do not call the model trained until the run reaches `train_complete` and `export_complete` and the adapter files are inspected and checksummed.
+
+## Model
+
+- Base: `google/gemma-4-E2B-it`
+- Training: SFT + LoRA
+- T4 mode: 4-bit base weights + LoRA, batch size 1, gradient accumulation 4
+- Smoke dataset: `training/datasets/svetlana_seed.jsonl`
+- Held-out evaluation: `training/datasets/svetlana_eval.jsonl` is never used for training
+- Official NPD data remains separate and can be added to a later training run
+
+## Edge target
+
+LiteRT-LM is the Google on-device runtime track. A successful LoRA adapter is **not** automatically a LiteRT-LM model. Conversion must be demonstrated with an actual artifact and an actual inference run.
+
+## Evidence rule
+
+- VERIFIED: code/config or successful CI validation.
+- NOT PROVEN: actual model training, adapter quality, LiteRT-LM conversion or Android inference until logs/artifacts exist.
+- Never commit trained model weights into Git.
