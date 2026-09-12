@@ -60,26 +60,43 @@ model = FastLanguageModel.get_peft_model(
 dataset = load_dataset("json", data_files=str(DATA), split="train")
 print(json.dumps({"event": "dataset", "train_examples": len(dataset)}, ensure_ascii=False))
 
+# Convert the conversational records to plain text before constructing
+# SFTTrainer. This follows the stable TRL data model and avoids the current
+# Unsloth formatting_func ambiguity: Unsloth calls formatting_func both with
+# a single example for validation and with a batched mapping object later.
+# Pre-formatting once gives the trainer a normal {"text": ...} dataset.
+def format_example(example):
+    messages = example.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise ValueError("Each training example must contain a non-empty 'messages' list.")
+    if not all(isinstance(message, dict) for message in messages):
+        raise ValueError("Each message must be a role/content dictionary.")
+    text = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=False,
+    )
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("Gemma chat template produced empty/non-string training text.")
+    return {"text": text}
 
-def formatting_func(examples):
-    """Convert a batch of OpenAI-style messages records to Gemma chat text."""
-    conversations = examples.get("messages")
-    if not isinstance(conversations, list) or not conversations:
-        raise ValueError("Training batch must contain a non-empty 'messages' list.")
-    return [
-        tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=False,
-        )
-        for messages in conversations
-    ]
+formatted_dataset = dataset.map(
+    format_example,
+    remove_columns=dataset.column_names,
+    desc="Formatting Gemma chat dataset",
+)
+print(json.dumps({
+    "event": "formatted_dataset",
+    "train_examples": len(formatted_dataset),
+    "columns": formatted_dataset.column_names,
+    "sample_chars": len(formatted_dataset[0]["text"]),
+}, ensure_ascii=False))
 
 trainer = SFTTrainer(
     model=model,
     processing_class=tokenizer,
-    train_dataset=dataset,
-    formatting_func=formatting_func,
+    train_dataset=formatted_dataset,
+    dataset_text_field="text",
     args=SFTConfig(
         max_length=MAX_SEQ,
         per_device_train_batch_size=1,
