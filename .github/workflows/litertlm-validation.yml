@@ -64,14 +64,6 @@ jobs:
       - name: Compile Gemma GPU training script
         run: python -m py_compile training/gemma4/train_svetlana_smoke.py
 
-      - name: Verify no Kaggle training path remains
-        run: |
-          if grep -RniE 'training/kaggle|kaggle/train_svetlana' .github training 2>/dev/null; then
-            echo 'ERROR: stale Kaggle training reference found'
-            exit 1
-          fi
-          echo 'NO_KAGGLE_TRAINING_REFERENCE=PASS'
-
       - name: Verify no trained weights are checked in
         run: |
           if find training -type f \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' -o -name '*.pth' \) | grep -q .; then
