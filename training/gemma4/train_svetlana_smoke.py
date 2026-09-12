@@ -1,10 +1,4 @@
-"""Svetlana Google Gemma 4 E2B smoke training.
-
-Target: Google Gemma 4 E2B instruction-tuned model with 4-bit LoRA on a
-free Tesla T4/Colab-class GPU. LiteRT-LM is the later edge runtime/export
-target. This smoke run proves model loading, SFT/LoRA training and adapter
-export; it does not prove production quality or LiteRT-LM conversion.
-"""
+"""Svetlana Google Gemma 4 E2B smoke training."""
 import json
 import os
 import platform
@@ -12,12 +6,15 @@ from pathlib import Path
 
 import torch
 import unsloth
-from datasets import load_dataset
+from datasets import load_dataset, concatenate_datasets
 from unsloth import FastLanguageModel
 from trl import SFTTrainer, SFTConfig
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "datasets" / "svetlana_seed.jsonl"
+DATA_FILES = [
+    ROOT / "datasets" / "svetlana_seed.jsonl",
+    ROOT / "datasets" / "svetlana_capability_seed.jsonl",
+]
 OUT = ROOT / "outputs" / "svetlana_gemma4_e2b_smoke"
 MAX_SEQ = int(os.getenv("SVETLANA_MAX_SEQ_LENGTH", "1024"))
 MAX_STEPS = int(os.getenv("SVETLANA_MAX_STEPS", "20"))
@@ -27,101 +24,43 @@ if not torch.cuda.is_available():
     raise RuntimeError("No CUDA GPU detected. Do not label this as a GPU training run.")
 
 props = torch.cuda.get_device_properties(0)
-print(json.dumps({
-    "event": "hardware",
-    "gpu": props.name,
-    "vram_gb": round(props.total_memory / 1024**3, 2),
-    "cuda": torch.version.cuda,
-    "python": platform.python_version(),
-    "model": MODEL,
-    "unsloth": unsloth.__version__,
-}, ensure_ascii=False))
+print(json.dumps({"event":"hardware","gpu":props.name,"vram_gb":round(props.total_memory/1024**3,2),"cuda":torch.version.cuda,"python":platform.python_version(),"model":MODEL,"unsloth":unsloth.__version__}, ensure_ascii=False))
 
-model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name=MODEL,
-    max_seq_length=MAX_SEQ,
-    load_in_4bit=True,
-    load_in_16bit=False,
-    full_finetuning=False,
-)
+model, tokenizer = FastLanguageModel.from_pretrained(model_name=MODEL, max_seq_length=MAX_SEQ, load_in_4bit=True, load_in_16bit=False, full_finetuning=False)
+model = FastLanguageModel.get_peft_model(model, r=16, target_modules=["q_proj","k_proj","v_proj","o_proj","gate_proj","up_proj","down_proj"], lora_alpha=16, lora_dropout=0, bias="none", use_gradient_checkpointing="unsloth", random_state=3407, max_seq_length=MAX_SEQ)
 
-model = FastLanguageModel.get_peft_model(
-    model,
-    r=16,
-    target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-    lora_alpha=16,
-    lora_dropout=0,
-    bias="none",
-    use_gradient_checkpointing="unsloth",
-    random_state=3407,
-    max_seq_length=MAX_SEQ,
-)
+seed_datasets = []
+for data_file in DATA_FILES:
+    current = load_dataset("json", data_files=str(data_file), split="train")
+    print(json.dumps({"event":"dataset_source","path":str(data_file.relative_to(ROOT)),"examples":len(current)}, ensure_ascii=False))
+    seed_datasets.append(current)
+dataset = concatenate_datasets(seed_datasets)
+print(json.dumps({"event":"dataset","train_examples":len(dataset)}, ensure_ascii=False))
 
-dataset = load_dataset("json", data_files=str(DATA), split="train")
-print(json.dumps({"event": "dataset", "train_examples": len(dataset)}, ensure_ascii=False))
-
-# Convert the conversational records to plain text before constructing
-# SFTTrainer. This follows the stable TRL data model and avoids the current
-# Unsloth formatting_func ambiguity: Unsloth calls formatting_func both with
-# a single example for validation and with a batched mapping object later.
-# Pre-formatting once gives the trainer a normal {"text": ...} dataset.
 def format_example(example):
     messages = example.get("messages")
     if not isinstance(messages, list) or not messages:
         raise ValueError("Each training example must contain a non-empty 'messages' list.")
     if not all(isinstance(message, dict) for message in messages):
         raise ValueError("Each message must be a role/content dictionary.")
-    text = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=False,
-    )
+    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
     if not isinstance(text, str) or not text.strip():
         raise ValueError("Gemma chat template produced empty/non-string training text.")
     return {"text": text}
 
-formatted_dataset = dataset.map(
-    format_example,
-    remove_columns=dataset.column_names,
-    desc="Formatting Gemma chat dataset",
-)
-print(json.dumps({
-    "event": "formatted_dataset",
-    "train_examples": len(formatted_dataset),
-    "columns": formatted_dataset.column_names,
-    "sample_chars": len(formatted_dataset[0]["text"]),
-}, ensure_ascii=False))
+formatted_dataset = dataset.map(format_example, remove_columns=dataset.column_names, desc="Formatting Gemma chat dataset")
+print(json.dumps({"event":"formatted_dataset","train_examples":len(formatted_dataset),"columns":formatted_dataset.column_names,"sample_chars":len(formatted_dataset[0]["text"])}, ensure_ascii=False))
 
 trainer = SFTTrainer(
     model=model,
     processing_class=tokenizer,
     train_dataset=formatted_dataset,
     dataset_text_field="text",
-    args=SFTConfig(
-        max_length=MAX_SEQ,
-        per_device_train_batch_size=1,
-        gradient_accumulation_steps=4,
-        warmup_steps=2,
-        max_steps=MAX_STEPS,
-        learning_rate=1e-4,
-        logging_steps=1,
-        output_dir=str(OUT),
-        optim="adamw_8bit",
-        seed=3407,
-        dataset_num_proc=1,
-        report_to="none",
-        assistant_only_loss=False,
-    ),
+    args=SFTConfig(max_length=MAX_SEQ, per_device_train_batch_size=1, gradient_accumulation_steps=4, warmup_steps=2, max_steps=MAX_STEPS, learning_rate=1e-4, logging_steps=1, output_dir=str(OUT), optim="adamw_8bit", seed=3407, dataset_num_proc=1, report_to="none", assistant_only_loss=False),
 )
-
 result = trainer.train()
-print(json.dumps({
-    "event": "train_complete",
-    "global_step": result.global_step,
-    "training_loss": result.training_loss,
-}, ensure_ascii=False))
-
+print(json.dumps({"event":"train_complete","global_step":result.global_step,"training_loss":result.training_loss}, ensure_ascii=False))
 adapter_dir = OUT / "adapter"
 model.save_pretrained(str(adapter_dir))
 tokenizer.save_pretrained(str(adapter_dir))
-print(json.dumps({"event": "export_complete", "path": str(adapter_dir)}, ensure_ascii=False))
+print(json.dumps({"event":"export_complete","path":str(adapter_dir)}, ensure_ascii=False))
