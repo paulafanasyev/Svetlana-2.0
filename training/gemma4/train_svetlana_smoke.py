@@ -37,7 +37,6 @@ print(json.dumps({
     "unsloth": unsloth.__version__,
 }, ensure_ascii=False))
 
-# Gemma 4 E2B 4-bit LoRA is appropriate for a 16-GB-class T4.
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=MODEL,
     max_seq_length=MAX_SEQ,
@@ -62,17 +61,19 @@ dataset = load_dataset("json", data_files=str(DATA), split="train")
 print(json.dumps({"event": "dataset", "train_examples": len(dataset)}, ensure_ascii=False))
 
 
-def formatting_func(example):
-    """Convert each OpenAI-style messages record with Gemma's chat template."""
-    messages = example.get("messages")
-    if not isinstance(messages, list) or not messages:
-        raise ValueError("Each training example must contain a non-empty 'messages' list.")
-    text = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=False,
-    )
-    return [text]
+def formatting_func(examples):
+    """Convert a batch of OpenAI-style messages records to Gemma chat text."""
+    conversations = examples.get("messages")
+    if not isinstance(conversations, list) or not conversations:
+        raise ValueError("Training batch must contain a non-empty 'messages' list.")
+    return [
+        tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=False,
+        )
+        for messages in conversations
+    ]
 
 trainer = SFTTrainer(
     model=model,
