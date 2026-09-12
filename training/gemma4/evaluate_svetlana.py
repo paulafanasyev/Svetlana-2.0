@@ -6,7 +6,6 @@ not claim LiteRT-LM compatibility.
 """
 import json
 import os
-import re
 from pathlib import Path
 
 import torch
@@ -48,9 +47,23 @@ model, tokenizer = FastLanguageModel.from_pretrained(
 FastLanguageModel.for_inference(model)
 model.eval()
 
+
+def normalize_messages(messages):
+    """Normalize text-only messages to Gemma 4's multimodal content schema."""
+    normalized = []
+    for message in messages:
+        role = message["role"]
+        content = message["content"]
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
+        normalized.append({"role": role, "content": content})
+    return normalized
+
+
 results = []
 for case in cases:
     messages = [m for m in case["messages"] if m["role"] != "assistant"]
+    messages = normalize_messages(messages)
     prompt_ids = tokenizer.apply_chat_template(
         messages,
         tokenize=True,
