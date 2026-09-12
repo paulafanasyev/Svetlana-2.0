@@ -25,10 +25,13 @@ jobs:
           assert data['training']['base_model'] == 'google/gemma-4-E2B-it'
           assert data['training']['method'] == 'SFT+LoRA+4bit'
           assert data['training']['adapter_export'] == 'pending'
-          assert len(data['edge_candidates']) == 1
-          assert data['edge_candidates'][0]['model_id'] == 'litert-community/gemma-4-E2B-it-litert-lm'
+          candidates = data['edge_candidates']
+          assert len(candidates) == 2
+          assert all(c['model_id'] == 'litert-community/gemma-4-E2B-it-litert-lm' for c in candidates)
+          assert {c['variant'] for c in candidates} == {'official_litert_lm', 'official_gpu'}
           print('LITERT_LM_MANIFEST=PASS')
           print('GOOGLE_GEMMA_TARGET=PASS')
+          print('EDGE_CANDIDATES=2')
           print('ADAPTER_CONVERSION=NOT_PROVEN')
           PY
 
