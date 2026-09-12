@@ -61,10 +61,23 @@ model = FastLanguageModel.get_peft_model(
 dataset = load_dataset("json", data_files=str(DATA), split="train")
 print(json.dumps({"event": "dataset", "train_examples": len(dataset)}, ensure_ascii=False))
 
+
+def formatting_func(example):
+    """Convert each OpenAI-style messages record with Gemma's chat template."""
+    messages = example.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise ValueError("Each training example must contain a non-empty 'messages' list.")
+    return tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=False,
+    )
+
 trainer = SFTTrainer(
     model=model,
     processing_class=tokenizer,
     train_dataset=dataset,
+    formatting_func=formatting_func,
     args=SFTConfig(
         max_length=MAX_SEQ,
         per_device_train_batch_size=1,
