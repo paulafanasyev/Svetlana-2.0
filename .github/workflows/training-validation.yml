@@ -19,7 +19,7 @@ jobs:
           python-version: '3.11'
 
       - name: Compile Google Gemma training script
-        run: python -m py_compile training/kaggle/train_svetlana_smoke.py
+        run: python -m py_compile training/gemma4/train_svetlana_smoke.py
 
       - name: Validate JSONL datasets and train/eval separation
         run: |
