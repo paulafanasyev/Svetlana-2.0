@@ -67,11 +67,12 @@ def formatting_func(example):
     messages = example.get("messages")
     if not isinstance(messages, list) or not messages:
         raise ValueError("Each training example must contain a non-empty 'messages' list.")
-    return tokenizer.apply_chat_template(
+    text = tokenizer.apply_chat_template(
         messages,
         tokenize=False,
         add_generation_prompt=False,
     )
+    return [text]
 
 trainer = SFTTrainer(
     model=model,
