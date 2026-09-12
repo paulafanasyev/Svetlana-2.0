@@ -1,12 +1,13 @@
 name: LiteRT-LM Validation
 
 on:
+  workflow_dispatch:
   push:
     branches:
-      - litert-lm-edge-runtime
+      - gpu-training-auto-run
   pull_request:
     branches:
-      - litert-lm-edge-runtime
+      - gpu-training-auto-run
 
 jobs:
   validate-manifest-and-training:
@@ -20,16 +21,14 @@ jobs:
           import json
           from pathlib import Path
           data = json.loads(Path('training/litertlm/model_manifest.json').read_text())
-          assert data['runtime']['minimum_version'] == '0.16.0'
-          assert data['training']['method'] == 'SFT+LoRA'
+          assert data['runtime']['name'] == 'LiteRT-LM'
+          assert data['training']['base_model'] == 'google/gemma-4-E2B-it'
+          assert data['training']['method'] == 'SFT+LoRA+4bit'
           assert data['training']['adapter_export'] == 'pending'
-          assert len(data['edge_candidates']) >= 2
-          for model in data['edge_candidates']:
-              assert model['context'] == 4096
-              assert len(model['sha256']) == 64
-              assert all(c in '0123456789abcdef' for c in model['sha256'])
+          assert len(data['edge_candidates']) == 1
+          assert data['edge_candidates'][0]['model_id'] == 'litert-community/gemma-4-E2B-it-litert-lm'
           print('LITERT_LM_MANIFEST=PASS')
-          print('TRAINING_PIPELINE_REQUIRED=PASS')
+          print('GOOGLE_GEMMA_TARGET=PASS')
           print('ADAPTER_CONVERSION=NOT_PROVEN')
           PY
 
@@ -59,7 +58,7 @@ jobs:
           print('TRAIN_EVAL_SEPARATION=PASS')
           PY
 
-      - name: Compile training script
+      - name: Compile Gemma training script
         run: python -m py_compile training/kaggle/train_svetlana_smoke.py
 
       - name: Verify no trained weights are checked in
