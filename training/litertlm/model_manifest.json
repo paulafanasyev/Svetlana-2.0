@@ -5,30 +5,17 @@
     "status": "integration_pending"
   },
   "training": {
-    "base_model": "unsloth/Qwen3.5-0.8B",
-    "method": "SFT+LoRA",
+    "base_model": "google/gemma-4-E2B-it",
+    "method": "SFT+LoRA+4bit",
     "adapter_export": "pending",
-    "note": "Training remains mandatory. LiteRT-LM is the edge inference/runtime track and does not replace SFT/LoRA."
+    "note": "Training uses Google Gemma 4 E2B. LiteRT-LM is the edge inference/runtime track and does not replace SFT/LoRA."
   },
   "edge_candidates": [
     {
-      "model_id": "litert-community/LFM2.5-1.2B-Instruct",
-      "variant": "int4",
-      "file": "LFM2.5-1.2B-Instruct_int4.litertlm",
-      "sha256": "a28b5c59ac204e2e51c1f98d2d6db6982f0e12da59a268fe498edcb33237e906",
-      "size_mb": 736,
-      "context": 4096,
-      "backends": ["cpu", "gpu"],
-      "gpu_variant": "LFM2.5-1.2B-Instruct_int4_gpu.litertlm"
-    },
-    {
-      "model_id": "litert-community/LFM2.5-2.6B-Instruct",
-      "variant": "int4",
-      "file": "LFM2.5-2.6B-Instruct_int4.litertlm",
-      "sha256": "f4797d5a16812231deb6d505b4f417dd835b9b3dc47bb74d9ec71facfd0c91a4",
-      "size_gb": 1.67,
-      "context": 4096,
-      "backends": ["cpu", "gpu"]
+      "model_id": "litert-community/gemma-4-E2B-it-litert-lm",
+      "variant": "official_litert_lm",
+      "context": 131072,
+      "status": "candidate_pending_runtime_validation"
     }
   ],
   "acceptance_evidence": [
@@ -43,6 +30,7 @@
     "tool_declaration",
     "tool_denial",
     "offline_inference",
-    "fallback_to_cloud"
+    "fallback_to_cloud",
+    "trained_adapter_conversion"
   ]
 }
