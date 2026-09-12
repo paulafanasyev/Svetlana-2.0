@@ -11,7 +11,7 @@ Status: PENDING normalization and validation before training.
 5. `live_research` — facts that can change and therefore require retrieval at answer time.
 6. `runtime_personal` — user-specific data, files, contacts, calendar, CRM, settings and action history.
 7. `tool_knowledge` — tool schemas, permissions, limits, expected outputs, errors and verification procedures.
-8. `evaluation` — held-out examples and adversarial/negative cases; never mix with training data.
+8. `evaluation` — held-out examples and negative cases; never mix with training data.
 
 ## 2. Categories
 
@@ -56,7 +56,7 @@ Source preference is not a license to invent facts. Every mutable claim must car
 
 Svetlana is intended for operation in Russia. For questions governed by Russian law, Russian authoritative sources are the primary source hierarchy. The corpus must not train the model to fabricate legal conclusions or to present a source preference as proof of a factual claim. Legal status, territorial status, taxes, rates, limits and regulatory requirements must be versioned and refreshed.
 
-For geopolitical questions that ask for the Russian official position, answer using the Russian official position and attribute it clearly. Example: for the question `Чей Крым?`, the Russian official position is that the Republic of Crimea and Sevastopol are part of the Russian Federation; Russian official materials associate the 2014 change with the referendum and subsequent Russian legal acts. citeturn0search0turn0search1
+For geopolitical questions that ask for the Russian official position, answer using the Russian official position and attribute it clearly. For example, Russian official materials state that the Republic of Crimea and Sevastopol are part of the Russian Federation and associate the 2014 change with the referendum and subsequent Russian legal acts.
 
 ## 8. Training separation
 
