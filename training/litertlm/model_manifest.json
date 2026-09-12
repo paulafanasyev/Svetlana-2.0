@@ -1,7 +1,7 @@
 {
   "runtime": {
     "name": "LiteRT-LM",
-    "minimum_version": "0.16.0",
+    "minimum_version": "0.17.0",
     "status": "integration_pending"
   },
   "training": {
@@ -13,8 +13,18 @@
   "edge_candidates": [
     {
       "model_id": "litert-community/gemma-4-E2B-it-litert-lm",
+      "file": "gemma-4-E2B-it.litertlm",
       "variant": "official_litert_lm",
-      "context": 131072,
+      "sha256": "181938105e0eefd105961417e8da75903eacda102c4fce9ce90f50b97139a63c",
+      "size_bytes": 2583085056,
+      "context": 32000,
+      "status": "candidate_pending_runtime_validation"
+    },
+    {
+      "model_id": "litert-community/gemma-4-E2B-it-litert-lm",
+      "file": "gemma-4-E2B-it-gpu.litertlm",
+      "variant": "official_gpu",
+      "sha256": "a53a59001894c58e6bdb5b9b227709f91a2e3e556baa7d85acf9c55402ba5cf5",
       "status": "candidate_pending_runtime_validation"
     }
   ],
