@@ -1,10 +1,10 @@
 # Svetlana training pipeline
 
-## v0.1 goal
-Train domain behavior without embedding private customer data or assuming that model weights contain current legislation.
+The target capability surface is defined in `docs/SVETLANA_CAPABILITY_MAP.md`. It covers self-employed/freelancer operations, legal/tax verification, contracts and documents, sales, commercial proposals, marketing, competitor research, finance/accounting/analytics, jobs/resumes, CRM, global research, phone/computer operation and privacy.
 
 ## Dataset layout
 - `datasets/svetlana_seed.jsonl` — initial behavior/tool seed
+- `datasets/svetlana_capability_seed.jsonl` — expanded synthetic capability seed
 - `datasets/self_employed/` — NPD and practical scenarios
 - `datasets/documents/` — document-generation patterns
 - `datasets/tool_calling/` — structured tool selection and arguments
@@ -12,49 +12,29 @@ Train domain behavior without embedding private customer data or assuming that m
 - `evaluation/` — held-out tests; never used for training
 
 ## Training stages
-1. Baseline evaluation of the selected base model.
-2. Supervised fine-tuning for Svetlana behavior and domain reasoning.
-3. Tool-calling fine-tuning using synthetic, validated tool traces.
-4. Evaluation against the held-out set.
-5. Export adapter/model for inference.
+1. Baseline evaluation.
+2. SFT for Svetlana behavior and domain reasoning.
+3. Tool-calling fine-tuning with synthetic validated traces.
+4. Expanded held-out evaluation.
+5. Adapter/model export.
+6. LiteRT-LM runtime validation and separate phone/tool validation.
 
-## Unsloth / compute
-The active smoke pipeline uses `training/gemma4/train_svetlana_smoke.py`. It requires a real CUDA GPU and fails closed when CUDA is unavailable. The current target is `google/gemma-4-E2B-it` with SFT+LoRA+4bit.
+## Compute
+The active pipeline uses `training/gemma4/train_svetlana_smoke.py` with `google/gemma-4-E2B-it`, SFT+LoRA+4bit and a real CUDA GPU. The current Colab/T4 path is development infrastructure, not a production-quality claim.
 
-## Smoke run
-From a GPU environment:
-```bash
-pip install --upgrade --force-reinstall --no-cache-dir unsloth unsloth_zoo
-python training/gemma4/train_svetlana_smoke.py
-```
-The script records GPU/VRAM and exports a LoRA adapter under `training/outputs/svetlana_gemma4_e2b_smoke/adapter`. A smoke run is only a pipeline check; it is not evidence of production model quality.
+## Data rules
+No real user data, credentials or private documents. Legal/tax facts require source and verification date. Tool records are synthetic. Evaluation data stays separate. Current laws, competitors, jobs and other changing facts belong in refreshable knowledge/research layers rather than only in model weights.
 
-## Current official knowledge seed
-The first legal/tax corpus should prioritize current FNS pages and official legislation. Source records are kept with verification dates so the knowledge layer can be refreshed without retraining the model.
-
-## Data quality rules
-- No real user personal data.
-- No API keys, passwords, tokens or private documents.
-- Every legal/tax fact in the knowledge corpus carries source and verification date.
-- Tool examples use synthetic IDs and records.
-- Evaluation data is isolated from training data.
-- Archived/undated material must not silently override a newer official source.
-
-## Acceptance gates
-A training run is not called successful merely because loss decreased. Record:
-- training configuration;
-- base model revision;
-- dataset revision/hash;
-- evaluation score;
-- tool-call validity;
-- hallucination/error cases;
-- export artifact checksum.
+## Acceptance
+Do not call a run successful merely because loss decreased. Record configuration, model revision, dataset revision/hash, per-domain evaluation, tool-call validity, hallucination/error cases, export checksum and runtime compatibility.
 
 Status vocabulary: VERIFIED / NOT PROVEN / PENDING.
 
 ## Current status
-- Foundation branch: VERIFIED.
-- Seed dataset: VERIFIED.
-- Held-out evaluation set: VERIFIED.
-- Kaggle training path: REMOVED.
-- Real GPU training: NOT PROVEN until a CUDA-backed run produces the required training and export markers.
+- Capability map: VERIFIED.
+- Expanded capability seed: VERIFIED.
+- 120-case target evaluation matrix: VERIFIED; execution PENDING.
+- Real GPU training: VERIFIED for the previous 10-example seed run; expanded-dataset run PENDING.
+- Expanded held-out quality: NOT PROVEN.
+- Fine-tuned adapter -> LiteRT-LM: NOT PROVEN.
+- Native phone Hands: separate runtime gate; NOT PROVEN by this training pipeline.
