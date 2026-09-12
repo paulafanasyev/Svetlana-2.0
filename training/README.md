@@ -4,9 +4,9 @@
 Train domain behavior without embedding private customer data or assuming that model weights contain current legislation.
 
 ## Dataset layout
-- `datasets/svetlana_seed.jsonl` — initial seed examples
+- `datasets/svetlana_seed.jsonl` — initial behavior/tool seed
 - `datasets/self_employed/` — NPD and practical scenarios
-- `datasets/documents/` — document generation patterns
+- `datasets/documents/` — document-generation patterns
 - `datasets/tool_calling/` — structured tool selection and arguments
 - `datasets/agent/` — planning, policy and verification behavior
 - `evaluation/` — held-out tests; never used for training
@@ -18,8 +18,11 @@ Train domain behavior without embedding private customer data or assuming that m
 4. Evaluation against the held-out set.
 5. Export adapter/model for inference.
 
-## Unsloth
-Use the current Unsloth documentation and model-specific notebook for the selected base model. Do not hard-code a QLoRA recipe until the chosen model and available GPU are verified.
+## Unsloth / compute
+Unsloth currently supports Qwen fine-tuning and publishes model-specific training guidance. Kaggle currently provides free notebook GPU access; Kaggle has announced that P100 availability ends on **2026-09-15** and recommends T4x2, with two 16 GB GPUs, as the replacement accelerator. We therefore do not hard-code a P100-only recipe. The first run must detect the actual accelerator and select a compatible model/training configuration. cite-source: https://www.kaggle.com/product-announcements/735239
+
+## Current official knowledge seed
+The first legal/tax corpus should prioritize current FNS pages and official legislation. As of the source check on 2026-09-12, FNS's NPD page was updated 2026-09-10 and states the current NPD rates, payment procedure and reporting rules; Federal Law 422-FZ is available through the official publication portal. These source records are kept with verification dates so the knowledge layer can be refreshed without retraining the model.
 
 ## Data quality rules
 - No real user personal data.
@@ -27,6 +30,7 @@ Use the current Unsloth documentation and model-specific notebook for the select
 - Every legal/tax fact in the knowledge corpus carries source and verification date.
 - Tool examples use synthetic IDs and records.
 - Evaluation data is isolated from training data.
+- Archived/undated material must not silently override a newer official source.
 
 ## Acceptance gates
 A training run is not called successful merely because loss decreased. Record:
@@ -39,3 +43,10 @@ A training run is not called successful merely because loss decreased. Record:
 - export artifact checksum.
 
 Status vocabulary: VERIFIED / NOT PROVEN / PENDING.
+
+## Current status
+- Foundation branch: VERIFIED.
+- Seed dataset: VERIFIED.
+- Official-source seed: IN PROGRESS.
+- Training run: NOT RUN YET.
+- Fine-tuned model quality: NOT PROVEN.
