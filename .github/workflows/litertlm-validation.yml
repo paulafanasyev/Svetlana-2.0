@@ -9,17 +9,17 @@ on:
       - litert-lm-edge-runtime
 
 jobs:
-  validate-manifest:
+  validate-manifest-and-training:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Validate LiteRT-LM manifest
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          p = Path('training/litertlm/model_manifest.json')
-          data = json.loads(p.read_text())
+          data = json.loads(Path('training/litertlm/model_manifest.json').read_text())
           assert data['runtime']['minimum_version'] == '0.16.0'
           assert data['training']['method'] == 'SFT+LoRA'
           assert data['training']['adapter_export'] == 'pending'
@@ -32,9 +32,40 @@ jobs:
           print('TRAINING_PIPELINE_REQUIRED=PASS')
           print('ADAPTER_CONVERSION=NOT_PROVEN')
           PY
-      - name: Verify training assets remain present
+
+      - name: Validate training datasets and separation
         run: |
-          test -f training/datasets/svetlana_seed.jsonl
-          test -f training/datasets/svetlana_eval.jsonl
-          test -f training/kaggle/train_svetlana_smoke.py
-          echo 'SVETLANA_TRAINING_ASSETS=PASS'
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          train = Path('training/datasets/svetlana_seed.jsonl')
+          official = Path('training/datasets/self_employed_official.jsonl')
+          eval_file = Path('training/datasets/svetlana_eval.jsonl')
+          for p in (train, official, eval_file):
+              assert p.exists(), f'missing {p}'
+          train_rows = [json.loads(x) for x in train.read_text().splitlines() if x.strip()]
+          eval_rows = [json.loads(x) for x in eval_file.read_text().splitlines() if x.strip()]
+          official_rows = [json.loads(x) for x in official.read_text().splitlines() if x.strip()]
+          assert len(train_rows) >= 10
+          assert len(eval_rows) >= 8
+          assert len(official_rows) >= 6
+          assert all(isinstance(x.get('messages'), list) for x in train_rows + eval_rows)
+          train_text = {json.dumps(x, ensure_ascii=False, sort_keys=True) for x in train_rows}
+          eval_text = {json.dumps(x, ensure_ascii=False, sort_keys=True) for x in eval_rows}
+          assert not train_text & eval_text, 'train/eval overlap detected'
+          print(f'TRAIN_ROWS={len(train_rows)}')
+          print(f'EVAL_ROWS={len(eval_rows)}')
+          print(f'OFFICIAL_ROWS={len(official_rows)}')
+          print('TRAIN_EVAL_SEPARATION=PASS')
+          PY
+
+      - name: Compile training script
+        run: python -m py_compile training/kaggle/train_svetlana_smoke.py
+
+      - name: Verify no trained weights are checked in
+        run: |
+          if find training -type f \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' -o -name '*.pth' \) | grep -q .; then
+            echo 'ERROR: trained model artifact checked into repository'
+            exit 1
+          fi
+          echo 'NO_TRAINED_WEIGHTS_IN_REPO=PASS'
