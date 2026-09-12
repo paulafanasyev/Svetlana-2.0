@@ -58,29 +58,24 @@ model = FastLanguageModel.get_peft_model(
 
 dataset = load_dataset("json", data_files=str(DATA), split="train")
 
-def format_example(example):
-    messages = example["messages"]
-    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
-    return {"text": text}
-
-dataset = dataset.map(format_example, remove_columns=dataset.column_names)
-
 trainer = SFTTrainer(
     model=model,
-    tokenizer=tokenizer,
+    processing_class=tokenizer,
     train_dataset=dataset,
     args=SFTConfig(
-        max_seq_length=MAX_SEQ,
+        max_length=MAX_SEQ,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
         warmup_steps=2,
         max_steps=MAX_STEPS,
+        learning_rate=1e-4,
         logging_steps=1,
         output_dir=str(OUT),
         optim="adamw_8bit",
         seed=3407,
         dataset_num_proc=1,
         report_to="none",
+        assistant_only_loss=True,
     ),
 )
 result = trainer.train()
