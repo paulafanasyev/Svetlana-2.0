@@ -62,7 +62,7 @@ jobs:
               actual=subprocess.check_output(['git','hash-object',str(path)],text=True).strip()
               assert actual==expected, f'{path}: sha mismatch'
               for line_no,obj in rows:
-                  assert any(obj.get(k) for k in ('source_url','source','provenance','source_type','type')), f'{path}:{line_no}: missing provenance/type'
+                  assert any(obj.get(k) for k in ('source_url','source','provenance','source_type','type')), f'{path}:{line_no}: missing provenance/source type'
 
           def canonical(obj): return json.dumps(obj,ensure_ascii=False,sort_keys=True,separators=(',',':'))
           def normalized(obj): return re.sub(r'\s+',' ',unicodedata.normalize('NFKC',canonical(obj)).casefold()).strip()
