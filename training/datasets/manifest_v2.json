@@ -19,7 +19,7 @@
     {"path": "training/datasets/business_clients_knowledge_v1.jsonl", "format": "messages", "role": "client_management_practical_method", "sha": "60647cdf6519268c3cddb9c61d362b5fe6d6d4d5"},
     {"path": "training/datasets/business_documents_knowledge_v1.jsonl", "format": "messages", "role": "document_management_practical_method", "sha": "34d936691ff911d16cb799d7a4e90d1fd329f39f"},
     {"path": "training/datasets/business_professional_skills_knowledge_v1.jsonl", "format": "messages", "role": "professional_skills_practical_method", "sha": "08f8bcca5403f0cded9ae034c438da384ebdd509"},
-    {"path": "training/datasets/business_professional_skills_expansion_v1.jsonl", "format": "messages", "role": "professional_skills_expansion_practical_method", "sha": "31c7e4a1b2f4e75c3a6d9f4b8e2c1a7d5f0e6b3c"},
+    {"path": "training/datasets/business_professional_skills_expansion_v1.jsonl", "format": "messages", "role": "professional_skills_expansion_practical_method", "sha": "df54f5168c53fe991d45ac7d5a2b9cd0f5cef49d"},
     {"path": "training/datasets/business_digital_automation_knowledge_v1.jsonl", "format": "messages", "role": "digital_automation_practical_method", "sha": "41b4178bbdda3ba3fa68c18acb338eac01b56b2a"},
     {"path": "training/datasets/business_ai_agent_workflows_knowledge_v1.jsonl", "format": "messages", "role": "ai_agent_workflows_practical_method", "sha": "c6ac9b68fc3bc0ac8d6d39403ed94fa2441f826d"},
     {"path": "training/datasets/business_rag_knowledge_v1.jsonl", "format": "messages", "role": "rag_grounding_practical_method", "sha": "ba1c3175537971e597304f70c4aaf2e9596700e2"}
