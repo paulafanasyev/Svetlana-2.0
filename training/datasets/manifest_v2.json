@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.7",
+  "schema_version": "1.8",
   "purpose": "Single source of truth for the next Svetlana multimodal training pipeline.",
   "base_model": "google/gemma-4-E2B-it",
   "runtime_target": "LiteRT-LM",
@@ -17,7 +17,8 @@
     {"path": "training/datasets/business_money_knowledge_v1.jsonl", "format": "messages", "role": "money_practical_method"},
     {"path": "training/datasets/business_sales_knowledge_v1.jsonl", "format": "messages", "role": "sales_practical_method"},
     {"path": "training/datasets/business_clients_knowledge_v1.jsonl", "format": "messages", "role": "client_management_practical_method"},
-    {"path": "training/datasets/business_documents_knowledge_v1.jsonl", "format": "messages", "role": "document_management_practical_method"}
+    {"path": "training/datasets/business_documents_knowledge_v1.jsonl", "format": "messages", "role": "document_management_practical_method"},
+    {"path": "training/datasets/business_professional_skills_knowledge_v1.jsonl", "format": "messages", "role": "professional_skills_practical_method"}
   ],
   "eval": [
     {"path": "training/datasets/svetlana_eval.jsonl", "format": "messages"}
