@@ -11,17 +11,17 @@
     {"path": "training/datasets/multimodal/multimodal_training_curriculum.jsonl", "format": "multimodal_v1", "status": "requires_native_multimodal_trainer"}
   ],
   "reference_knowledge": [
-    {"path": "training/datasets/self_employed_official.jsonl", "format": "messages", "role": "official_source_behavior"},
-    {"path": "training/datasets/self_employed_business_knowledge_v1.jsonl", "format": "messages", "role": "self_employed_business_knowledge"},
-    {"path": "training/datasets/business_contracts_knowledge_v1.jsonl", "format": "messages", "role": "contracts_practical_method"},
-    {"path": "training/datasets/business_money_knowledge_v1.jsonl", "format": "messages", "role": "money_practical_method"},
-    {"path": "training/datasets/business_sales_knowledge_v1.jsonl", "format": "messages", "role": "sales_practical_method"},
-    {"path": "training/datasets/business_clients_knowledge_v1.jsonl", "format": "messages", "role": "client_management_practical_method"},
-    {"path": "training/datasets/business_documents_knowledge_v1.jsonl", "format": "messages", "role": "document_management_practical_method"},
-    {"path": "training/datasets/business_professional_skills_knowledge_v1.jsonl", "format": "messages", "role": "professional_skills_practical_method"},
-    {"path": "training/datasets/business_digital_automation_knowledge_v1.jsonl", "format": "messages", "role": "digital_automation_practical_method"},
-    {"path": "training/datasets/business_ai_agent_workflows_knowledge_v1.jsonl", "format": "messages", "role": "ai_agent_workflows_practical_method"},
-    {"path": "training/datasets/business_rag_knowledge_v1.jsonl", "format": "messages", "role": "rag_grounding_practical_method"}
+    {"path": "training/datasets/self_employed_official.jsonl", "format": "messages", "role": "official_source_behavior", "sha": "4eda3f60ae79c248a748178005a0357cc34fc4b8"},
+    {"path": "training/datasets/self_employed_business_knowledge_v1.jsonl", "format": "messages", "role": "self_employed_business_knowledge", "sha": "e2044f9e7c176566ecef9e36736d728c01cad1ff"},
+    {"path": "training/datasets/business_contracts_knowledge_v1.jsonl", "format": "messages", "role": "contracts_practical_method", "sha": "c93e5e3325f0a4d0bfe90a0eefa6ddf9f288a5a1"},
+    {"path": "training/datasets/business_money_knowledge_v1.jsonl", "format": "messages", "role": "money_practical_method", "sha": "3c30d3104011878173e12442ebac8db85ea890fd"},
+    {"path": "training/datasets/business_sales_knowledge_v1.jsonl", "format": "messages", "role": "sales_practical_method", "sha": "9efcb0273d2e851b0a1fe9608531eeae01affc86"},
+    {"path": "training/datasets/business_clients_knowledge_v1.jsonl", "format": "messages", "role": "client_management_practical_method", "sha": "807d3fb5c5a302dc0920ab20c7f04aac5688890a"},
+    {"path": "training/datasets/business_documents_knowledge_v1.jsonl", "format": "messages", "role": "document_management_practical_method", "sha": "da2236b0ead39ecf59a47cf070ecc1d19ccb04f8"},
+    {"path": "training/datasets/business_professional_skills_knowledge_v1.jsonl", "format": "messages", "role": "professional_skills_practical_method", "sha": "08f8bcca5403f0cded9ae034c438da384ebdd509"},
+    {"path": "training/datasets/business_digital_automation_knowledge_v1.jsonl", "format": "messages", "role": "digital_automation_practical_method", "sha": "41b4178bbdda3ba3fa68c18acb338eac01b56b2a"},
+    {"path": "training/datasets/business_ai_agent_workflows_knowledge_v1.jsonl", "format": "messages", "role": "ai_agent_workflows_practical_method", "sha": "c6ac9b68fc3bc0ac8d6d39403ed94fa2441f826d"},
+    {"path": "training/datasets/business_rag_knowledge_v1.jsonl", "format": "messages", "role": "rag_grounding_practical_method", "sha": "ba1c3175537971e597304f70c4aaf2e9596700e2"}
   ],
   "eval": [
     {"path": "training/datasets/svetlana_eval.jsonl", "format": "messages"}
