@@ -20,10 +20,22 @@ const makeTool = (id: string, backend: 'LOCAL_FREE' | 'USER_CONNECTED' | 'OPTION
   isAvailable: async () => available,
 });
 
+const makeLegacyTool = (id: string, category: Tool['category'] = 'navigation', available = true): Tool => ({
+  id,
+  name: id,
+  description: id,
+  inputSchema: { type: 'object', properties: {} },
+  riskLevel: 'low',
+  category,
+  execute: async () => ({ success: true }),
+  isAvailable: async () => available,
+});
+
 describe('CapabilityRouter contract', () => {
   afterEach(() => {
     for (const tool of toolRegistry.getAllTools()) {
       if (tool.id.startsWith('test.router.')) toolRegistry.unregisterTool(tool.id);
+      if (['tap', 'tap_element', 'open_app', 'launchApp', 'test.cloud.open_app'].includes(tool.id)) toolRegistry.unregisterTool(tool.id);
     }
   });
 
@@ -59,16 +71,34 @@ describe('CapabilityRouter contract', () => {
     expect(result.error).toMatch(/rejected/i);
   });
 
-  test('resolves legacy action names through capability mapping', async () => {
-    toolRegistry.registerTool({
-      ...makeTool('test.router.tap', 'LOCAL_FREE', true),
-      id: 'tap',
-      external: { ...makeTool('test.router.tap', 'LOCAL_FREE', true).external!, capability: 'interaction' },
-    });
+  test('maps planner action names to the matching legacy implementation', async () => {
+    toolRegistry.registerTool(makeLegacyTool('tap_element', 'interaction'));
 
     const result = await capabilityRouter.resolve({ action: 'tap' });
 
     expect(result.success).toBe(true);
-    expect(result.tool?.id).toBe('tap');
+    expect(result.tool?.id).toBe('tap_element');
+    expect(result.candidates).toContain('tap_element');
+  });
+
+  test('does not let a cloud exact action outrank a LOCAL_FREE capability tool', async () => {
+    toolRegistry.registerTool(makeTool('open_app', 'OPTIONAL_CLOUD', true));
+    toolRegistry.registerTool(makeTool('test.router.local-navigation', 'LOCAL_FREE', true));
+
+    const result = await capabilityRouter.resolve({ action: 'open_app', capability: 'navigation' });
+
+    expect(result.success).toBe(true);
+    expect(result.tool?.id).toBe('test.router.local-navigation');
+    expect(result.backend).toBe('LOCAL_FREE');
+  });
+
+  test('keeps legacy local tools routable when no metadata exists', async () => {
+    toolRegistry.registerTool(makeLegacyTool('open_app'));
+
+    const result = await capabilityRouter.resolve({ action: 'launchApp' });
+
+    expect(result.success).toBe(true);
+    expect(result.tool?.id).toBe('open_app');
+    expect(result.candidates).toContain('open_app');
   });
 });
