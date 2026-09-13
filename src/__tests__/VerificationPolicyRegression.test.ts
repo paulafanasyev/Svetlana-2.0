@@ -13,6 +13,27 @@ describe('verification and policy regressions', () => {
     expect(result.differences).toEqual([]);
   });
 
+  it('does not report PASS when the observed state contradicts the expected contract', async () => {
+    const result = await verification.verify({
+      action: 'test',
+      expectedState: { success: true, state: 'done' },
+      actualState: { success: true, state: 'failed' },
+    });
+    expect(result.success).toBe(false);
+    expect(result.differences.length).toBeGreaterThan(0);
+  });
+
+  it('allows only explicitly declared tolerance to accept differences', async () => {
+    const result = await verification.verify({
+      action: 'test',
+      expectedState: { success: true, state: 'done' },
+      actualState: { success: true, state: 'changed' },
+      tolerance: 1,
+    });
+    expect(result.success).toBe(true);
+    expect(result.differences).toHaveLength(1);
+  });
+
   it('counts only successful executions against a daily limit', async () => {
     const tool = {
       id: 'regression_tool', name: 'Regression Tool', description: 'test',
