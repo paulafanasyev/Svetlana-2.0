@@ -20,6 +20,17 @@ const makeTool = (id: string, backend: 'LOCAL_FREE' | 'USER_CONNECTED' | 'OPTION
   isAvailable: async () => available,
 });
 
+const makeLegacyTool = (id: string, available: boolean): Tool => ({
+  id,
+  name: id,
+  description: id,
+  inputSchema: { type: 'object', properties: {} },
+  riskLevel: 'low',
+  category: 'data',
+  execute: async () => ({ success: true }),
+  isAvailable: async () => available,
+});
+
 describe('CapabilityRouter contract', () => {
   afterEach(() => {
     for (const tool of toolRegistry.getAllTools()) {
@@ -57,6 +68,19 @@ describe('CapabilityRouter contract', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/rejected/i);
+  });
+
+  test('does not let unclassified legacy tools outrank explicit LOCAL_FREE tools', async () => {
+    toolRegistry.registerTool(makeLegacyTool('test.router.legacy', true));
+    toolRegistry.registerTool(makeTool('test.router.local', 'LOCAL_FREE', true));
+    toolRegistry.registerTool(makeTool('test.router.cloud', 'OPTIONAL_CLOUD', true));
+
+    const result = await capabilityRouter.resolve({ action: 'document-action', capability: 'document' });
+
+    expect(result.success).toBe(true);
+    expect(result.tool?.id).toBe('test.router.local');
+    expect(result.backend).toBe('LOCAL_FREE');
+    expect(result.candidates).toEqual(['test.router.local', 'test.router.cloud', 'test.router.legacy']);
   });
 
   test('resolves legacy action names through capability mapping', async () => {

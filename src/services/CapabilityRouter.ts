@@ -67,7 +67,9 @@ class CapabilityRouter {
       };
     }
 
-    // Free/local first. REJECTED is never routable.
+    // Explicitly classified free/local tools must outrank connected/cloud tools.
+    // Unclassified legacy tools are retained for compatibility but never receive
+    // an implicit priority advantage over a classified backend.
     const ordered = candidates
       .filter(tool => tool.external?.backend !== 'REJECTED')
       .sort((a, b) => this.backendRank(a) - this.backendRank(b));
@@ -104,9 +106,9 @@ class CapabilityRouter {
 
   private backendRank(tool: Tool): number {
     const backend = tool.external?.backend;
-    if (!backend) return 0; // Legacy built-in tools remain first-class.
+    if (!backend) return BACKEND_PRIORITY.length + 1;
     const index = BACKEND_PRIORITY.indexOf(backend);
-    return index >= 0 ? index + 1 : BACKEND_PRIORITY.length + 1;
+    return index >= 0 ? index : BACKEND_PRIORITY.length + 1;
   }
 }
 
