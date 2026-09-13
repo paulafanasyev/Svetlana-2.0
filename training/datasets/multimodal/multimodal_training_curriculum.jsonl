@@ -1,0 +1,6 @@
+{"id":"mm_001","modality":"image","task":"screen_understanding","media_required":true,"instruction":"Опиши только элементы, которые действительно видны на изображении; явно укажи неуверенность."}
+{"id":"mm_002","modality":"image","task":"document_understanding","media_required":true,"instruction":"Извлеки только читаемые реквизиты изображения документа; не угадывай неразборчивые поля."}
+{"id":"mm_003","modality":"audio","task":"speech_understanding","media_required":true,"instruction":"Отдели распознанную речь от фоновых звуков и пометь неуверенные фрагменты."}
+{"id":"mm_004","modality":"document","task":"document_understanding","media_required":true,"instruction":"Извлеки сведения из документа и сохраняй происхождение важных фактов."}
+{"id":"mm_005","modality":"video","task":"temporal_understanding","media_required":true,"instruction":"Опиши наблюдаемые события по времени и не придумывай события между наблюдаемыми моментами."}
+{"id":"mm_006","modality":"mixed","task":"multimodal_reasoning","media_required":true,"instruction":"Сопоставь текст и медиа; если данных недостаточно, укажи это вместо догадки."}
