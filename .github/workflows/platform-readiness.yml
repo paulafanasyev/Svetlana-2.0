@@ -1,0 +1,55 @@
+name: Platform Readiness
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [platform-readiness-2026-09]
+
+jobs:
+  static-platform-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install JS dependencies
+        run: npm ci
+      - name: Typecheck and tests
+        run: npm test
+      - name: Validate training and provider contracts
+        run: |
+          set -euo pipefail
+          python -m py_compile training/gemma4/train_svetlana_smoke.py training/gemma4/native_multimodal_preflight.py training/gemma4/evaluate_svetlana.py
+          test -f training/datasets/manifest_v2.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          m=json.loads(Path('training/datasets/manifest_v2.json').read_text())
+          assert m['base_model']=='google/gemma-4-E2B-it'
+          assert m['runtime_target']=='LiteRT-LM'
+          assert m['training_mode']=='multimodal_agent'
+          assert m['rules']['do_not_start_training_until_multimodal_trainer_is_ready'] is True
+          mm=Path('training/datasets/multimodal/multimodal_training_curriculum.jsonl')
+          rows=[json.loads(x) for x in mm.read_text().splitlines() if x.strip()]
+          assert {x['modality'] for x in rows} == {'image','audio','document','video','mixed'}
+          assert all(x['media_required'] is True for x in rows)
+          print('TRAINING_ASSET_GATE: PASS')
+          print('MULTIMODAL_TRAINING_GATE: ACTIVE')
+          print('GOOGLE_COLAB_GPU_TRAINING: READY_NOT_RUN')
+          print('LITERT_LM_EXPORT: PENDING_TRAINED_ADAPTER')
+          PY
+      - name: Verify native tool architecture is present
+        run: |
+          set -euo pipefail
+          grep -q "nativeToolCall" src/services/AIGateway.ts
+          grep -q "tool_choice" src/services/NativeToolCallingGateway.ts
+          grep -q "executeWithConfirmation" src/services/ToolRegistry.ts
+          grep -q "verification" src/services/ToolRegistry.ts
+          grep -q "YANDEX_API_KEY" .github/workflows/yandex-native-tool-runtime.yml
+          echo 'NATIVE_TOOL_ARCHITECTURE: PASS'
+          echo 'Yandex live runtime: PENDING_KEYS'
