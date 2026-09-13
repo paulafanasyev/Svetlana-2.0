@@ -2,6 +2,9 @@ name: Yandex Native Tool Runtime
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - knowledge-business-expansion-2026-09
 
 jobs:
   yandex-tool-call:
