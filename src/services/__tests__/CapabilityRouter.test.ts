@@ -1,3 +1,4 @@
+import { afterEach, describe, expect, test } from 'vitest';
 import { capabilityRouter } from '../CapabilityRouter';
 import { toolRegistry, type Tool } from '../ToolRegistry';
 
