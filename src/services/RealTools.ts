@@ -1,5 +1,6 @@
 // Real Tool Registry - Uses actual PlatformHands for device control
 import type { Tool, ToolResult, ExternalToolMetadata } from './ToolRegistry';
+import { toolRegistry } from './ToolRegistry';
 import { handsManager } from './HandsManager';
 
 async function requireHands(): Promise<void> {
