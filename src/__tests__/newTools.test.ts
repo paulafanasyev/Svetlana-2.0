@@ -225,5 +225,22 @@ describe('New Tools', () => {
       expect(goBack?.category).toBe('navigation');
       expect(searchWeb?.category).toBe('data');
     });
+
+    it('should expose real tools through capability discovery with LOCAL_FREE metadata', () => {
+      const navigationIds = toolRegistry.getToolsByCapability('navigation').map(tool => tool.id);
+      const interactionIds = toolRegistry.getToolsByCapability('interaction').map(tool => tool.id);
+      const visionIds = toolRegistry.getToolsByCapability('vision').map(tool => tool.id);
+
+      expect(navigationIds).toEqual(expect.arrayContaining(['open_app', 'go_home', 'go_back']));
+      expect(interactionIds).toEqual(expect.arrayContaining(['tap_element', 'type_text', 'swipe']));
+      expect(visionIds).toContain('capture_screen');
+
+      for (const id of ['open_app', 'tap_element', 'type_text', 'capture_screen', 'send_message', 'swipe', 'press_key', 'go_home', 'go_back', 'search_web']) {
+        const tool = toolRegistry.getTool(id);
+        expect(tool?.external?.backend).toBe('LOCAL_FREE');
+        expect(tool?.external?.securityStatus).toBe('PENDING');
+        expect(tool?.external?.androidTermuxCompatible).toBeUndefined();
+      }
+    });
   });
 });
