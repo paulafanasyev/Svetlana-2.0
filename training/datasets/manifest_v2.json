@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.9",
+  "schema_version": "1.10",
   "purpose": "Single source of truth for the next Svetlana multimodal training pipeline.",
   "base_model": "google/gemma-4-E2B-it",
   "runtime_target": "LiteRT-LM",
@@ -20,7 +20,8 @@
     {"path": "training/datasets/business_documents_knowledge_v1.jsonl", "format": "messages", "role": "document_management_practical_method"},
     {"path": "training/datasets/business_professional_skills_knowledge_v1.jsonl", "format": "messages", "role": "professional_skills_practical_method"},
     {"path": "training/datasets/business_digital_automation_knowledge_v1.jsonl", "format": "messages", "role": "digital_automation_practical_method"},
-    {"path": "training/datasets/business_ai_agent_workflows_knowledge_v1.jsonl", "format": "messages", "role": "ai_agent_workflows_practical_method"}
+    {"path": "training/datasets/business_ai_agent_workflows_knowledge_v1.jsonl", "format": "messages", "role": "ai_agent_workflows_practical_method"},
+    {"path": "training/datasets/business_rag_knowledge_v1.jsonl", "format": "messages", "role": "rag_grounding_practical_method"}
   ],
   "eval": [
     {"path": "training/datasets/svetlana_eval.jsonl", "format": "messages"}
