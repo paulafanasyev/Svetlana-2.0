@@ -1,31 +1,38 @@
-# Svetlana GPU training: Google Gemma 4 E2B + Colab
+# Svetlana multimodal training: Google Gemma 4 E2B + Colab
 
-The active GPU training path uses Google's `google/gemma-4-E2B-it` with 4-bit LoRA. The current free execution environment is Google Colab with a Tesla T4.
+The target training model is `google/gemma-4-E2B-it`. The training environment is Google Colab / Google GPU. Kaggle is not part of the training path.
 
-## Run
+## Current state
 
-1. Open Google Colab and attach a GPU runtime.
-2. Clone `paulafanasyev/Svetlana-2.0`, branch `gpu-training-auto-run`.
-3. Install current Unsloth.
-4. Run `training/gemma4/train_svetlana_smoke.py`.
-5. The script must print real hardware, model, training and export events.
-6. Do not call the model trained until `train_complete` and `export_complete` are present and adapter files are inspected and checksummed.
+The repository is in preparation phase. The existing `train_svetlana_smoke.py` is text-only and is **not** the final trainer. GPU training is intentionally blocked until the native multimodal preflight is ready and real media assets have complete provenance metadata.
 
-## Model
+## Required first-generation modalities
 
-- Base: `google/gemma-4-E2B-it`
-- Training: SFT + LoRA
-- T4 mode: 4-bit base weights + LoRA, batch size 1, gradient accumulation 4
-- Smoke dataset: `training/datasets/svetlana_seed.jsonl`
-- Held-out evaluation: `training/datasets/svetlana_eval.jsonl` is never used for training
-- Official NPD data remains separate and can be added to a later training run
+- image and screenshots
+- audio and speech
+- document/PDF inputs represented through supported native media processing
+- video / temporal media
+- mixed text + media
+- multimodal tool observations
 
-## Edge target
+Google's current Gemma 4 documentation confirms multimodal text/image/audio capability for E2B and documents native Transformers processing through `AutoProcessor` and `AutoModelForMultimodalLM`. Image content should precede text; audio follows text in the multimodal prompt format. Video input is also documented for Gemma 4.
 
-LiteRT-LM is the Google on-device runtime. The official Gemma 4 E2B LiteRT-LM package is maintained separately from the training checkpoint. A successful LoRA adapter is **not** automatically a LiteRT-LM model; conversion must be demonstrated with an actual artifact and inference run.
+## Acceptance gates
+
+1. real media assets exist;
+2. every asset has source/license/hash metadata;
+3. records convert to native Gemma 4 messages without dropping media;
+4. train/eval leakage check passes;
+5. native multimodal processor/trainer import and preflight pass;
+6. one small multimodal batch reaches the processor successfully;
+7. only then may the first Google Colab GPU training run start.
+
+## Deployment target
+
+LiteRT-LM remains the target on-device runtime. A successful training adapter is **not** evidence of LiteRT-LM conversion or Android inference; both require separate runtime evidence.
 
 ## Evidence rule
 
-- VERIFIED: code/config or successful CI validation.
-- NOT PROVEN: actual model training, adapter quality, LiteRT-LM conversion or Android inference until logs/artifacts exist.
+- VERIFIED: repository code/config or successful CI validation.
+- NOT PROVEN: GPU training, adapter quality, LiteRT-LM conversion, or Android inference until real logs/artifacts exist.
 - Never commit trained model weights into Git.
