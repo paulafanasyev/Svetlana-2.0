@@ -40,6 +40,18 @@ const ACTION_CAPABILITIES: Record<string, ToolCapability> = {
   generateContract: 'contract',
 };
 
+// Legacy built-ins use stable implementation ids rather than the planner's
+// semantic action names. Keep this compatibility mapping here so capability
+// routing cannot accidentally select an unrelated tool from the same category.
+const LEGACY_ACTION_TO_TOOL: Record<string, string> = {
+  launchApp: 'open_app',
+  tap: 'tap_element',
+  type: 'type_text',
+  swipe: 'swipe',
+  pressBack: 'go_back',
+  screenshot: 'capture_screen',
+};
+
 const BACKEND_PRIORITY: ToolBackend[] = [
   'LOCAL_FREE',
   'USER_CONNECTED',
@@ -49,13 +61,26 @@ const BACKEND_PRIORITY: ToolBackend[] = [
 class CapabilityRouter {
   async resolve(request: CapabilityRouteRequest): Promise<CapabilityRouteResult> {
     const candidates: Tool[] = [];
-    const exact = toolRegistry.getTool(request.action);
-    if (exact) candidates.push(exact);
 
+    const addCandidate = (tool?: Tool) => {
+      if (tool && !candidates.some(candidate => candidate.id === tool.id)) {
+        candidates.push(tool);
+      }
+    };
+
+    // 1. Exact registered action remains the strongest identity match.
+    addCandidate(toolRegistry.getTool(request.action));
+
+    // 2. Resolve planner semantic actions to the real legacy implementation ids.
+    // This is required for existing tools such as launchApp -> open_app.
+    const legacyToolId = LEGACY_ACTION_TO_TOOL[request.action];
+    if (legacyToolId) addCandidate(toolRegistry.getTool(legacyToolId));
+
+    // 3. Add capability candidates from the single existing ToolRegistry.
     const capability = request.capability || ACTION_CAPABILITIES[request.action];
     if (capability) {
       for (const tool of toolRegistry.getToolsByCapability(capability)) {
-        if (!candidates.some(candidate => candidate.id === tool.id)) candidates.push(tool);
+        addCandidate(tool);
       }
     }
 
@@ -104,7 +129,10 @@ class CapabilityRouter {
 
   private backendRank(tool: Tool): number {
     const backend = tool.external?.backend;
-    if (!backend) return 0; // Legacy built-in tools remain first-class.
+    // Existing RealTools are local device tools but predate ExternalToolMetadata.
+    // Treat them as LOCAL_FREE rather than allowing an unclassified tool to
+    // outrank a real local/connected/cloud backend by accident.
+    if (!backend) return 1;
     const index = BACKEND_PRIORITY.indexOf(backend);
     return index >= 0 ? index + 1 : BACKEND_PRIORITY.length + 1;
   }
