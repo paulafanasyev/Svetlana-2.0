@@ -9,7 +9,7 @@ import { HTTPHands } from '../services/HTTPHands';
 import { toolRegistry } from '../services/ToolRegistry';
 import { registerRealTools } from '../services/RealTools';
 import { createMCPRequest, parseMCPMessage, MCP_ERROR_CODES } from '../services/MCPProtocol';
-import { sanitizeProviderForStorage } from '../services/AIGateway';
+import { sanitizeProviderForStorage, sanitizeStoredProviders } from '../services/AIGateway';
 
 describe('HandsManager', () => {
   let manager: HandsManager;
@@ -175,6 +175,31 @@ describe('Security', () => {
     expect(JSON.stringify(persisted)).not.toContain('TEST_SECRET_MUST_NOT_PERSIST');
     expect(persisted.id).toBe(provider.id);
     expect(persisted.model).toBe(provider.model);
+  });
+
+  it('should remove legacy API keys from stored provider data', () => {
+    const raw = JSON.stringify([{
+      id: 'openai',
+      name: 'OpenAI',
+      type: 'online',
+      endpoint: 'https://api.openai.com/v1',
+      apiKey: 'LEGACY_SECRET_MUST_BE_REMOVED',
+      model: 'test-model',
+      enabled: true,
+    }]);
+
+    const result = sanitizeStoredProviders(raw);
+    expect(result.changed).toBe(true);
+    expect(result.providers).toHaveLength(1);
+    expect(result.providers[0]).not.toHaveProperty('apiKey');
+    expect(JSON.stringify(result.providers)).not.toContain('LEGACY_SECRET_MUST_BE_REMOVED');
+    expect(result.providers[0].id).toBe('openai');
+  });
+
+  it('should reject malformed stored provider data', () => {
+    expect(() => sanitizeStoredProviders(JSON.stringify({ id: 'openai' }))).toThrow(
+      'Stored AI providers must be an array'
+    );
   });
 
   it('should not store API keys in source code', () => {
