@@ -12,161 +12,115 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Use Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Validate complete manifest, schemas, provenance, duplicates and gates
         run: |
           python - <<'PY'
-          import hashlib
-          import json
-          import re
-          import subprocess
-          import unicodedata
+          import json, re, subprocess, unicodedata
           from difflib import SequenceMatcher
           from pathlib import Path
 
           ROOT = Path('.')
-          manifest_path = ROOT / 'training/datasets/manifest_v2.json'
-          m = json.loads(manifest_path.read_text(encoding='utf-8'))
-
+          m = json.loads((ROOT / 'training/datasets/manifest_v2.json').read_text(encoding='utf-8'))
           assert m['base_model'] == 'google/gemma-4-E2B-it'
           assert m['runtime_target'] == 'LiteRT-LM'
           assert m['training_mode'] == 'multimodal_agent'
-
           rules = m['rules']
-          required_rules = (
+          for rule in (
               'no_eval_in_train', 'no_personal_data_in_weights',
               'exact_duplicate_check', 'normalized_duplicate_check',
               'near_duplicate_check', 'schema_validation',
               'source_and_sha_required_for_knowledge',
               'multimodal_records_must_be_native_or_explicitly_adapted',
-              'do_not_start_training_until_multimodal_trainer_is_ready',
-          )
-          for rule in required_rules:
+              'do_not_start_training_until_multimodal_trainer_is_ready'):
               assert rules.get(rule) is True, f'manifest rule not enabled: {rule}'
 
           sections = ('train', 'reference_knowledge', 'eval')
-          all_records = {}
-          record_locations = {}
-
-          def load_jsonl(entry, section):
-              p = ROOT / entry['path']
-              assert p.exists() and p.is_file(), f'missing dataset: {p}'
-              rows = []
-              for n, line in enumerate(p.read_text(encoding='utf-8').splitlines(), 1):
-                  if not line.strip():
-                      continue
-                  obj = json.loads(line)
-                  assert isinstance(obj, dict), f'{p}:{n}: record must be an object'
-                  rows.append((n, obj))
-                  record_locations.setdefault(id(obj), f'{p}:{n}')
-              return p, rows
+          all_records = {s: [] for s in sections}
 
           for section in sections:
               assert m[section], f'empty manifest section: {section}'
               for entry in m[section]:
-                  p, rows = load_jsonl(entry, section)
-                  all_records.setdefault(section, []).append((entry, p, rows))
+                  p = ROOT / entry['path']
+                  assert p.exists() and p.is_file(), f'missing dataset: {p}'
+                  rows = []
+                  for n, line in enumerate(p.read_text(encoding='utf-8').splitlines(), 1):
+                      if not line.strip():
+                          continue
+                      obj = json.loads(line)
+                      assert isinstance(obj, dict), f'{p}:{n}: record must be an object'
+                      rows.append((n, obj))
 
                   fmt = entry.get('format')
-                  for n, obj in rows:
-                      if fmt == 'messages':
-                          assert isinstance(obj.get('messages'), list), f'{p}:{n}: missing messages[]'
-                          assert obj['messages'], f'{p}:{n}: empty messages[]'
+                  # messages format applies to actual train/eval examples.
+                  # Reference knowledge intentionally uses compact domain records, not chat-message wrappers.
+                  if fmt == 'messages' and section in ('train', 'eval'):
+                      for n, obj in rows:
+                          assert isinstance(obj.get('messages'), list) and obj['messages'], f'{p}:{n}: missing messages[]'
                           for msg in obj['messages']:
                               assert msg.get('role') in {'system', 'user', 'assistant', 'tool'}, f'{p}:{n}: invalid role'
                               assert isinstance(msg.get('content'), (str, list)), f'{p}:{n}: invalid message content'
-                      elif fmt == 'multimodal_v1':
+                  elif fmt == 'multimodal_v1':
+                      for n, obj in rows:
                           assert obj.get('media_required') is True, f'{p}:{n}: multimodal record must require media'
                           assert obj.get('modality') in {'image', 'audio', 'document', 'video', 'mixed'}, f'{p}:{n}: invalid modality'
                           assert isinstance(obj.get('instruction'), str) and obj['instruction'].strip(), f'{p}:{n}: missing instruction'
+                  all_records[section].append((entry, p, rows))
 
-          # Knowledge provenance is explicit in each record, while file integrity is pinned in the manifest.
+          # Every reference knowledge file is pinned by its Git blob SHA and every record has provenance.
           for entry, p, rows in all_records['reference_knowledge']:
-              expected_sha = entry.get('sha')
-              assert re.fullmatch(r'[0-9a-f]{40}', str(expected_sha or '')), f'{p}: missing/invalid manifest sha'
-              actual_sha = subprocess.check_output(['git', 'hash-object', str(p)], text=True).strip()
-              assert actual_sha == expected_sha, f'{p}: sha mismatch expected={expected_sha} actual={actual_sha}'
+              expected = entry.get('sha')
+              assert re.fullmatch(r'[0-9a-f]{40}', str(expected or '')), f'{p}: missing/invalid manifest sha'
+              actual = subprocess.check_output(['git', 'hash-object', str(p)], text=True).strip()
+              assert actual == expected, f'{p}: sha mismatch expected={expected} actual={actual}'
               for n, obj in rows:
                   assert any(obj.get(k) for k in ('source_url', 'source', 'provenance', 'source_type')), f'{p}:{n}: missing source/provenance'
                   assert obj.get('status'), f'{p}:{n}: missing provenance status'
 
-          # Exact and normalized duplicate checks cover every declared dataset; train/eval separation is explicit.
           def canonical(obj):
               return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
-
           def normalized(obj):
-              s = canonical(obj)
-              s = unicodedata.normalize('NFKC', s).casefold()
-              return re.sub(r'\s+', ' ', s).strip()
+              return re.sub(r'\s+', ' ', unicodedata.normalize('NFKC', canonical(obj)).casefold()).strip()
 
-          duplicate_failures = []
-          near_failures = []
-          normalized_seen = {}
+          exact_failures, near_failures = [], []
           for section in sections:
               for entry, p, rows in all_records[section]:
-                  local_exact = {}
-                  local_norm = {}
-                  texts = []
+                  exact_seen, norm_seen, texts = {}, {}, []
                   for n, obj in rows:
-                      exact = canonical(obj)
-                      norm = normalized(obj)
-                      if exact in local_exact:
-                          duplicate_failures.append(f'exact duplicate {p}:{n} == {local_exact[exact]}')
+                      exact, norm = canonical(obj), normalized(obj)
+                      if exact in exact_seen:
+                          exact_failures.append(f'exact duplicate {p}:{n} == {exact_seen[exact]}')
                       else:
-                          local_exact[exact] = f'{p}:{n}'
-                      if norm in local_norm:
-                          duplicate_failures.append(f'normalized duplicate {p}:{n} == {local_norm[norm]}')
+                          exact_seen[exact] = f'{p}:{n}'
+                      if norm in norm_seen:
+                          exact_failures.append(f'normalized duplicate {p}:{n} == {norm_seen[norm]}')
                       else:
-                          local_norm[norm] = f'{p}:{n}'
-                      normalized_seen.setdefault(norm, []).append(f'{p}:{n}')
+                          norm_seen[norm] = f'{p}:{n}'
                       texts.append((n, norm))
-
-                  # Conservative near-duplicate threshold: catches copy/edit artifacts without rejecting merely related concepts.
-                  for i in range(len(texts)):
-                      for j in range(i + 1, len(texts)):
-                          a_n, a = texts[i]
-                          b_n, b = texts[j]
-                          if len(a) < 80 or len(b) < 80:
-                              continue
-                          ratio = SequenceMatcher(None, a, b, autojunk=False).ratio()
-                          if ratio >= 0.995:
-                              near_failures.append(f'near duplicate {p}:{a_n} ~= {p}:{b_n} ratio={ratio:.4f}')
-
-          assert not duplicate_failures, '\n'.join(duplicate_failures[:20])
+                  for i, (a_n, a) in enumerate(texts):
+                      for b_n, b in texts[i + 1:]:
+                          if min(len(a), len(b)) >= 80:
+                              ratio = SequenceMatcher(None, a, b, autojunk=False).ratio()
+                              if ratio >= 0.995:
+                                  near_failures.append(f'near duplicate {p}:{a_n} ~= {p}:{b_n} ratio={ratio:.4f}')
+          assert not exact_failures, '\n'.join(exact_failures[:20])
           assert not near_failures, '\n'.join(near_failures[:20])
 
-          train_exact = set()
-          for entry, p, rows in all_records['train']:
-              for n, obj in rows:
-                  train_exact.add(canonical(obj))
-          eval_collisions = []
-          for entry, p, rows in all_records['eval']:
-              for n, obj in rows:
-                  if canonical(obj) in train_exact:
-                      eval_collisions.append(f'{p}:{n}')
-          assert not eval_collisions, 'eval/train exact collisions: ' + ', '.join(eval_collisions)
+          train_exact = {canonical(obj) for _, _, rows in all_records['train'] for _, obj in rows}
+          collisions = [f'{p}:{n}' for _, p, rows in all_records['eval'] for n, obj in rows if canonical(obj) in train_exact]
+          assert not collisions, 'eval/train exact collisions: ' + ', '.join(collisions)
 
-          # Basic personal-data guard for records intended to become model weights.
           email_re = re.compile(r'\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b', re.I)
           phone_re = re.compile(r'(?<!\d)(?:\+?\d[\d ()-]{8,}\d)(?!\d)')
-          pii_hits = []
-          for entry, p, rows in all_records['train']:
-              for n, obj in rows:
-                  text = canonical(obj)
-                  if email_re.search(text) or phone_re.search(text):
-                      pii_hits.append(f'{p}:{n}')
+          pii_hits = [f'{p}:{n}' for _, p, rows in all_records['train'] for n, obj in rows if email_re.search(canonical(obj)) or phone_re.search(canonical(obj))]
           assert not pii_hits, 'possible personal contact data in train: ' + ', '.join(pii_hits)
 
-          # Multimodal curriculum is deliberately a pre-trainer contract, not text-only training data.
           mm = [x for x in m['train'] if x['path'].endswith('multimodal_training_curriculum.jsonl')]
           assert len(mm) == 1 and mm[0].get('status') == 'requires_native_multimodal_trainer'
-          mm_path = ROOT / mm[0]['path']
-          mm_rows = [json.loads(x) for x in mm_path.read_text(encoding='utf-8').splitlines() if x.strip()]
+          mm_rows = [json.loads(x) for x in (ROOT / mm[0]['path']).read_text(encoding='utf-8').splitlines() if x.strip()]
           assert {x['modality'] for x in mm_rows} == {'image', 'audio', 'document', 'video', 'mixed'}
           assert all(x['media_required'] is True for x in mm_rows)
           assert rules['do_not_start_training_until_multimodal_trainer_is_ready'] is True
