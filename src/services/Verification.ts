@@ -52,8 +52,11 @@ class Verification {
       confidence = Math.min(1, confidence + 0.2);
     }
 
+    // Verification must not report PASS while the observed state contradicts
+    // the expected contract. Tolerance is the only explicit exception.
+    const withinTolerance = request.tolerance !== undefined && differences.length <= request.tolerance;
     const result: VerificationResult = {
-      success: differences.length === 0 || confidence > 0.8,
+      success: differences.length === 0 || (withinTolerance && confidence > 0.8),
       confidence,
       differences,
       suggestions: this.generateSuggestions(differences),
@@ -130,7 +133,7 @@ class Verification {
       if (expectedElement.text && matchingElement.text !== expectedElement.text) { differences.push(`Element ${expectedElement.id} text mismatch`); confidence -= 0.1; }
     }
     confidence = Math.max(0, confidence);
-    return { success: differences.length === 0 || confidence > 0.7, confidence, differences, suggestions: this.generateSuggestions(differences), timestamp: Date.now() };
+    return { success: differences.length === 0, confidence, differences, suggestions: this.generateSuggestions(differences), timestamp: Date.now() };
   }
 
   getHistory(limit: number = 10): VerificationResult[] { return this.verificationHistory.slice(-limit); }
