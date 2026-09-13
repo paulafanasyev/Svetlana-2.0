@@ -24,6 +24,26 @@ export function sanitizeProviderForStorage(provider: AIProvider): PersistedAIPro
   return safeProvider;
 }
 
+export function sanitizeStoredProviders(raw: string): { providers: PersistedAIProvider[]; changed: boolean } {
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed)) throw new Error('Stored AI providers must be an array');
+
+  let changed = false;
+  const providers: PersistedAIProvider[] = [];
+
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      changed = true;
+      continue;
+    }
+    const provider = item as AIProvider;
+    if (Object.prototype.hasOwnProperty.call(provider, 'apiKey')) changed = true;
+    providers.push(sanitizeProviderForStorage(provider));
+  }
+
+  return { providers, changed };
+}
+
 class AIGateway {
   private providers: Map<string, AIProvider> = new Map();
   private activeProvider: string | null = null;
@@ -32,8 +52,16 @@ class AIGateway {
     if (typeof localStorage === 'undefined') return;
     const stored = localStorage.getItem('svetlana_ai_providers');
     if (!stored) return;
-    try { JSON.parse(stored).forEach((p: PersistedAIProvider) => { this.providers.set(p.id, p); if (p.enabled && !this.activeProvider) this.activeProvider = p.id; }); }
-    catch (e) { console.error('Failed to load AI providers:', e); }
+    try {
+      const { providers, changed } = sanitizeStoredProviders(stored);
+      for (const p of providers) {
+        this.providers.set(p.id, p);
+        if (p.enabled && !this.activeProvider) this.activeProvider = p.id;
+      }
+      if (changed) localStorage.setItem('svetlana_ai_providers', JSON.stringify(providers));
+    } catch (e) {
+      console.error('Failed to load AI providers:', e);
+    }
   }
   private saveToStorage() {
     if (typeof localStorage === 'undefined') return;
