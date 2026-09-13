@@ -1,0 +1,88 @@
+name: Gemma Native Tool Runtime Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'Gemma model exposed by Google Gemini API'
+        required: true
+        default: 'gemma-4-31b-it'
+        type: string
+
+jobs:
+  gemma-function-call:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMMA_MODEL: ${{ inputs.model }}
+    steps:
+      - name: Require API credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$GEMINI_API_KEY" || { echo 'GEMINI_API_KEY Actions secret is required'; exit 1; }
+
+      - name: Call Gemma through Google Interactions API
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > request.json <<'JSON'
+          {
+            "model": "__MODEL__",
+            "store": false,
+            "input": "Open the Android settings application. Return a function call and do not answer with prose.",
+            "tools": [
+              {
+                "type": "function",
+                "name": "open_app",
+                "description": "Open an Android application by package name.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "packageName": {
+                      "type": "string",
+                      "description": "Android package name to launch."
+                    }
+                  },
+                  "required": ["packageName"]
+                }
+              }
+            ],
+            "generation_config": {
+              "tool_choice": {
+                "mode": "any"
+              },
+              "temperature": 0.1,
+              "max_output_tokens": 512
+            }
+          }
+          JSON
+          sed -i "s/__MODEL__/${GEMMA_MODEL}/" request.json
+          curl --fail-with-body --silent --show-error \
+            -X POST 'https://generativelanguage.googleapis.com/v1beta/interactions' \
+            -H "x-goog-api-key: ${GEMINI_API_KEY}" \
+            -H 'Content-Type: application/json' \
+            --data-binary @request.json > response.json
+
+      - name: Verify real structured function call
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          with open('response.json', encoding='utf-8') as f:
+              data=json.load(f)
+          calls=[s for s in data.get('steps',[]) if s.get('type')=='function_call']
+          if not calls:
+              raise SystemExit('FAIL: Google returned no function_call step')
+          call=calls[0]
+          if call.get('name')!='open_app':
+              raise SystemExit(f"FAIL: unexpected function name: {call.get('name')}")
+          args=call.get('arguments')
+          if not isinstance(args,dict) or not isinstance(args.get('packageName'),str) or not args['packageName']:
+              raise SystemExit('FAIL: function arguments are not a structured packageName object')
+          print('PASS: real Gemma structured function call received')
+          print(json.dumps({'name':call['name'],'arguments':args,'call_id':call.get('id')},ensure_ascii=False))
+          PY
