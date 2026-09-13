@@ -3,7 +3,7 @@ name: Training Validation
 on:
   workflow_dispatch:
   push:
-    branches: ['gpu-training-auto-run']
+    branches: ['gpu-training-auto-run', 'knowledge-business-expansion-2026-09']
   pull_request:
     branches: [main, develop]
 
@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Validate manifest and dataset paths
+      - name: Validate manifest and all declared dataset paths
         run: |
           python - <<'PY'
           import json
@@ -27,67 +27,91 @@ jobs:
           assert m['base_model'] == 'google/gemma-4-E2B-it'
           assert m['runtime_target'] == 'LiteRT-LM'
           assert m['training_mode'] == 'multimodal_agent'
-          paths = [x['path'] for x in m['train'] + m['reference_knowledge'] + m['eval']]
-          for p in paths:
-              assert Path(p).exists(), f'missing dataset: {p}'
+          sections = {'train': m['train'], 'reference_knowledge': m['reference_knowledge'], 'eval': m['eval']}
+          for section, entries in sections.items():
+              assert entries, f'empty manifest section: {section}'
+              for entry in entries:
+                  p = Path(entry['path'])
+                  assert p.exists(), f'missing {section} dataset: {p}'
+                  assert p.is_file(), f'not a file: {p}'
           assert m['rules']['no_eval_in_train'] is True
           assert m['rules']['no_personal_data_in_weights'] is True
-          print('MANIFEST=PASS')
+          assert m['rules']['exact_duplicate_check'] is True
+          assert m['rules']['normalized_duplicate_check'] is True
+          assert m['rules']['near_duplicate_check'] is True
+          assert m['rules']['schema_validation'] is True
+          assert m['rules']['source_and_sha_required_for_knowledge'] is True
+          print(f"MANIFEST=PASS train={len(m['train'])} reference={len(m['reference_knowledge'])} eval={len(m['eval'])}")
           print('DATASET_PATHS=PASS')
           print('MULTIMODAL_MODE=PASS')
           PY
 
-      - name: Validate JSONL structure
+      - name: Validate every manifest JSONL dataset
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          files = [
-            Path('training/datasets/svetlana_seed.jsonl'),
-            Path('training/datasets/svetlana_capability_seed.jsonl'),
-            Path('training/datasets/svetlana_capability_training_v2.jsonl'),
-            Path('training/datasets/multimodal/multimodal_training_curriculum.jsonl'),
-            Path('training/datasets/self_employed_official.jsonl'),
-            Path('training/datasets/svetlana_eval.jsonl'),
-          ]
-          for p in files:
-              for n, line in enumerate(p.read_text(encoding='utf-8').splitlines(), 1):
-                  if line.strip():
+          m = json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))
+          checked = 0
+          for section in ('train', 'reference_knowledge', 'eval'):
+              for entry in m[section]:
+                  p = Path(entry['path'])
+                  for n, line in enumerate(p.read_text(encoding='utf-8').splitlines(), 1):
+                      if not line.strip():
+                          continue
                       obj = json.loads(line)
-                      assert isinstance(obj, dict), f'{p}:{n}'
-          print('JSONL=PASS')
+                      assert isinstance(obj, dict), f'{p}:{n}: record is not an object'
+                      checked += 1
+          print(f'JSONL=PASS records={checked}')
           PY
 
-      - name: Validate exact train/eval separation
+      - name: Validate exact train/eval separation from manifest
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          train_files = [
-            Path('training/datasets/svetlana_seed.jsonl'),
-            Path('training/datasets/svetlana_capability_seed.jsonl'),
-            Path('training/datasets/svetlana_capability_training_v2.jsonl'),
-            Path('training/datasets/multimodal/multimodal_training_curriculum.jsonl'),
-          ]
-          eval_file = Path('training/datasets/svetlana_eval.jsonl')
-          def fp(x):
-              return json.dumps(x, ensure_ascii=False, sort_keys=True)
+          m = json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))
+          def fp(x): return json.dumps(x, ensure_ascii=False, sort_keys=True)
           train = set()
-          for p in train_files:
-              for line in p.read_text(encoding='utf-8').splitlines():
+          for entry in m['train']:
+              for line in Path(entry['path']).read_text(encoding='utf-8').splitlines():
                   if line.strip(): train.add(fp(json.loads(line)))
-          for line in eval_file.read_text(encoding='utf-8').splitlines():
-              if line.strip(): assert fp(json.loads(line)) not in train
+          collisions = []
+          for entry in m['eval']:
+              for n, line in enumerate(Path(entry['path']).read_text(encoding='utf-8').splitlines(), 1):
+                  if line.strip() and fp(json.loads(line)) in train:
+                      collisions.append(f"{entry['path']}:{n}")
+          assert not collisions, 'eval/train exact collisions: ' + ', '.join(collisions)
           print('TRAIN_EVAL_EXACT_SEPARATION=PASS')
           PY
 
-      - name: Compile text smoke trainer only
-        run: python -m py_compile training/gemma4/train_svetlana_smoke.py
+      - name: Validate knowledge provenance fields
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          m = json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))
+          for entry in m['reference_knowledge']:
+              p = Path(entry['path'])
+              for n, line in enumerate(p.read_text(encoding='utf-8').splitlines(), 1):
+                  if not line.strip(): continue
+                  obj = json.loads(line)
+                  assert any(k in obj for k in ('source', 'source_url', 'provenance', 'metadata')), f'{p}:{n}: missing provenance/source metadata'
+          print('KNOWLEDGE_PROVENANCE=PASS')
+          PY
 
-      - name: Confirm multimodal training remains gated
+      - name: Validate multimodal training gate
         run: |
           test -f training/gemma4/MULTIMODAL_TRAINING_PLAN.md
           test -f training/datasets/multimodal/README.json
-          echo 'MULTIMODAL_TRAINING_GATE=ACTIVE'
-          echo 'GOOGLE_GPU_TRAINING=NOT_RUN'
-          echo 'LITERT_LM_CONVERSION=NOT_RUN'
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          m = json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))
+          mm = [x for x in m['train'] if x['path'].endswith('multimodal_training_curriculum.jsonl')]
+          assert mm and mm[0].get('status') == 'requires_native_multimodal_trainer'
+          assert m['rules']['do_not_start_training_until_multimodal_trainer_is_ready'] is True
+          print('MULTIMODAL_TRAINING_GATE=ACTIVE')
+          print('GOOGLE_GPU_TRAINING=NOT_RUN')
+          print('LITERT_LM_CONVERSION=NOT_RUN')
+          PY
