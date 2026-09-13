@@ -18,7 +18,7 @@ async function yandex(p:any,m:ChatMessage[],t:ToolDeclaration[],o?:any){
  if(!p.folderId)throw new Error('Yandex folder ID is required');
  const base=(p.endpoint||'https://ai.api.cloud.yandex.net/v1').replace(/\/$/,'');
  const model=p.model.startsWith('gpt://')?p.model:`gpt://${p.folderId}/${p.model||'aliceai-llm-flash'}`;
- const r=await fetch(`${base}/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Api-Key ${p.apiKey}`},body:JSON.stringify({model,messages,tools:t,tool_choice:'auto',temperature:o?.temperature??0.1,max_tokens:o?.max_tokens??2048})});
+ const r=await fetch(`${base}/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Api-Key ${p.apiKey}`},body:JSON.stringify({model,messages:m,tools:t,tool_choice:'auto',temperature:o?.temperature??0.1,max_tokens:o?.max_tokens??2048})});
  const d=await readJson(r,p.name),msg=d.choices?.[0]?.message||{};
  return{content:msg.content||'',provider:p.name,model,toolCalls:(msg.tool_calls||[]).map((c:any)=>normalize(c.function?.name,c.function?.arguments,c.id)),usage:d.usage};
 }
