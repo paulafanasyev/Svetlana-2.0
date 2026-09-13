@@ -16,7 +16,7 @@
     {"path": "training/datasets/business_contracts_knowledge_v1.jsonl", "format": "messages", "role": "contracts_practical_method", "sha": "528f06d4623a853543da0a11d09c48b3906f7263"},
     {"path": "training/datasets/business_money_knowledge_v1.jsonl", "format": "messages", "role": "money_practical_method", "sha": "0b836db76b9ff22e892533e20101d0255f7cb263"},
     {"path": "training/datasets/business_sales_knowledge_v1.jsonl", "format": "messages", "role": "sales_practical_method", "sha": "940e4e77ce3b02b78cc0cd196e098e91bb127229"},
-    {"path": "training/datasets/business_clients_knowledge_v1.jsonl", "format": "messages", "role": "client_management_practical_method", "sha": "807d3fb5c5a302dc0920ab20c7f04aac5688890a"},
+    {"path": "training/datasets/business_clients_knowledge_v1.jsonl", "format": "messages", "role": "client_management_practical_method", "sha": "60647cdf6519268c3cddb9c61d362b5fe6d6d4d5"},
     {"path": "training/datasets/business_documents_knowledge_v1.jsonl", "format": "messages", "role": "document_management_practical_method", "sha": "da2236b0ead39ecf59a47cf070ecc1d19ccb04f8"},
     {"path": "training/datasets/business_professional_skills_knowledge_v1.jsonl", "format": "messages", "role": "professional_skills_practical_method", "sha": "08f8bcca5403f0cded9ae034c438da384ebdd509"},
     {"path": "training/datasets/business_digital_automation_knowledge_v1.jsonl", "format": "messages", "role": "digital_automation_practical_method", "sha": "41b4178bbdda3ba3fa68c18acb338eac01b56b2a"},
