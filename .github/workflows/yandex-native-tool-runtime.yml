@@ -1,0 +1,79 @@
+name: Yandex Native Tool Runtime
+
+on:
+  workflow_dispatch:
+
+jobs:
+  yandex-tool-call:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify secrets are configured
+        env:
+          YANDEX_API_KEY: ${{ secrets.YANDEX_API_KEY }}
+          YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$YANDEX_API_KEY" || { echo 'PENDING: YANDEX_API_KEY is not configured'; exit 2; }
+          test -n "$YANDEX_FOLDER_ID" || { echo 'PENDING: YANDEX_FOLDER_ID is not configured'; exit 2; }
+
+      - name: Call Yandex with a structured function tool
+        env:
+          YANDEX_API_KEY: ${{ secrets.YANDEX_API_KEY }}
+          YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
+        run: |
+          set -euo pipefail
+          MODEL="gpt://${YANDEX_FOLDER_ID}/aliceai-llm-flash"
+          cat > request.json <<EOF
+          {
+            "model": "$MODEL",
+            "messages": [
+              {"role":"user","content":"Open the Android application with package name ru.svetlana.app. You must call the provided function."}
+            ],
+            "tools": [{
+              "type":"function",
+              "function": {
+                "name":"open_app",
+                "description":"Open an Android application by package name.",
+                "parameters": {
+                  "type":"object",
+                  "properties":{"packageName":{"type":"string"}},
+                  "required":["packageName"]
+                }
+              }
+            }],
+            "tool_choice":"auto",
+            "temperature":0,
+            "max_tokens":256
+          }
+          EOF
+          curl --fail-with-body --silent --show-error \
+            -X POST 'https://ai.api.cloud.yandex.net/v1/chat/completions' \
+            -H 'Content-Type: application/json' \
+            -H "Authorization: Api-Key ${YANDEX_API_KEY}" \
+            --data @request.json > response.json
+
+      - name: Verify real structured tool call
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('response.json').read_text())
+          message=((d.get('choices') or [{}])[0].get('message') or {})
+          calls=message.get('tool_calls') or []
+          assert calls, 'FAIL: Yandex returned no tool_calls'
+          found=False
+          for call in calls:
+              fn=call.get('function') or {}
+              if fn.get('name') != 'open_app':
+                  continue
+              args=fn.get('arguments')
+              if isinstance(args,str):
+                  args=json.loads(args)
+              assert isinstance(args,dict) and not isinstance(args,list), 'FAIL: open_app arguments are not an object'
+              assert args.get('packageName') == 'ru.svetlana.app', f"FAIL: unexpected packageName: {args!r}"
+              found=True
+              break
+          assert found, 'FAIL: expected structured open_app(packageName) call not found'
+          print('YANDEX_NATIVE_TOOL_RUNTIME: PASS')
+          PY
