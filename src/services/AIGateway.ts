@@ -17,17 +17,29 @@ export interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: s
 export interface AIResponse { content: string; provider: string; model: string; toolCalls?: StructuredToolCall[]; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number; }; }
 export interface StructuredToolCall { tool: string; arguments: Record<string, any>; requestId: string; timestamp: number; }
 
+export type PersistedAIProvider = Omit<AIProvider, 'apiKey'>;
+
+export function sanitizeProviderForStorage(provider: AIProvider): PersistedAIProvider {
+  const { apiKey: _apiKey, ...safeProvider } = provider;
+  return safeProvider;
+}
+
 class AIGateway {
   private providers: Map<string, AIProvider> = new Map();
   private activeProvider: string | null = null;
   constructor() { this.loadFromStorage(); }
   private loadFromStorage() {
+    if (typeof localStorage === 'undefined') return;
     const stored = localStorage.getItem('svetlana_ai_providers');
     if (!stored) return;
-    try { JSON.parse(stored).forEach((p: AIProvider) => { this.providers.set(p.id, p); if (p.enabled && !this.activeProvider) this.activeProvider = p.id; }); }
+    try { JSON.parse(stored).forEach((p: PersistedAIProvider) => { this.providers.set(p.id, p); if (p.enabled && !this.activeProvider) this.activeProvider = p.id; }); }
     catch (e) { console.error('Failed to load AI providers:', e); }
   }
-  private saveToStorage() { localStorage.setItem('svetlana_ai_providers', JSON.stringify(Array.from(this.providers.values()))); }
+  private saveToStorage() {
+    if (typeof localStorage === 'undefined') return;
+    const persisted = Array.from(this.providers.values()).map(sanitizeProviderForStorage);
+    localStorage.setItem('svetlana_ai_providers', JSON.stringify(persisted));
+  }
   addProvider(provider: AIProvider) { this.providers.set(provider.id, provider); if (provider.enabled) this.activeProvider = provider.id; this.saveToStorage(); }
   removeProvider(id: string) { this.providers.delete(id); if (this.activeProvider === id) { this.activeProvider = null; for (const [pid, p] of this.providers) if (p.enabled) { this.activeProvider = pid; break; } } this.saveToStorage(); }
   updateProvider(id: string, updates: Partial<AIProvider>) { const provider = this.providers.get(id); if (provider) { Object.assign(provider, updates); if (updates.enabled) this.activeProvider = id; this.saveToStorage(); } }
