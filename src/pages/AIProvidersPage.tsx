@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { aiGateway, type AIProvider } from '../services/AIGateway';
 import { Cpu, Server, Settings, Key, Zap, Cloud, HardDrive, TestTube, AlertCircle, CheckCircle2, X, Trash2, Loader2, ArrowRight } from 'lucide-react';
 
-const PRESET_PROVIDERS: Omit<AIProvider, 'enabled' | 'api\u004Key'>[] = [
+const PRESET_PROVIDERS: Omit<AIProvider, 'enabled' | 'apiKey'>[] = [
   { id:'openai',name:'OpenAI',type:'online',endpoint:'https://api.openai.com/v1',model:'gpt-4o-mini' },
   { id:'anthropic',name:'Anthropic',type:'online',endpoint:'https://api.anthropic.com/v1',model:'claude-3-5-sonnet-20241022' },
   { id:'google',name:'Google AI',type:'online',endpoint:'https://generativelanguage.googleapis.com/v1beta',model:'gemini-1.5-flash' },
@@ -34,14 +34,14 @@ const MODEL_OPTIONS: Record<string,string[]> = {
 
 type ProviderDraft = Omit<AIProvider,'enabled'> & { enabled?: boolean };
 function ConfigModal({provider,onSave,onClose}:{provider:ProviderDraft;onSave:(p:AIProvider)=>void;onClose:()=>void}){
-  const [credential,setCredential]=useState(provider.api\u004Key||'');
+  const [credential,setCredential]=useState(provider.apiKey||'');
   const [endpoint,setEndpoint]=useState(provider.endpoint);
   const [model,setModel]=useState(provider.model);
   const [folderId,setFolderId]=useState(provider.folderId||'');
   const [testStatus,setTestStatus]=useState<'idle'|'testing'|'success'|'error'>('idle');
   const [testError,setTestError]=useState('');
-  const save=(enabled:boolean)=>onSave({...provider,['api'+'Key']:credential,endpoint,model,folderId:provider.id==='yandex'?folderId:provider.folderId,enabled});
-  const handleTest=async()=>{setTestStatus('testing');setTestError('');const temp:AIProvider={...provider,['api'+'Key']:credential,endpoint,model,folderId:provider.id==='yandex'?folderId:provider.folderId,enabled:true};try{aiGateway.addProvider(temp);const ok=await aiGateway.testConnection(provider.id);aiGateway.removeProvider(provider.id);if(ok)setTestStatus('success');else{setTestStatus('error');setTestError('Connection failed');}}catch(err:any){aiGateway.removeProvider(provider.id);setTestStatus('error');setTestError(err.message||'Unknown error');}};
+  const save=(enabled:boolean)=>onSave({...provider,apiKey:credential,endpoint,model,folderId:provider.id==='yandex'?folderId:provider.folderId,enabled});
+  const handleTest=async()=>{setTestStatus('testing');setTestError('');const temp:AIProvider={...provider,apiKey:credential,endpoint,model,folderId:provider.id==='yandex'?folderId:provider.folderId,enabled:true};try{aiGateway.addProvider(temp);const ok=await aiGateway.testConnection(provider.id);aiGateway.removeProvider(provider.id);if(ok)setTestStatus('success');else{setTestStatus('error');setTestError('Connection failed');}}catch(err:any){aiGateway.removeProvider(provider.id);setTestStatus('error');setTestError(err.message||'Unknown error');}};
   const models=MODEL_OPTIONS[provider.id]||[provider.model];
   return <motion.div initial={{opacity:0}} animate={{opacity:1}} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={onClose}><motion.div initial={{scale:.9,y:20}} animate={{scale:1,y:0}} className="w-full max-w-lg glass-card rounded-2xl p-6 border border-sv-border" onClick={e=>e.stopPropagation()}>
     <div className="flex items-center justify-between mb-6"><div><h3 className="text-lg font-semibold">{provider.name}</h3><p className="text-xs text-sv-muted">{provider.type==='offline'?'Offline / Local':'Online / Cloud API'}</p></div><button onClick={onClose} className="p-2 rounded-lg hover:bg-white/10 text-sv-muted"><X className="w-5 h-5"/></button></div>
@@ -62,7 +62,7 @@ export default function AIProvidersPage(){
   const [configuringProvider,setConfiguringProvider]=useState<ProviderDraft|null>(null);
   useEffect(()=>{const i=setInterval(()=>setProviders(aiGateway.getAllProviders()),1000);return()=>clearInterval(i)},[]);
   const activeProvider=aiGateway.getActiveProvider();
-  const handleAdd=(id:string)=>{const preset=PRESET_PROVIDERS.find(p=>p.id===id);if(preset)setConfiguringProvider({...preset,['api'+'Key']:''});};
+  const handleAdd=(id:string)=>{const preset=PRESET_PROVIDERS.find(p=>p.id===id);if(preset)setConfiguringProvider({...preset,apiKey:''});};
   const handleSave=(p:AIProvider)=>{aiGateway.addProvider(p);setProviders(aiGateway.getAllProviders());setConfiguringProvider(null);};
   const handleRemove=(id:string)=>{aiGateway.removeProvider(id);setProviders(aiGateway.getAllProviders());};
   const available=PRESET_PROVIDERS.filter(p=>p.type===activeTab&&!providers.some(ep=>ep.id===p.id));
