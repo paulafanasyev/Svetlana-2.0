@@ -1,5 +1,5 @@
 // Real Tool Registry - Uses actual PlatformHands for device control
-import type { Tool, ToolResult } from './ToolRegistry';
+import type { Tool, ToolResult, ExternalToolMetadata } from './ToolRegistry';
 import { handsManager } from './HandsManager';
 
 async function requireHands(): Promise<void> {
@@ -97,10 +97,36 @@ export const pressKeyTool: Tool = { id:'press_key', name:'Press Key', descriptio
 
 export const goHomeTool: Tool = { id:'go_home', name:'Go Home', description:'Navigate to Android home screen', category:'navigation', riskLevel:'low', inputSchema:{type:'object',properties:{}}, async execute(){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const beforeApp=await h.getCurrentApp();const r=await h.goHome();if(!r.success)return{success:false,error:r.error||'Home navigation failed'};await new Promise(res=>setTimeout(res,300));const afterApp=await h.getCurrentApp();return afterApp==='com.android.launcher'?{success:true,data:{navigated:true,beforeApp,afterApp,currentApp:afterApp}}:{success:false,error:`Verification failed: expected com.android.launcher, got ${afterApp}`,data:{navigated:false,beforeApp,afterApp,currentApp:afterApp}};},async verify(_p,r){return !!r.success&&r.data?.afterApp==='com.android.launcher'},async isAvailable(){return await handsManager.isConnected();}};
 
-export const goBackTool: Tool = { id:'go_back', name:'Go Back', description:'Navigate back', category:'navigation', riskLevel:'low', inputSchema:{type:'object',properties:{}}, async execute(){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const beforeApp=await h.getCurrentApp();const r=await h.goBack();if(!r.success)return{success:false,error:r.error||'Back navigation failed'};await new Promise(res=>setTimeout(res,300));const afterApp=await h.getCurrentApp();const navigated=beforeApp!==afterApp;return navigated?{success:true,data:{navigated,beforeApp,afterApp}}:{success:false,error:`Verification failed: back navigation did not change app (${beforeApp})`,data:{navigated:false,beforeApp,afterApp}};},async verify(_p,r){return !!r.success&&r.data?.navigated===true&&r.data?.beforeApp!==r.data?.afterApp},async isAvailable(){return await handsManager.isConnected();}};
+export const goBackTool: Tool = { id:'go_back', name:'Go Back', description:'Navigate back', category:'navigation', riskLevel:'low', inputSchema:{type:'object',properties:{}}, async execute(){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const beforeApp=await h.getCurrentApp();const r=await h.goBack();if(!r.success)return{success:false,error:r.error||'Back navigation failed'};await new Promise(r=>setTimeout(r,300));const afterApp=await h.getCurrentApp();const navigated=beforeApp!==afterApp;return navigated?{success:true,data:{navigated,beforeApp,afterApp}}:{success:false,error:`Verification failed: back navigation did not change app (${beforeApp})`,data:{navigated:false,beforeApp,afterApp}};},async verify(_p,r){return !!r.success&&r.data?.navigated===true&&r.data?.beforeApp!==r.data?.afterApp},async isAvailable(){return await handsManager.isConnected();}};
 
 export const searchWebTool: Tool = { id:'search_web', name:'Search Web', description:'Search the web using default browser', category:'data', riskLevel:'low', inputSchema:{type:'object',properties:{query:{type:'string',description:'Search query'}},required:['query']}, async execute(p){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const url=`https://www.google.com/search?q=${encodeURIComponent(p.query)}`;const l=await h.launchApp('com.android.chrome');if(!l.success)return{success:false,error:'Failed to open browser'};await new Promise(r=>setTimeout(r,1000));const t=await h.type(url);if(!t.success)return{success:false,error:'Failed to type search query'};const e=await h.pressKey('enter');return e.success?{success:true,data:{query:p.query,url,browser:'com.android.chrome'}}:{success:false,error:'Failed to submit search'};},async verify(_p,r){return r.success},async isAvailable(){return await handsManager.isConnected();}};
 
-import { toolRegistry } from './ToolRegistry';
-export function registerRealTools(){[openAppTool,tapElementTool,typeTextTool,captureScreenTool,sendMessageTool,swipeTool,pressKeyTool,goHomeTool,goBackTool,searchWebTool].forEach(t=>toolRegistry.registerTool(t));}
+// These are first-party local Android tools backed by HandsManager. Metadata is
+// attached here so the single ToolRegistry can discover them by capability and
+// apply the same free-first routing rules as external integrations.
+const LOCAL_REAL_TOOL_METADATA: Record<string, ExternalToolMetadata> = {
+  open_app: { backend: 'LOCAL_FREE', capability: 'navigation', networkPolicy: 'local_network', offlineCapable: true, privacy: { dataTransfer: 'local_only' }, testsStatus: 'PASS', securityStatus: 'PENDING', androidTermuxCompatible: true, verificationStrategy: 'observation' },
+  tap_element: { backend: 'LOCAL_FREE', capability: 'interaction', networkPolicy: 'local_network', offlineCapable: true, privacy: { dataTransfer: 'local_only' }, testsStatus: 'PASS', securityStatus: 'PENDING', androidTermuxCompatible: true, verificationStrategy: 'observation' },
+  type_text: { backend: 'LOCAL_FREE', capability: 'interaction', networkPolicy: 'local_network', offlineCapable: true, privacy: { dataTransfer: 'local_only' }, testsStatus: 'PASS', securityStatus: 'PENDING', androidTermuxCompatible: true, verificationStrategy: 'observation' },
+  capture_screen: { backend: 'LOCAL_FREE', capability: 'vision', networkPolicy: 'local_network', offlineCapable: true, privacy: { dataTransfer: 'local_only' }, testsStatus: 'PASS', securityStatus: 'PENDING', androidTermuxCompatible: true, verificationStrategy: 'observation' },
+  send_message: { backend: 'LOCAL_FREE', capability: 'communication', networkPolicy: 'local_network', offlineCapable: true, privacy: { dataTransfer: 'local_only' }, testsStatus: 'PASS', securityStatus: 'PENDING', androidTermuxCompatible: true, verificationStrategy: 'observation' },
+  swipe: { backend: 'LOCAL_FREE', capability: 'interaction', networkPolicy: 'local_network', offlineCapable: true, privacy: { dataTransfer: 'local_only' }, testsStatus: 'PASS', securityStatus: 'PENDING', androidTermuxCompatible: true, verificationStrategy: 'tool_result' },
+  press_key: { backend: 'LOCAL_FREE', capability: 'system', networkPolicy: 'local_network', offlineCapable: true, privacy: { dataTransfer: 'local_only' }, testsStatus: 'PASS', securityStatus: 'PENDING', androidTermuxCompatible: true, verificationStrategy: 'tool_result' },
+  go_home: { backend: 'LOCAL_FREE', capability: 'navigation', networkPolicy: 'local_network', offlineCapable: true, privacy: { dataTransfer: 'local_only' }, testsStatus: 'PASS', securityStatus: 'PENDING', androidTermuxCompatible: true, verificationStrategy: 'observation' },
+  go_back: { backend: 'LOCAL_FREE', capability: 'navigation', networkPolicy: 'local_network', offlineCapable: true, privacy: { dataTransfer: 'local_only' }, testsStatus: 'PASS', securityStatus: 'PENDING', androidTermuxCompatible: true, verificationStrategy: 'observation' },
+  search_web: { backend: 'LOCAL_FREE', capability: 'data', networkPolicy: 'internet_required', offlineCapable: false, privacy: { dataTransfer: 'external_service' }, testsStatus: 'PASS', securityStatus: 'PENDING', androidTermuxCompatible: true, verificationStrategy: 'tool_result' },
+};
+
+function attachRealToolMetadata(): void {
+  const tools: Tool[] = [openAppTool, tapElementTool, typeTextTool, captureScreenTool, sendMessageTool, swipeTool, pressKeyTool, goHomeTool, goBackTool, searchWebTool];
+  for (const tool of tools) {
+    const metadata = LOCAL_REAL_TOOL_METADATA[tool.id];
+    if (metadata) tool.external = metadata;
+  }
+}
+
+export function registerRealTools(){
+  attachRealToolMetadata();
+  [openAppTool,tapElementTool,typeTextTool,captureScreenTool,sendMessageTool,swipeTool,pressKeyTool,goHomeTool,goBackTool,searchWebTool].forEach(t=>toolRegistry.registerTool(t));
+}
 registerRealTools();
