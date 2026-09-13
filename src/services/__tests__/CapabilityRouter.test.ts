@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, test } from 'vitest';
 import { capabilityRouter } from '../CapabilityRouter';
-import { toolRegistry, type Tool } from '../ToolRegistry';
+import { toolRegistry, type Tool, type ToolCapability } from '../ToolRegistry';
 
-const makeTool = (id: string, backend: 'LOCAL_FREE' | 'USER_CONNECTED' | 'OPTIONAL_CLOUD' | 'REJECTED', available: boolean): Tool => ({
+const makeTool = (
+  id: string,
+  backend: 'LOCAL_FREE' | 'USER_CONNECTED' | 'OPTIONAL_CLOUD' | 'REJECTED',
+  available: boolean,
+  capability: ToolCapability = 'document',
+): Tool => ({
   id,
   name: id,
   description: id,
@@ -11,7 +16,7 @@ const makeTool = (id: string, backend: 'LOCAL_FREE' | 'USER_CONNECTED' | 'OPTION
   category: 'data',
   external: {
     backend,
-    capability: 'document',
+    capability,
     networkPolicy: backend === 'LOCAL_FREE' ? 'offline' : 'internet_required',
     offlineCapable: backend === 'LOCAL_FREE',
     verificationStrategy: 'tool_result',
@@ -82,10 +87,10 @@ describe('CapabilityRouter contract', () => {
   });
 
   test('does not let a cloud exact action outrank a LOCAL_FREE capability tool', async () => {
-    toolRegistry.registerTool(makeTool('open_app', 'OPTIONAL_CLOUD', true));
-    toolRegistry.registerTool(makeTool('test.router.local-navigation', 'LOCAL_FREE', true));
+    toolRegistry.registerTool(makeTool('test.router.cloud-open', 'OPTIONAL_CLOUD', true, 'navigation'));
+    toolRegistry.registerTool(makeTool('test.router.local-navigation', 'LOCAL_FREE', true, 'navigation'));
 
-    const result = await capabilityRouter.resolve({ action: 'open_app', capability: 'navigation' });
+    const result = await capabilityRouter.resolve({ action: 'test.router.cloud-open', capability: 'navigation' });
 
     expect(result.success).toBe(true);
     expect(result.tool?.id).toBe('test.router.local-navigation');
