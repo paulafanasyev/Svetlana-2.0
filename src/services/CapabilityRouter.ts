@@ -123,7 +123,7 @@ class CapabilityRouter {
       success: true,
       tool: selected,
       candidates: ordered.map(tool => tool.id),
-      backend: selected.external?.backend,
+      backend: selected.external?.backend || 'LOCAL_FREE',
     };
   }
 
