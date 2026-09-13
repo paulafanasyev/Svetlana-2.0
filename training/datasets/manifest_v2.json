@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "purpose": "Single source of truth for the next Svetlana multimodal training pipeline.",
   "base_model": "google/gemma-4-E2B-it",
   "runtime_target": "LiteRT-LM",
@@ -11,7 +11,8 @@
     {"path": "training/datasets/multimodal/multimodal_training_curriculum.jsonl", "format": "multimodal_v1", "status": "requires_native_multimodal_trainer"}
   ],
   "reference_knowledge": [
-    {"path": "training/datasets/self_employed_official.jsonl", "format": "messages", "role": "official_source_behavior"}
+    {"path": "training/datasets/self_employed_official.jsonl", "format": "messages", "role": "official_source_behavior"},
+    {"path": "training/datasets/self_employed_business_knowledge_v1.jsonl", "format": "messages", "role": "self_employed_business_knowledge"}
   ],
   "eval": [
     {"path": "training/datasets/svetlana_eval.jsonl", "format": "messages"}
