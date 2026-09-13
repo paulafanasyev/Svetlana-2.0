@@ -1,0 +1,93 @@
+name: Training Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['gpu-training-auto-run']
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  validate-training-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Validate manifest and dataset paths
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          m = json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))
+          assert m['base_model'] == 'google/gemma-4-E2B-it'
+          assert m['runtime_target'] == 'LiteRT-LM'
+          assert m['training_mode'] == 'multimodal_agent'
+          paths = [x['path'] for x in m['train'] + m['reference_knowledge'] + m['eval']]
+          for p in paths:
+              assert Path(p).exists(), f'missing dataset: {p}'
+          assert m['rules']['no_eval_in_train'] is True
+          assert m['rules']['no_personal_data_in_weights'] is True
+          print('MANIFEST=PASS')
+          print('DATASET_PATHS=PASS')
+          print('MULTIMODAL_MODE=PASS')
+          PY
+
+      - name: Validate JSONL structure
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          files = [
+            Path('training/datasets/svetlana_seed.jsonl'),
+            Path('training/datasets/svetlana_capability_seed.jsonl'),
+            Path('training/datasets/svetlana_capability_training_v2.jsonl'),
+            Path('training/datasets/multimodal/multimodal_training_curriculum.jsonl'),
+            Path('training/datasets/self_employed_official.jsonl'),
+            Path('training/datasets/svetlana_eval.jsonl'),
+          ]
+          for p in files:
+              for n, line in enumerate(p.read_text(encoding='utf-8').splitlines(), 1):
+                  if line.strip():
+                      obj = json.loads(line)
+                      assert isinstance(obj, dict), f'{p}:{n}'
+          print('JSONL=PASS')
+          PY
+
+      - name: Validate exact train/eval separation
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          train_files = [
+            Path('training/datasets/svetlana_seed.jsonl'),
+            Path('training/datasets/svetlana_capability_seed.jsonl'),
+            Path('training/datasets/svetlana_capability_training_v2.jsonl'),
+            Path('training/datasets/multimodal/multimodal_training_curriculum.jsonl'),
+          ]
+          eval_file = Path('training/datasets/svetlana_eval.jsonl')
+          def fp(x):
+              return json.dumps(x, ensure_ascii=False, sort_keys=True)
+          train = set()
+          for p in train_files:
+              for line in p.read_text(encoding='utf-8').splitlines():
+                  if line.strip(): train.add(fp(json.loads(line)))
+          for line in eval_file.read_text(encoding='utf-8').splitlines():
+              if line.strip(): assert fp(json.loads(line)) not in train
+          print('TRAIN_EVAL_EXACT_SEPARATION=PASS')
+          PY
+
+      - name: Compile text smoke trainer only
+        run: python -m py_compile training/gemma4/train_svetlana_smoke.py
+
+      - name: Confirm multimodal training remains gated
+        run: |
+          test -f training/gemma4/MULTIMODAL_TRAINING_PLAN.md
+          test -f training/datasets/multimodal/README.json
+          echo 'MULTIMODAL_TRAINING_GATE=ACTIVE'
+          echo 'GOOGLE_GPU_TRAINING=NOT_RUN'
+          echo 'LITERT_LM_CONVERSION=NOT_RUN'
