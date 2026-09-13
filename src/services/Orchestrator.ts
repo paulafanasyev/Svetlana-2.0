@@ -4,7 +4,8 @@ import { planner, type Task, type TaskStep } from './Planner';
 import { memory } from './Memory';
 import { verification, type VerificationResult } from './Verification';
 import { aiGateway, type ChatMessage } from './AIGateway';
-import { toolRegistry, type Tool } from './ToolRegistry';
+import { toolRegistry } from './ToolRegistry';
+import { capabilityRouter } from './CapabilityRouter';
 import { policyEngine, type PolicyContext } from './PolicyEngine';
 import { observationManager } from './ObservationLayer';
 import { avatarStateMachine } from './AvatarStateMachine';
@@ -58,7 +59,6 @@ class Orchestrator {
     localStorage.setItem('svetlana_orchestrator_config', JSON.stringify(this.config));
   }
 
-  // Event system
   on(listener: (event: AgentEvent) => void) {
     this.listeners.push(listener);
     return () => {
@@ -75,10 +75,8 @@ class Orchestrator {
     this.listeners.forEach(l => l(fullEvent));
   }
 
-  // Main execution pipeline
   async execute(goal: string, context?: any): Promise<{ success: boolean; result?: any; error?: string }> {
     try {
-      // 1. UNDERSTAND
       this.setState('understanding');
       this.emit({ type: 'understand', state: 'understanding', detail: `Parsing goal: "${goal}"`, data: { goal } });
       
@@ -89,7 +87,6 @@ class Orchestrator {
 
       await this.delay(500);
 
-      // 2. PLAN
       this.setState('planning');
       this.emit({ type: 'plan', state: 'planning', detail: 'Decomposing task into steps' });
       
@@ -100,7 +97,6 @@ class Orchestrator {
       
       await this.delay(500);
 
-      // 3-8. Execute each step
       for (const step of task.steps) {
         const result = await this.executeStep(step, context);
         if (!result.success) {
@@ -110,7 +106,6 @@ class Orchestrator {
         }
       }
 
-      // 9. COMPLETE
       this.setState('complete');
       this.emit({ type: 'complete', state: 'complete', detail: 'Task completed successfully' });
       
@@ -128,7 +123,6 @@ class Orchestrator {
   }
 
   private async executeStep(step: TaskStep, context?: any): Promise<{ success: boolean; error?: string }> {
-    // OBSERVE - Real observation
     this.setState('observing');
     avatarStateMachine.setExecuting();
     this.emit({ type: 'observe', state: 'observing', detail: `Observing before action: ${step.action}`, data: { step } });
@@ -138,7 +132,6 @@ class Orchestrator {
     
     this.emit({ type: 'observe_result', state: 'observing', detail: `Observation: ${observationResult.success ? 'SUCCESS' : 'FAILED'}`, data: { observation: observationResult } });
 
-    // GROUND - Find target element
     this.setState('grounding');
     this.emit({ type: 'ground', state: 'grounding', detail: `Grounding to target: ${step.target || 'N/A'}` });
     
@@ -148,16 +141,26 @@ class Orchestrator {
       this.emit({ type: 'ground_result', state: 'grounding', detail: groundedElement ? `Found: ${groundedElement.text}` : 'Not found', data: { element: groundedElement } });
     }
 
-    // POLICY - Real policy check
     this.setState('policy');
     avatarStateMachine.setVerifying();
     
-    const tool = toolRegistry.getTool(step.action);
-    if (!tool) {
-      this.emit({ type: 'policy_error', state: 'policy', detail: `Tool not found: ${step.action}` });
-      return { success: false, error: `Tool ${step.action} not found` };
+    // Resolve through the existing ToolRegistry using the free-first CapabilityRouter.
+    const route = await capabilityRouter.resolve({
+      action: step.action,
+      parameters: step.parameters || {},
+    });
+    this.emit({
+      type: 'route',
+      state: 'policy',
+      detail: route.success ? `Routed ${step.action} -> ${route.tool!.id}` : `Routing failed: ${route.error}`,
+      data: { route: { success: route.success, tool: route.tool?.id, backend: route.backend, candidates: route.candidates, error: route.error } },
+    });
+
+    if (!route.success || !route.tool) {
+      return { success: false, error: route.error || `No tool available for ${step.action}` };
     }
 
+    const tool = route.tool;
     const policyContext: PolicyContext = {
       platform: observationManager.getContext().platform,
       currentApp: preState?.currentApp,
@@ -176,10 +179,9 @@ class Orchestrator {
     if (policyResult.decision === 'require_confirmation') {
       avatarStateMachine.setConfirmationRequired();
       this.emit({ type: 'policy_confirmation', state: 'policy', detail: policyResult.confirmationMessage || 'Confirmation required' });
-      return { success: false, error: 'Requires user confirmation', };
+      return { success: false, error: 'Requires user confirmation' };
     }
 
-    // ACT - Real tool execution
     this.setState('acting');
     avatarStateMachine.setExecuting();
     this.emit({ type: 'act', state: 'acting', detail: `Executing tool: ${tool.name}`, data: { tool: tool.id, params: step.parameters } });
@@ -194,17 +196,14 @@ class Orchestrator {
       return { success: false, error: actionResult.error };
     }
 
-    // VERIFY - Real verification
     if (this.config.enableVerification) {
       this.setState('verifying');
       avatarStateMachine.setVerifying();
       this.emit({ type: 'verify', state: 'verifying', detail: 'Verifying action result' });
       
-      // Observe again
       const postObservation = await observationManager.observe();
       const postState = postObservation.state;
 
-      // Compare states
       let verificationSuccess = true;
       if (preState && postState) {
         const comparison = observationManager.compareStates(preState, postState);
@@ -213,7 +212,6 @@ class Orchestrator {
         this.emit({ type: 'verify_compare', state: 'verifying', detail: `State changed: ${comparison.changed}`, data: { comparison } });
       }
 
-      // Use verification module
       const verificationResult = await verification.verify({
         action: step.action,
         expectedState: { success: true },
@@ -223,11 +221,8 @@ class Orchestrator {
       this.emit({ type: 'verify_result', state: 'verifying', detail: `Verification: ${verificationResult.success ? 'PASS' : 'FAIL'}`, data: { verification: verificationResult } });
 
       if (!verificationResult.success) {
-        // RETRY
         for (let retry = 0; retry < this.config.maxRetries; retry++) {
           this.emit({ type: 'retry', state: 'verifying', detail: `Retry ${retry + 1}/${this.config.maxRetries}` });
-          
-          // Wait before retry (exponential backoff)
           await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retry)));
           
           const retryResult = await toolRegistry.executeTool(tool.id, step.parameters || {});
@@ -245,12 +240,10 @@ class Orchestrator {
       }
     }
 
-    // REFLECT
     if (this.config.enableReflection) {
       this.setState('reflecting');
       this.emit({ type: 'reflect', state: 'reflecting', detail: 'Reflecting on action outcome' });
       
-      // Store in memory
       if (this.config.enableMemory) {
         memory.addToLongTerm({
           type: 'action',
@@ -265,8 +258,6 @@ class Orchestrator {
     return { success: true };
   }
 
-  // Methods removed - now using real ToolRegistry, PolicyEngine, and ObservationLayer
-
   private setState(state: AgentState) {
     this.state = state;
   }
@@ -275,7 +266,6 @@ class Orchestrator {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  // Public API
   getState(): AgentState {
     return this.state;
   }
