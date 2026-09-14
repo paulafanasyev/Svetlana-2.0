@@ -124,6 +124,22 @@ jobs:
         name: svetlana-plan0-debug-apk
         path: android-apk
 
+    - name: Verify downloaded Plan 0 APK before emulator
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo '--- Plan 0 APK preflight ---'
+        echo "PWD=$PWD"
+        echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+        echo '--- downloaded files ---'
+        find "$GITHUB_WORKSPACE/android-apk" -maxdepth 3 -type f -print
+        APK="$GITHUB_WORKSPACE/android-apk/app-debug.apk"
+        test -f "$APK"
+        test -s "$APK"
+        echo "APK=$APK"
+        ls -lh "$APK"
+        sha256sum "$APK" | tee plan0-apk-sha256.txt
+
     - name: Start Android emulator and verify real AccessibilityService action
       uses: reactivecircus/android-emulator-runner@v2
       with:
@@ -134,8 +150,15 @@ jobs:
         emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
         disable-animations: true
         script: |
-          APK="$(find android-apk -name 'app-debug.apk' -type f | head -n 1)"
+          set -euo pipefail
+          APK="$GITHUB_WORKSPACE/android-apk/app-debug.apk"
+          echo '--- Plan 0 runtime APK preflight ---'
+          echo "PWD=$PWD"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          test -f "$APK"
           test -s "$APK"
+          ls -lh "$APK"
+          sha256sum "$APK" | tee plan0-runtime-apk-sha256.txt
 
           adb install -r "$APK"
           adb shell am start -n com.svetlana.android.hands/.MainActivity
@@ -173,4 +196,6 @@ jobs:
           window.xml
           plan0-logcat.txt
           service-logcat.txt
+          plan0-apk-sha256.txt
+          plan0-runtime-apk-sha256.txt
         if-no-files-found: warn
