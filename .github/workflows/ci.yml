@@ -3,7 +3,7 @@ name: CI
 on:
   workflow_dispatch:
   push:
-    branches: [ main, develop, 'svetlana-2.0-core-development-*', 'svetlana-self-employed-crm-foundation', 'knowledge-business-expansion-*' ]
+    branches: [ main, develop, 'svetlana-2.0-core-development-*', 'svetlana-self-employed-crm-foundation', 'knowledge-business-expansion-*', 'plan0-runtime-gate-*' ]
   pull_request:
     branches: [ main, develop ]
 
