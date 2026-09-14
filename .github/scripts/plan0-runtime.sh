@@ -4,7 +4,8 @@ set -euo pipefail
 APK="$GITHUB_WORKSPACE/android-apk/app-debug.apk"
 SERVICE='com.svetlana.android.hands/com.svetlana.android.hands.SvetlanaAccessibilityService'
 PACKAGE='com.svetlana.android.hands'
-APP_OP='android:bind_accessibility_service'
+APP_OP_NAME='BIND_ACCESSIBILITY_SERVICE'
+APP_OP_ID='73'
 
 echo '--- Plan 0 runtime APK preflight ---'
 test -f "$APK"
@@ -13,12 +14,30 @@ ls -lh "$APK"
 sha256sum "$APK" > plan0-runtime-apk-sha256.txt
 cat plan0-runtime-apk-sha256.txt
 adb install -r "$APK"
+
 echo '--- Plan 0 AppOps grant ---'
-adb shell appops set "$PACKAGE" "$APP_OP" allow
-appops_state="$(adb shell appops get "$PACKAGE" "$APP_OP" | tr -d '\r')"
-echo "appops_state=$appops_state"
+echo "package=$PACKAGE appop=$APP_OP_NAME id=$APP_OP_ID"
+# Android's public AppOps name for OPSTR_BIND_ACCESSIBILITY_SERVICE is
+# BIND_ACCESSIBILITY_SERVICE. On API 35 the operation is enum 73.
+# The previous canonical-string command produced "No operations" and did
+# not create a package-specific grant, so use the public op name and verify
+# the persisted result before attempting to enable the service.
+adb shell appops set "$PACKAGE" "$APP_OP_NAME" allow
+appops_state="$(adb shell appops get "$PACKAGE" "$APP_OP_NAME" | tr -d '\r')"
+echo "appops_state_by_name=$appops_state"
 printf '%s\n' "$appops_state" > plan0-appops.txt
+if ! printf '%s\n' "$appops_state" | grep -qi 'allow'; then
+  echo 'Named AppOp did not persist; retrying with API-35 numeric op 73'
+  adb shell appops set "$PACKAGE" "$APP_OP_ID" allow
+  appops_state="$(adb shell appops get "$PACKAGE" "$APP_OP_NAME" | tr -d '\r')"
+  echo "appops_state_after_numeric=$appops_state"
+  printf '%s\n' "$appops_state" >> plan0-appops.txt
+fi
 grep -qi 'allow' plan0-appops.txt
+
+echo '--- Plan 0 AppOps dump ---'
+adb shell dumpsys appops | grep -A8 -B2 "$PACKAGE" | tee plan0-appops-dumpsys.txt || true
+
 adb shell am start -n "$PACKAGE/.MainActivity"
 adb shell settings --user 0 put secure enabled_accessibility_services "$SERVICE"
 adb shell settings --user 0 put secure accessibility_enabled 1
@@ -37,6 +56,7 @@ adb shell dumpsys accessibility | tee accessibility-dumpsys.txt
 if ! grep -q "Enabled services:.*$SERVICE" accessibility-dumpsys.txt; then
   echo 'PLAN0_ACCESSIBILITY_MANAGER_ENABLED=FAIL'
   adb shell dumpsys package "$PACKAGE" | tee plan0-package-dumpsys.txt
+  adb shell appops get "$PACKAGE" "$APP_OP_NAME" | tee plan0-appops-final.txt
   adb logcat -d -b all -v threadtime | grep -iE 'AccessibilityManager|AccessibilityService|AccessibilitySecurityPolicy|Svetlana|bind.*access|AppOps' | tail -n 300 | tee plan0-accessibility-logcat.txt || true
   exit 1
 fi
