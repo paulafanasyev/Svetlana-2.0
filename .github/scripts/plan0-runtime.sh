@@ -2,6 +2,7 @@
 set -euo pipefail
 
 APK="$GITHUB_WORKSPACE/android-apk/app-debug.apk"
+SERVICE='com.svetlana.android.hands/com.svetlana.android.hands.SvetlanaAccessibilityService'
 
 echo '--- Plan 0 runtime APK preflight ---'
 echo "PWD=$PWD"
@@ -14,16 +15,32 @@ cat plan0-runtime-apk-sha256.txt
 
 adb install -r "$APK"
 adb shell am start -n com.svetlana.android.hands/.MainActivity
-adb shell settings put secure enabled_accessibility_services com.svetlana.android.hands/com.svetlana.android.hands.SvetlanaAccessibilityService
-adb shell settings put secure accessibility_enabled 1
-
-sleep 3
+adb shell settings --user 0 put secure enabled_accessibility_services "$SERVICE"
+adb shell settings --user 0 put secure accessibility_enabled 1
 
 echo '--- registered/enabled accessibility services ---'
-adb shell settings get secure enabled_accessibility_services
-adb shell dumpsys accessibility | tee accessibility-dumpsys.txt
+for i in $(seq 1 20); do
+  enabled="$(adb shell settings --user 0 get secure enabled_accessibility_services | tr -d '\r')"
+  echo "poll=$i enabled_setting=$enabled"
+  if adb shell dumpsys accessibility | tee accessibility-dumpsys.txt | grep -q "Enabled services:.*$SERVICE"; then
+    echo 'PLAN0_ACCESSIBILITY_MANAGER_ENABLED=PASS'
+    break
+  fi
+  sleep 1
+done
 
-grep -q 'com.svetlana.android.hands/com.svetlana.android.hands.SvetlanaAccessibilityService' accessibility-dumpsys.txt
+enabled="$(adb shell settings --user 0 get secure enabled_accessibility_services | tr -d '\r')"
+echo "final_enabled_setting=$enabled"
+adb shell dumpsys accessibility | tee accessibility-dumpsys.txt
+if ! grep -q "Enabled services:.*$SERVICE" accessibility-dumpsys.txt; then
+  echo 'PLAN0_ACCESSIBILITY_MANAGER_ENABLED=FAIL'
+  echo '--- package/service diagnostics ---'
+  adb shell dumpsys package com.svetlana.android.hands | tee plan0-package-dumpsys.txt
+  echo '--- accessibility-related logcat ---'
+  adb logcat -d -b all -v threadtime | grep -iE 'AccessibilityManager|AccessibilityService|Svetlana|bind.*access' | tail -n 300 | tee plan0-accessibility-logcat.txt || true
+  exit 1
+fi
+
 adb logcat -d -s SvetlanaPlan0:I '*:S' > service-logcat.txt
 grep -q 'PLAN0_SERVICE_CONNECTED=PASS' service-logcat.txt
 
