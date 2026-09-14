@@ -1,17 +1,27 @@
-# Real Android Execution — Plan 0 Gate
+# Real Android Execution — Plan 0
 
-Current architecture: Svetlana → Orchestrator → Planner → Policy → Tool Registry → Hands → Android → Verification → Svetlana.
+Svetlana-2.0 is local-only: the phone is controlled only by the verified/authorized user through the local Svetlana runtime.
 
-Current HTTP client: src/services/HTTPHands.ts → http://127.0.0.1:8765.
+Canonical chain:
 
-VERIFIED: control-plane code, real HTTP client, Hands/tool integration, verification code, static CI gates.
+`Verified User → Svetlana → Orchestrator → Planner → Policy → Tool Registry → Hands → Android AccessibilityService → Verification`
 
-NOT PROVEN: Android runtime availability, AccessibilityService binding, real Android request/action, real screen capture, independent device-state verification, complete end-to-end execution.
+Remote HTTP/WebSocket/MCP control is not part of the architecture and must not be reintroduced.
 
-Runtime closure requires: code → CI/build → APK → real Android emulator/device → real HTTP tool call → real Android action → independent observation → verification.
+## Runtime proof
 
-HTTP 200 or success:true is not proof of a real device action.
+**VERIFIED:** active Android connection UI no longer exposes an endpoint or network transport; Hands refuses remote-style connection attempts.
 
-Training starts only after Plan 0 closes. Target: Google Colab / Google GPU.
+**NOT PROVEN:** the native AccessibilityService bridge and real APK/device action chain.
 
-Current status: Plan 0 NOT CLOSED.
+Required evidence:
+
+`CI/build → APK → real device/emulator → service registered → onServiceConnected → local Hands invocation → real UI/system change → independent verification`
+
+A web page, HTTP response, localhost endpoint, or `success:true` value is never sufficient evidence of a real device action.
+
+## Local administration
+
+Svetlana may inspect and administer the local phone within actual Android permissions, including system/network observation, open-port visibility, firewall and VPN operations. Sensitive operations remain under Policy and verified-user authorization.
+
+Training starts only after the runtime gate closes. Target: Google Colab / Google GPU.
