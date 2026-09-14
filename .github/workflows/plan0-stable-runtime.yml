@@ -19,10 +19,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          uname -a
-          uname -m
+          mkdir -p plan0-ui-evidence
+          uname -a | tee plan0-ui-evidence/host-uname.txt
+          uname -m | tee plan0-ui-evidence/host-arch.txt
+          sysctl -n hw.logicalcpu | tee plan0-ui-evidence/host-logicalcpu.txt
+          sysctl -n hw.ncpu | tee plan0-ui-evidence/host-ncpu.txt
           HV="$(sysctl -n kern.hv_support 2>/dev/null || true)"
-          echo "kern.hv_support=$HV"
+          echo "kern.hv_support=$HV" | tee plan0-ui-evidence/hardware-virtualization.txt
           test "$HV" = "1"
 
       - uses: actions/setup-java@v5
