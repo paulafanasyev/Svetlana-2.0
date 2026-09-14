@@ -1,8 +1,0 @@
-name: Force Platform Readiness
-
-on:
-  workflow_dispatch:
-
-jobs:
-  trigger:
-    uses: ./.github/workflows/platform-readiness.yml
