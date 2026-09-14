@@ -65,3 +65,7 @@ jobs:
           name: svetlana-plan0-uiautomator-evidence
           path: plan0-ui-evidence
           if-no-files-found: warn
+
+      - name: Record workflow revision
+        if: always()
+        run: git rev-parse HEAD | tee plan0-ui-evidence/workflow-revision.txt
