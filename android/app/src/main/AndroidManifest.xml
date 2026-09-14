@@ -6,7 +6,7 @@
         android:supportsRtl="true">
 
         <activity
-            android:name=".MainActivity"
+            android:name="com.svetlana.android.hands.MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -15,7 +15,7 @@
         </activity>
 
         <service
-            android:name=".SvetlanaAccessibilityService"
+            android:name="com.svetlana.android.hands.SvetlanaAccessibilityService"
             android:description="@string/accessibility_service_description"
             android:exported="false"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
