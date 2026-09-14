@@ -40,7 +40,12 @@ public class Plan0AccessibilityUiTest {
         UiDevice device = device();
         marker("START");
         marker("ADB_STATE=" + shell("get-state"));
-        marker("BASELINE_ENABLED=" + shell("settings --user 0 get secure enabled_accessibility_services"));
+
+        String currentUser = shell("am get-current-user");
+        assertTrue("Unable to determine current Android user", currentUser.matches("\\d+"));
+        String settingsPrefix = "settings --user " + currentUser;
+        marker("CURRENT_USER=" + currentUser);
+        marker("BASELINE_ENABLED=" + shell(settingsPrefix + " get secure enabled_accessibility_services"));
 
         Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
@@ -91,7 +96,7 @@ public class Plan0AccessibilityUiTest {
 
         boolean enabled = false;
         for (int i = 0; i < 30; i++) {
-            String value = shell("settings --user 0 get secure enabled_accessibility_services");
+            String value = shell(settingsPrefix + " get secure enabled_accessibility_services");
             marker(String.format(Locale.US, "POLL_%02d_ENABLED=[%s]", i, value));
             if (value.contains(SERVICE)) {
                 enabled = true;
@@ -101,7 +106,7 @@ public class Plan0AccessibilityUiTest {
         }
 
         marker("FINAL_ENABLED=" + enabled);
-        marker("FINAL_SETTING=" + shell("settings --user 0 get secure enabled_accessibility_services"));
+        marker("FINAL_SETTING=" + shell(settingsPrefix + " get secure enabled_accessibility_services"));
         marker("ACCESSIBILITY_DUMPSYS=" + shell("dumpsys accessibility | grep -E 'Enabled services:|Bound services:|Binding services:'"));
         assertTrue("Accessibility service was not enabled after the real UiAutomator toggle", enabled);
         marker("RESULT=PASS");
