@@ -1,0 +1,1 @@
+package ru.svetlana.androidruntime; public final class RuntimeEntry {}
