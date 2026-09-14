@@ -16,25 +16,43 @@ echo "PLAN0_REPO_ROOT=$REPO_ROOT"
 echo "PLAN0_APK_PATH=$APK"
 echo "PLAN0_TEST_APK_PATH=$TEST_APK"
 echo "emulator_ready=$(date -u +%FT%T.%3NZ)" | tee "$OUT/timestamps.txt"
+
+adb start-server | tee "$OUT/adb-start-server.txt"
+adb devices -l | tee "$OUT/adb-devices-initial.txt"
+
+ADB_READY=0
+for i in $(seq 1 90); do
+  STATE="$(adb -s emulator-5554 get-state 2>/dev/null || true)"
+  echo "ADB_WAIT attempt=$i state=${STATE:-unknown}" | tee -a "$OUT/adb-readiness.log"
+  if [ "$STATE" = "device" ]; then
+    ADB_READY=1
+    break
+  fi
+  sleep 2
+done
+
+test "$ADB_READY" = "1"
+echo "ADB_DEVICE_STATE=PASS" | tee "$OUT/adb-readiness.log"
 adb devices -l | tee "$OUT/adb-online.txt"
-test "$(adb get-state)" = "device"
 echo "adb_online=$(date -u +%FT%T.%3NZ)" | tee -a "$OUT/timestamps.txt"
 adb shell getprop sys.boot_completed | tee "$OUT/boot-completed.txt"
-adb shell settings --user 0 get secure enabled_accessibility_services | tee "$OUT/baseline-enabled-services.txt"
+adb shell am get-current-user | tee "$OUT/current-user.txt"
+adb shell settings get secure enabled_accessibility_services | tee "$OUT/baseline-enabled-services.txt"
 adb shell dumpsys accessibility > "$OUT/baseline-accessibility.txt"
 adb install -r "$APK" | tee "$OUT/app-install.txt"
 adb install -r "$TEST_APK" | tee "$OUT/test-install.txt"
 echo "before_instrumentation=$(date -u +%FT%T.%3NZ)" | tee -a "$OUT/timestamps.txt"
 set +e
 adb shell am instrument -w -r \
+  --user current \
   -e class com.svetlana.android.hands.Plan0AccessibilityUiTest#enableSvetlanaAccessibilityThroughSettingsUi \
   com.svetlana.android.hands.test 2>&1 | tee "$OUT/uiautomator-instrumentation.log"
 TEST_RC=${PIPESTATUS[0]}
 set -e
 echo "instrumentation_exit=$TEST_RC" | tee -a "$OUT/timestamps.txt"
 echo "after_instrumentation=$(date -u +%FT%T.%3NZ)" | tee -a "$OUT/timestamps.txt"
-adb shell settings --user 0 get secure enabled_accessibility_services | tee "$OUT/final-enabled-services.txt"
-adb shell settings --user 0 get secure accessibility_enabled | tee "$OUT/final-accessibility-enabled.txt"
+adb shell settings get secure enabled_accessibility_services | tee "$OUT/final-enabled-services.txt"
+adb shell settings get secure accessibility_enabled | tee "$OUT/final-accessibility-enabled.txt"
 adb shell dumpsys accessibility > "$OUT/final-accessibility.txt"
 adb shell dumpsys package com.svetlana.android.hands > "$OUT/final-package.txt"
 adb logcat -d -b all -v threadtime > "$OUT/final-logcat.txt"
