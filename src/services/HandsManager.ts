@@ -1,7 +1,9 @@
-// Hands Manager - Manages connection to real Android device
+// Local-only Hands manager.
+// Remote HTTP/WebSocket control is deliberately unavailable.
 import type { PlatformHands, PlatformHandsConfig, ConnectionStatus } from './PlatformHands';
-import { WebSocketHands } from './WebSocketHands';
-import { HTTPHands } from './HTTPHands';
+
+const LOCAL_ONLY_ERROR =
+  'Remote Android control is disabled. Svetlana-2.0 executes only through the local Android AccessibilityService bridge on the phone.';
 
 export class HandsManager {
   private hands: PlatformHands | null = null;
@@ -11,46 +13,20 @@ export class HandsManager {
 
   async connect(config: PlatformHandsConfig): Promise<void> {
     this.config = config;
-    this.setStatus('connecting');
-
-    try {
-      if (config.transport === 'websocket') {
-        this.hands = new WebSocketHands(config);
-      } else if (config.transport === 'http') {
-        this.hands = new HTTPHands(config);
-      } else {
-        throw new Error(`Unsupported transport: ${config.transport}`);
-      }
-
-      await this.hands.connect();
-      this.setStatus('connected');
-      console.log('[HandsManager] Connected to Android device');
-    } catch (error) {
-      this.setStatus('error');
-      this.hands = null;
-      throw error;
-    }
+    this.setStatus('error');
+    this.hands = null;
+    throw new Error(LOCAL_ONLY_ERROR);
   }
 
   async disconnect(): Promise<void> {
-    if (this.hands) {
-      await this.hands.disconnect();
-      this.hands = null;
-      this.setStatus('disconnected');
-    }
+    if (this.hands) await this.hands.disconnect();
+    this.hands = null;
+    this.setStatus('disconnected');
   }
 
-  getHands(): PlatformHands | null {
-    return this.hands;
-  }
-
-  getStatus(): ConnectionStatus {
-    return this.status;
-  }
-
-  getConfig(): PlatformHandsConfig | null {
-    return this.config;
-  }
+  getHands(): PlatformHands | null { return this.hands; }
+  getStatus(): ConnectionStatus { return this.status; }
+  getConfig(): PlatformHandsConfig | null { return this.config; }
 
   private setStatus(status: ConnectionStatus) {
     this.status = status;
@@ -59,16 +35,12 @@ export class HandsManager {
 
   onStatusChange(listener: (status: ConnectionStatus) => void): () => void {
     this.listeners.push(listener);
-    return () => {
-      this.listeners = this.listeners.filter(l => l !== listener);
-    };
+    return () => { this.listeners = this.listeners.filter(l => l !== listener); };
   }
 
   async isConnected(): Promise<boolean> {
-    if (!this.hands) return false;
-    return await this.hands.isConnected();
+    return this.hands ? await this.hands.isConnected() : false;
   }
 }
 
-// Global singleton
 export const handsManager = new HandsManager();
