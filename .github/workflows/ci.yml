@@ -150,7 +150,7 @@ jobs:
         emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
         disable-animations: true
         script: |
-          set -euo pipefail
+          set -eu
           APK="$GITHUB_WORKSPACE/android-apk/app-debug.apk"
           echo '--- Plan 0 runtime APK preflight ---'
           echo "PWD=$PWD"
@@ -158,7 +158,8 @@ jobs:
           test -f "$APK"
           test -s "$APK"
           ls -lh "$APK"
-          sha256sum "$APK" | tee plan0-runtime-apk-sha256.txt
+          sha256sum "$APK" > plan0-runtime-apk-sha256.txt
+          cat plan0-runtime-apk-sha256.txt
 
           adb install -r "$APK"
           adb shell am start -n com.svetlana.android.hands/.MainActivity
