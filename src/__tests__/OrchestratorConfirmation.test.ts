@@ -10,18 +10,10 @@ import { avatarStateMachine } from '../services/AvatarStateMachine';
 
 describe('Orchestrator confirmation lifecycle', () => {
   beforeEach(() => {
-    vi.restoreAllMocks();
-    orchestrator.reset();
+    vi.restoreAllMocks(); orchestrator.reset();
     const state: any = orchestrator as any;
     state.currentTask = { id: 'task-1', steps: [] };
-    state.pendingConfirmation = {
-      step: { id: 'step-1', action: 'send_message', parameters: { app: 'telegram', contact: 'John', message: 'Hello' } },
-      context: { source: 'test' },
-      preState: { currentApp: 'telegram' },
-      toolId: 'send_message',
-      message: 'User confirmation required',
-      goal: 'send and then capture',
-    };
+    state.pendingConfirmation = { step: { id: 'step-1', action: 'send_message', parameters: { app: 'telegram', contact: 'John', message: 'Hello' } }, context: { source: 'test' }, preState: { currentApp: 'telegram' }, toolId: 'send_message', message: 'User confirmation required', goal: 'send and then capture' };
     vi.spyOn(capabilityRouter, 'resolve').mockResolvedValue({ success: true, tool: { id: 'send_message', name: 'Send message' } as any, backend: 'native', candidates: [] } as any);
     vi.spyOn(policyEngine, 'evaluate').mockResolvedValue({ decision: 'allow', reason: 'Allowed after confirmation' } as any);
     vi.spyOn(policyEngine, 'recordSuccessfulExecution').mockImplementation(() => undefined);
@@ -38,45 +30,30 @@ describe('Orchestrator confirmation lifecycle', () => {
 
   it('resumes the exact pending step only after explicit confirmation and verifies it', async () => {
     const result = await orchestrator.confirmPendingStep();
-    expect(result.success).toBe(true);
-    expect(toolRegistry.executeWithConfirmation).toHaveBeenCalledWith('send_message', { app: 'telegram', contact: 'John', message: 'Hello' });
-    expect(verification.verify).toHaveBeenCalled();
-    expect((orchestrator as any).pendingConfirmation).toBeNull();
-    expect(planner.updateStepStatus).toHaveBeenCalledWith('task-1', 'step-1', 'completed', expect.anything());
+    expect(result.success).toBe(true); expect(toolRegistry.executeWithConfirmation).toHaveBeenCalledWith('send_message', { app: 'telegram', contact: 'John', message: 'Hello' }); expect(verification.verify).toHaveBeenCalled(); expect((orchestrator as any).pendingConfirmation).toBeNull(); expect(planner.updateStepStatus).toHaveBeenCalledWith('task-1', 'step-1', 'completed', expect.anything());
   });
 
   it('continues remaining steps after a confirmed step', async () => {
     const state: any = orchestrator as any;
     const step1 = state.currentTask.steps[0] = { id: 'step-1', action: 'send_message', parameters: { app: 'telegram', contact: 'John', message: 'Hello' } };
-    state.currentTask.steps.push({ id: 'step-2', action: 'capture_screen', parameters: {} });
-    state.pendingConfirmation.step = step1;
-
-    vi.spyOn(capabilityRouter, 'resolve').mockResolvedValue({
-      success: true,
-      tool: { id: 'send_message', name: 'Send message' },
-      backend: 'native',
-      candidates: [],
-    } as any);
-
+    state.currentTask.steps.push({ id: 'step-2', action: 'capture_screen', parameters: {} }); state.pendingConfirmation.step = step1;
+    vi.spyOn(capabilityRouter, 'resolve').mockResolvedValue({ success: true, tool: { id: 'send_message', name: 'Send message' }, backend: 'native', candidates: [] } as any);
     const result = await orchestrator.confirmPendingStep();
-    expect(result.success).toBe(true);
-    expect(toolRegistry.executeWithConfirmation).toHaveBeenCalledTimes(1);
-    expect(toolRegistry.executeTool).toHaveBeenCalledWith('capture_screen', {});
-    expect(planner.updateStepStatus).toHaveBeenCalledWith('task-1', 'step-2', 'completed', expect.anything());
-    expect((orchestrator as any).state).toBe('complete');
+    expect(result.success).toBe(true); expect(toolRegistry.executeWithConfirmation).toHaveBeenCalledTimes(1); expect(toolRegistry.executeTool).toHaveBeenCalledWith('capture_screen', {}); expect(planner.updateStepStatus).toHaveBeenCalledWith('task-1', 'step-2', 'completed', expect.anything()); expect((orchestrator as any).state).toBe('complete');
+  });
+
+  it('pauses again when post-confirmation policy still requires confirmation', async () => {
+    vi.spyOn(policyEngine, 'evaluate').mockResolvedValueOnce({ decision: 'require_confirmation', reason: 'Second confirmation required' } as any);
+    const result = await orchestrator.confirmPendingStep();
+    expect(result.success).toBe(false); expect(result.requiresConfirmation).toBe(true); expect(result.confirmationMessage).toBe('Second confirmation required'); expect((orchestrator as any).pendingConfirmation).not.toBeNull(); expect(toolRegistry.executeWithConfirmation).not.toHaveBeenCalled();
   });
 
   it('never executes when the post-confirmation policy changes to deny', async () => {
     vi.spyOn(policyEngine, 'evaluate').mockResolvedValueOnce({ decision: 'deny', reason: 'Risk policy denied' } as any);
-    const result = await orchestrator.confirmPendingStep();
-    expect(result.success).toBe(false);
-    expect(result.error).toBe('Risk policy denied');
-    expect(toolRegistry.executeWithConfirmation).not.toHaveBeenCalled();
+    const result = await orchestrator.confirmPendingStep(); expect(result.success).toBe(false); expect(result.error).toBe('Risk policy denied'); expect(toolRegistry.executeWithConfirmation).not.toHaveBeenCalled();
   });
 
   it('returns a deterministic error when confirmation is requested without a pending action', async () => {
-    orchestrator.reset();
-    const result = await orchestrator.confirmPendingStep();
-    expect(result).toEqual({ success: false, error: 'No pending confirmation' });
+    orchestrator.reset(); const result = await orchestrator.confirmPendingStep(); expect(result).toEqual({ success: false, error: 'No pending confirmation' });
   });
 });
