@@ -1,0 +1,72 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { orchestrator } from '../services/Orchestrator';
+import { capabilityRouter } from '../services/CapabilityRouter';
+import { policyEngine } from '../services/PolicyEngine';
+import { toolRegistry } from '../services/ToolRegistry';
+import { observationManager } from '../services/ObservationLayer';
+import { verification } from '../services/Verification';
+import { planner } from '../services/Planner';
+import { avatarStateMachine } from '../services/AvatarStateMachine';
+
+describe('Orchestrator confirmation lifecycle', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    orchestrator.reset();
+    const state: any = orchestrator as any;
+    state.currentTask = { id: 'task-1', steps: [] };
+    state.pendingConfirmation = {
+      step: { id: 'step-1', action: 'send_message', parameters: { app: 'telegram', contact: 'John', message: 'Hello' } },
+      context: { source: 'test' },
+      preState: { currentApp: 'telegram' },
+      toolId: 'send_message',
+      message: 'User confirmation required',
+    };
+    vi.spyOn(capabilityRouter, 'resolve').mockResolvedValue({
+      success: true,
+      tool: { id: 'send_message', name: 'Send message' } as any,
+      backend: 'native',
+      candidates: [],
+    } as any);
+    vi.spyOn(policyEngine, 'evaluate').mockResolvedValue({ decision: 'require_confirmation', reason: 'Still high risk' } as any);
+    vi.spyOn(policyEngine, 'recordSuccessfulExecution').mockImplementation(() => undefined);
+    vi.spyOn(toolRegistry, 'executeWithConfirmation').mockResolvedValue({
+      success: true,
+      data: { sent: true },
+      verification: { status: 'PASS' },
+    } as any);
+    vi.spyOn(observationManager, 'observe').mockResolvedValue({ success: true, state: { currentApp: 'telegram', changed: true } } as any);
+    vi.spyOn(observationManager, 'compareStates').mockReturnValue({ changed: true } as any);
+    vi.spyOn(verification, 'verify').mockResolvedValue({ success: true } as any);
+    vi.spyOn(planner, 'updateStepStatus').mockImplementation(() => undefined);
+    vi.spyOn(avatarStateMachine, 'setSuccess').mockImplementation(() => undefined);
+    vi.spyOn(avatarStateMachine, 'setError').mockImplementation(() => undefined);
+  });
+
+  it('resumes the exact pending step only after explicit confirmation and verifies it', async () => {
+    const result = await orchestrator.confirmPendingStep();
+
+    expect(result.success).toBe(true);
+    expect(toolRegistry.executeWithConfirmation).toHaveBeenCalledWith('send_message', {
+      app: 'telegram', contact: 'John', message: 'Hello',
+    });
+    expect(verification.verify).toHaveBeenCalled();
+    expect((orchestrator as any).pendingConfirmation).toBeNull();
+    expect(planner.updateStepStatus).toHaveBeenCalledWith('task-1', 'step-1', 'completed', expect.anything());
+  });
+
+  it('never executes when the post-confirmation policy changes to deny', async () => {
+    vi.spyOn(policyEngine, 'evaluate').mockResolvedValueOnce({ decision: 'deny', reason: 'Risk policy denied' } as any);
+
+    const result = await orchestrator.confirmPendingStep();
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Risk policy denied');
+    expect(toolRegistry.executeWithConfirmation).not.toHaveBeenCalled();
+  });
+
+  it('returns a deterministic error when confirmation is requested without a pending action', async () => {
+    orchestrator.reset();
+    const result = await orchestrator.confirmPendingStep();
+    expect(result).toEqual({ success: false, error: 'No pending confirmation' });
+  });
+});
