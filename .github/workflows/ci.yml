@@ -13,101 +13,66 @@ jobs:
     strategy:
       matrix:
         node-version: [22.x]
-
     steps:
     - uses: actions/checkout@v5
-
-    - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v5
+    - uses: actions/setup-node@v5
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
-
     - name: Install dependencies
       run: npm ci
-
     - name: Type check
       run: npm run typecheck
-
     - name: Build
       run: npm run build
-
     - name: Run tests
       run: npm test
-
     - name: Check for stub implementations
       run: |
-        echo "Checking for stub implementations..."
-        if grep -r "base64_data" src/services/ --include="*.ts"; then
-          echo "❌ Found fake 'base64_data' in services"
-          exit 1
-        fi
-        if grep -r "This would integrate" src/services/ --include="*.ts"; then
-          echo "❌ Found stub comments in services"
-          exit 1
-        fi
-        echo "✅ Stub check completed"
+        if grep -r "base64_data" src/services/ --include="*.ts"; then exit 1; fi
+        if grep -r "This would integrate" src/services/ --include="*.ts"; then exit 1; fi
 
   lint:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v5
-    - name: Use Node.js
-      uses: actions/setup-node@v5
+    - uses: actions/setup-node@v5
       with:
         node-version: '22.x'
         cache: 'npm'
-    - name: Install dependencies
-      run: npm ci
-    - name: Run linter
-      run: npm run lint || echo "Lint not configured"
+    - run: npm ci
+    - run: npm run lint || echo "Lint not configured"
 
   security:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v5
-    - name: Use Node.js
-      uses: actions/setup-node@v5
+    - uses: actions/setup-node@v5
       with:
         node-version: '22.x'
         cache: 'npm'
-    - name: Run security audit
-      run: npm audit --audit-level=moderate || echo "Audit completed with warnings"
+    - run: npm audit --audit-level=moderate || echo "Audit completed with warnings"
     - name: Check for hardcoded secrets
       run: |
-        echo "Checking for hardcoded secrets..."
-        if grep -rE "(sk-|key-|api_key|apiKey|password|secret)" src/ --include="*.ts" --include="*.tsx" | grep -v "test" | grep -v "__tests__" | grep -v "type.*string" | grep -v "interface" | grep -v "// "; then
-          echo "⚠️ Potential secrets found - review manually"
-        else
-          echo "✅ No obvious secrets found"
-        fi
+        if grep -rE "(sk-|key-|api_key|apiKey|password|secret)" src/ --include="*.ts" --include="*.tsx" | grep -v "test" | grep -v "__tests__" | grep -v "type.*string" | grep -v "interface" | grep -v "// "; then echo "Potential secrets found - review manually"; fi
 
   native-android:
     name: Native Android Plan 0 build
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v5
-
-    - name: Set up JDK 17
-      uses: actions/setup-java@v5
+    - uses: actions/setup-java@v5
       with:
         distribution: temurin
         java-version: '17'
-
-    - name: Set up Gradle 8.9
-      uses: gradle/actions/setup-gradle@v4
+    - uses: gradle/actions/setup-gradle@v4
       with:
         gradle-version: '8.9'
-
     - name: Assemble native Android APK
       working-directory: android
       run: gradle :app:assembleDebug --stacktrace
-
-    - name: Verify APK exists
-      run: test -s android/app/build/outputs/apk/debug/app-debug.apk
-
-    - name: Upload Plan 0 APK
-      uses: actions/upload-artifact@v4
+    - run: test -s android/app/build/outputs/apk/debug/app-debug.apk
+    - uses: actions/upload-artifact@v4
       with:
         name: svetlana-plan0-debug-apk
         path: android/app/build/outputs/apk/debug/app-debug.apk
@@ -119,29 +84,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v5
-
-    - name: Download Plan 0 APK
-      uses: actions/download-artifact@v4
+    - uses: actions/download-artifact@v4
       with:
         name: svetlana-plan0-debug-apk
         path: android-apk
-
-    - name: Verify downloaded Plan 0 APK before emulator
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo '--- Plan 0 APK preflight ---'
-        echo "PWD=$PWD"
-        echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
-        echo '--- downloaded files ---'
-        find "$GITHUB_WORKSPACE/android-apk" -maxdepth 3 -type f -print
-        APK="$GITHUB_WORKSPACE/android-apk/app-debug.apk"
-        test -f "$APK"
-        test -s "$APK"
-        echo "APK=$APK"
-        ls -lh "$APK"
-        sha256sum "$APK" | tee plan0-apk-sha256.txt
-
     - name: Start Android emulator and verify real AccessibilityService action
       uses: reactivecircus/android-emulator-runner@v2
       with:
@@ -152,7 +98,6 @@ jobs:
         emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
         disable-animations: true
         script: bash "$GITHUB_WORKSPACE/.github/scripts/plan0-runtime.sh"
-
     - name: Upload Plan 0 runtime evidence
       if: always()
       uses: actions/upload-artifact@v4
@@ -165,4 +110,32 @@ jobs:
           service-logcat.txt
           plan0-apk-sha256.txt
           plan0-runtime-apk-sha256.txt
+        if-no-files-found: warn
+
+  plan0-ui-diagnostic:
+    name: Plan 0 clean Settings UI diagnostic
+    needs: native-android
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/download-artifact@v4
+      with:
+        name: svetlana-plan0-debug-apk
+        path: android-apk
+    - name: Run clean Settings UI + UIAutomator experiment
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: 35
+        target: default
+        arch: x86_64
+        profile: pixel_2
+        emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+        disable-animations: true
+        script: bash "$GITHUB_WORKSPACE/.github/scripts/plan0-ui-diagnostic.sh"
+    - name: Upload complete UI diagnostic evidence
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: svetlana-plan0-ui-diagnostic-evidence
+        path: plan0-ui-evidence
         if-no-files-found: warn
