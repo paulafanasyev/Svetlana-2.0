@@ -134,7 +134,6 @@ jobs:
         emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
         disable-animations: true
         script: |
-          set -euo pipefail
           APK="$(find android-apk -name 'app-debug.apk' -type f | head -n 1)"
           test -s "$APK"
 
@@ -150,7 +149,8 @@ jobs:
           adb shell dumpsys accessibility | tee accessibility-dumpsys.txt
 
           grep -q 'com.svetlana.android.hands/com.svetlana.android.hands.SvetlanaAccessibilityService' accessibility-dumpsys.txt
-          grep -q 'PLAN0_SERVICE_CONNECTED=PASS' <(adb logcat -d -s SvetlanaPlan0:I '*:S')
+          adb logcat -d -s SvetlanaPlan0:I '*:S' > service-logcat.txt
+          grep -q 'PLAN0_SERVICE_CONNECTED=PASS' service-logcat.txt
 
           echo '--- UI state after AccessibilityService action ---'
           adb shell uiautomator dump /sdcard/window.xml >/dev/null
@@ -172,4 +172,5 @@ jobs:
           accessibility-dumpsys.txt
           window.xml
           plan0-logcat.txt
+          service-logcat.txt
         if-no-files-found: warn
