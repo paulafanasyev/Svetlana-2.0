@@ -3,6 +3,8 @@ name: Plan 0 UIAutomator Accessibility Proof
 on:
   push:
     branches: [plan0-uiinstrumentation-2026-09]
+  pull_request:
+    branches: [plan0-stable-runtime-2026-09]
   workflow_dispatch:
 
 jobs:
@@ -60,7 +62,6 @@ jobs:
             APK="$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-debug.apk"
             TEST_APK="$GITHUB_WORKSPACE/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
             mkdir -p "$OUT"
-            T0=$(date +%s)
             echo "emulator_ready=$(date -u +%FT%T.%3NZ)" | tee "$OUT/timestamps.txt"
             adb devices -l | tee "$OUT/adb-online.txt"
             test "$(adb get-state)" = "device"
@@ -91,6 +92,10 @@ jobs:
             fi
             if ! grep -qF 'com.svetlana.android.hands/com.svetlana.android.hands.SvetlanaAccessibilityService' "$OUT/final-enabled-services.txt"; then
               echo "PLAN0_UIAUTOMATOR_RESULT=FAIL_NO_ENABLED_SERVICE"
+              exit 1
+            fi
+            if ! grep -qF 'PLAN0_SERVICE_CONNECTED=PASS' "$OUT/final-logcat.txt"; then
+              echo "PLAN0_UIAUTOMATOR_RESULT=FAIL_NO_ON_SERVICE_CONNECTED"
               exit 1
             fi
             echo "PLAN0_UIAUTOMATOR_RESULT=PASS"
