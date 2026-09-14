@@ -1,60 +1,42 @@
-# Android Hands — Plan 0 Runtime Contract
+# Android Hands — Local-only runtime contract
 
-Canonical chain:
+Canonical execution chain:
 
-`Svetlana → Orchestrator → Planner → Policy → Tool Registry → Hands → Android → Verification → Svetlana`
+`Verified User → Svetlana → Orchestrator → Planner → Policy → Tool Registry → Hands → Android AccessibilityService → action → independent Verification → Svetlana`
 
-Current HTTP client: `src/services/HTTPHands.ts`.
+## Security boundary
 
-Android loopback endpoint: `http://127.0.0.1:8765`.
+Svetlana-2.0 is a **phone-local system**. Device-control commands are accepted only from the verified/authorized user.
 
-HTTP contract:
-- `GET /health`
-- `POST /api/<method>` with `{ "params": {}, "timestamp": <number> }`
+The Android execution plane must not expose a remote-control channel. The following are explicitly prohibited as device-control mechanisms:
 
-Current method paths:
-- `device/info`
-- `app/launch`
-- `app/close`
-- `app/current`
-- `ui/tap`
-- `ui/longPress`
-- `ui/swipe`
-- `input/type`
-- `input/clear`
-- `input/key`
-- `screen/capture`
-- `accessibility/tree`
-- `accessibility/findByText`
-- `accessibility/findById`
-- `system/home`
-- `system/back`
-- `system/recents`
+- HTTP control servers/endpoints;
+- WebSocket control channels;
+- remote IP/port endpoints;
+- MCP network servers for phone control;
+- TermuxMCP;
+- browser/network clients controlling the phone.
 
-## Evidence
+`Hands` is an execution abstraction. The privileged Android backend is the local `AccessibilityService`, with native Android IPC between components where needed.
 
-**VERIFIED:** PlatformHands contract, real HTTP client, HandsManager/real tools, verification code, and Plan 0 static CI gates.
+## Allowed local administration
 
-**NOT PROVEN:** real Android reachability, AccessibilityService binding, real action execution, real screen capture, independent device-state verification, and complete end-to-end execution.
+Within Android's real permissions and APIs, Svetlana may locally inspect system/network state and administer the phone, including open-port visibility, monitoring, firewall and VPN operations. Policy and authorization still apply to sensitive operations.
 
-**PENDING:**
+## Evidence gate
 
-`code → CI/build → APK → real Android emulator/device → real HTTP tool call → real Android action → independent observation → verification`
+**VERIFIED:** remote HTTP/WebSocket transport code has been removed from the active Hands contract and Android connection UI; the Hands manager refuses network-style connection attempts.
 
-An HTTP 200 or `success: true` response is not sufficient proof of a real device action.
+**NOT PROVEN:** native AccessibilityService execution on a real APK/device. Static code is not runtime proof.
 
-For every critical action, retain health evidence, service-binding evidence, exact method/parameters, Android execution result, BEFORE state, AFTER state, comparison result, and final VERIFIED/FAIL classification.
+Runtime closure requires:
 
-## Training gate
+`code → CI/build → APK → real Android device/emulator → AccessibilityService bound → local Hands call → real Android action → independent observation → VERIFIED/FAIL`
 
-Training is downstream of Plan 0 runtime closure.
+No network response, browser state, or local web status may be used as proof of a device action.
 
-Target: **Google Colab / Google GPU**.
+## Training
 
-Kaggle is not the training target.
+Training remains downstream of Plan 0 runtime closure.
 
-## Status
-
-- Plan 0 static layer: **VERIFIED**
-- Plan 0 real Android execution: **NOT PROVEN**
-- Plan 0 overall: **NOT CLOSED**
+Target: **Google Colab / Google GPU**. Kaggle is not the training target.
