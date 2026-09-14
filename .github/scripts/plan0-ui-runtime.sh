@@ -32,11 +32,15 @@ for i in $(seq 1 90); do
 done
 
 test "$ADB_READY" = "1"
-echo "ADB_DEVICE_STATE=PASS" | tee "$OUT/adb-readiness.log"
+echo "ADB_DEVICE_STATE=PASS" | tee -a "$OUT/adb-readiness.log"
 adb devices -l | tee "$OUT/adb-online.txt"
 echo "adb_online=$(date -u +%FT%T.%3NZ)" | tee -a "$OUT/timestamps.txt"
 adb shell getprop sys.boot_completed | tee "$OUT/boot-completed.txt"
-adb shell am get-current-user | tee "$OUT/current-user.txt"
+
+CURRENT_USER="$(adb shell am get-current-user | tr -d '\r' | tr -d '[:space:]')"
+test "$CURRENT_USER" =~ ^[0-9]+$
+echo "PLAN0_CURRENT_USER=$CURRENT_USER" | tee "$OUT/current-user.txt"
+
 adb shell settings get secure enabled_accessibility_services | tee "$OUT/baseline-enabled-services.txt"
 adb shell dumpsys accessibility > "$OUT/baseline-accessibility.txt"
 adb install -r "$APK" | tee "$OUT/app-install.txt"
@@ -44,22 +48,40 @@ adb install -r "$TEST_APK" | tee "$OUT/test-install.txt"
 echo "before_instrumentation=$(date -u +%FT%T.%3NZ)" | tee -a "$OUT/timestamps.txt"
 set +e
 adb shell am instrument -w -r \
-  --user current \
+  --user "$CURRENT_USER" \
   -e class com.svetlana.android.hands.Plan0AccessibilityUiTest#enableSvetlanaAccessibilityThroughSettingsUi \
   com.svetlana.android.hands.test 2>&1 | tee "$OUT/uiautomator-instrumentation.log"
 TEST_RC=${PIPESTATUS[0]}
 set -e
 echo "instrumentation_exit=$TEST_RC" | tee -a "$OUT/timestamps.txt"
 echo "after_instrumentation=$(date -u +%FT%T.%3NZ)" | tee -a "$OUT/timestamps.txt"
+
+# ActivityManager has been observed to print a commandError while still returning
+# exit code 0. Therefore the instrumentation log itself is part of the gate.
+if grep -qE 'commandError=true|Invalid userId|Error: Invalid userId' "$OUT/uiautomator-instrumentation.log"; then
+  echo "PLAN0_INSTRUMENTATION_COMMAND=FAIL" | tee "$OUT/instrumentation-command-result.txt"
+else
+  echo "PLAN0_INSTRUMENTATION_COMMAND=PASS" | tee "$OUT/instrumentation-command-result.txt"
+fi
+
 adb shell settings get secure enabled_accessibility_services | tee "$OUT/final-enabled-services.txt"
 adb shell settings get secure accessibility_enabled | tee "$OUT/final-accessibility-enabled.txt"
 adb shell dumpsys accessibility > "$OUT/final-accessibility.txt"
 adb shell dumpsys package com.svetlana.android.hands > "$OUT/final-package.txt"
 adb logcat -d -b all -v threadtime > "$OUT/final-logcat.txt"
-grep -iE 'onServiceConnected|AccessibilityManagerService|SvetlanaAccessibilityService' "$OUT/final-logcat.txt" | tail -n 500 > "$OUT/accessibility-logcat.txt" || true
+grep -iE 'onServiceConnected|AccessibilityManagerService|SvetlanaAccessibilityService|PLAN0_' "$OUT/final-logcat.txt" | tail -n 500 > "$OUT/accessibility-logcat.txt" || true
+
 if [ "$TEST_RC" -ne 0 ]; then
   echo "PLAN0_UIAUTOMATOR_RESULT=FAIL"
   exit "$TEST_RC"
+fi
+if grep -qE 'commandError=true|Invalid userId|Error: Invalid userId' "$OUT/uiautomator-instrumentation.log"; then
+  echo "PLAN0_UIAUTOMATOR_RESULT=FAIL_INSTRUMENTATION_COMMAND"
+  exit 1
+fi
+if ! grep -qF 'PLAN0_UIAUTOMATOR=RESULT=PASS' "$OUT/uiautomator-instrumentation.log"; then
+  echo "PLAN0_UIAUTOMATOR_RESULT=FAIL_TEST_RESULT_NOT_PROVEN"
+  exit 1
 fi
 if ! grep -qF 'com.svetlana.android.hands/com.svetlana.android.hands.SvetlanaAccessibilityService' "$OUT/final-enabled-services.txt"; then
   echo "PLAN0_UIAUTOMATOR_RESULT=FAIL_NO_ENABLED_SERVICE"
