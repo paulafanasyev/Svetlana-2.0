@@ -1,0 +1,3 @@
+PLAN0 GitHub write test
+Created to verify repository write access before implementing the diagnostic experiment.
+No runtime or application code is changed by this file.
