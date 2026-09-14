@@ -12,13 +12,17 @@ describe('Orchestrator confirmation lifecycle', () => {
   beforeEach(() => {
     vi.restoreAllMocks(); orchestrator.reset();
     const state: any = orchestrator as any;
-    state.currentTask = { id: 'task-1', steps: [] };
-    state.pendingConfirmation = { step: { id: 'step-1', action: 'send_message', parameters: { app: 'telegram', contact: 'John', message: 'Hello' } }, context: { source: 'test' }, preState: { currentApp: 'telegram' }, toolId: 'send_message', message: 'User confirmation required', goal: 'send and then capture' };
-    vi.spyOn(capabilityRouter, 'resolve').mockResolvedValue({ success: true, tool: { id: 'send_message', name: 'Send message' } as any, backend: 'native', candidates: [] } as any);
+    state.currentTask = { id: 'task-1', steps: [{ id: 'step-1', action: 'send_message', parameters: { app: 'telegram', contact: 'John', message: 'Hello' } }] };
+    state.pendingConfirmation = { step: state.currentTask.steps[0], context: { source: 'test' }, preState: { currentApp: 'telegram' }, toolId: 'send_message', message: 'User confirmation required', goal: 'send and then capture' };
+    vi.spyOn(capabilityRouter, 'resolve').mockImplementation(async ({ action }: any) => ({
+      success: true,
+      tool: { id: action === 'capture_screen' ? 'capture_screen' : 'send_message', name: action === 'capture_screen' ? 'Capture screen' : 'Send message' } as any,
+      backend: 'native', candidates: []
+    } as any));
     vi.spyOn(policyEngine, 'evaluate').mockResolvedValue({ decision: 'allow', reason: 'Allowed after confirmation' } as any);
     vi.spyOn(policyEngine, 'recordSuccessfulExecution').mockImplementation(() => undefined);
     vi.spyOn(toolRegistry, 'executeWithConfirmation').mockResolvedValue({ success: true, data: { sent: true }, verification: { status: 'PASS' } } as any);
-    vi.spyOn(toolRegistry, 'executeTool').mockResolvedValue({ success: true, data: { captured: true }, verification: { status: 'PASS' } } as any);
+    vi.spyOn(toolRegistry, 'executeTool').mockImplementation(async (toolId: string) => ({ success: true, data: toolId === 'capture_screen' ? { captured: true } : { sent: true }, verification: { status: 'PASS' } } as any));
     vi.spyOn(observationManager, 'observe').mockResolvedValue({ success: true, state: { currentApp: 'telegram', changed: true } } as any);
     vi.spyOn(observationManager, 'compareStates').mockReturnValue({ changed: true } as any);
     vi.spyOn(verification, 'verify').mockResolvedValue({ success: true } as any);
@@ -35,9 +39,8 @@ describe('Orchestrator confirmation lifecycle', () => {
 
   it('continues remaining steps after a confirmed step', async () => {
     const state: any = orchestrator as any;
-    const step1 = state.currentTask.steps[0] = { id: 'step-1', action: 'send_message', parameters: { app: 'telegram', contact: 'John', message: 'Hello' } };
+    const step1 = state.currentTask.steps[0];
     state.currentTask.steps.push({ id: 'step-2', action: 'capture_screen', parameters: {} }); state.pendingConfirmation.step = step1;
-    vi.spyOn(capabilityRouter, 'resolve').mockResolvedValue({ success: true, tool: { id: 'send_message', name: 'Send message' }, backend: 'native', candidates: [] } as any);
     const result = await orchestrator.confirmPendingStep();
     expect(result.success).toBe(true); expect(toolRegistry.executeWithConfirmation).toHaveBeenCalledTimes(1); expect(toolRegistry.executeTool).toHaveBeenCalledWith('capture_screen', {}); expect(planner.updateStepStatus).toHaveBeenCalledWith('task-1', 'step-2', 'completed', expect.anything()); expect((orchestrator as any).state).toBe('complete');
   });
