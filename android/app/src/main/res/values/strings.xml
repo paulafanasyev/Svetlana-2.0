@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Svetlana Plan 0</string>
+    <string name="accessibility_service_description">Local Svetlana Android execution service. No network control interface.</string>
+</resources>
