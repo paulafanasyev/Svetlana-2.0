@@ -3,7 +3,7 @@
   "purpose": "Svetlana text_smoke GPU and baseline evaluation",
   "provider": "Google Colab",
   "target_gpu": "Tesla T4 15 GB or better",
-  "python": "3.11",
+  "python": "3.13",
   "cuda_wheel": "cu126",
   "model": "google/gemma-4-E2B-it",
   "requirements": "training/environment/requirements-colab-gpu.txt",
