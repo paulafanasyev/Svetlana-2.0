@@ -1,7 +1,7 @@
 # Svetlana Gemma 4 E2B text_smoke environment
 # Updated after fresh Google Colab resolver failure on 2026-09-15.
 --extra-index-url https://download.pytorch.org/whl/cu126
-torch==2.14.0
+torch==2.12.1
 transformers==5.17.0
 trl==1.13.0
 unsloth==2026.9.4
