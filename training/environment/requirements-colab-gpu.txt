@@ -5,7 +5,7 @@ torch==2.12.1
 transformers==5.17.0
 trl==1.13.0
 unsloth==2026.9.4
-datasets==5.0.1
+datasets==4.3.0
 accelerate==1.15.0
 peft==0.21.0
 safetensors==0.8.0
