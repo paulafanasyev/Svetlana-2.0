@@ -35,6 +35,20 @@ test "$ADB_READY" = "1"
 echo "ADB_DEVICE_STATE=PASS" | tee -a "$OUT/adb-readiness.log"
 adb devices -l | tee "$OUT/adb-online.txt"
 echo "adb_online=$(date -u +%FT%T.%3NZ)" | tee -a "$OUT/timestamps.txt"
+
+BOOT_READY=0
+for i in $(seq 1 120); do
+  BOOT="$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' | tr -d '[:space:]' || true)"
+  echo "BOOT_WAIT attempt=$i sys.boot_completed=${BOOT:-unknown}" | tee -a "$OUT/boot-readiness.log"
+  if [ "$BOOT" = "1" ]; then
+    BOOT_READY=1
+    break
+  fi
+  sleep 2
+done
+
+test "$BOOT_READY" = "1"
+echo "ANDROID_BOOT_COMPLETED=PASS" | tee -a "$OUT/boot-readiness.log"
 adb shell getprop sys.boot_completed | tee "$OUT/boot-completed.txt"
 
 CURRENT_USER="$(adb shell am get-current-user | tr -d '\r' | tr -d '[:space:]')"
@@ -56,8 +70,6 @@ set -e
 echo "instrumentation_exit=$TEST_RC" | tee -a "$OUT/timestamps.txt"
 echo "after_instrumentation=$(date -u +%FT%T.%3NZ)" | tee -a "$OUT/timestamps.txt"
 
-# ActivityManager has been observed to print a commandError while still returning
-# exit code 0. Therefore the instrumentation log itself is part of the gate.
 if grep -qE 'commandError=true|Invalid userId|Error: Invalid userId' "$OUT/uiautomator-instrumentation.log"; then
   echo "PLAN0_INSTRUMENTATION_COMMAND=FAIL" | tee "$OUT/instrumentation-command-result.txt"
 else
