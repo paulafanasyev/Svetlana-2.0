@@ -26,7 +26,8 @@ jobs:
           m = json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))
           assert m['base_model'] == 'google/gemma-4-E2B-it'
           assert m['runtime_target'] == 'LiteRT-LM'
-          assert m['training_mode'] == 'multimodal_agent'
+          assert m['training_mode'] == 'text_smoke'
+          assert m['trainer'] == 'training/gemma4/train_svetlana_smoke.py'
           paths = [x['path'] for x in m['train'] + m['reference_knowledge'] + m['eval']]
           for p in paths:
               assert Path(p).exists(), f'missing dataset: {p}'
@@ -34,7 +35,8 @@ jobs:
           assert m['rules']['no_personal_data_in_weights'] is True
           print('MANIFEST=PASS')
           print('DATASET_PATHS=PASS')
-          print('MULTIMODAL_MODE=PASS')
+          print('TRAINING_MODE=text_smoke')
+          print('MULTIMODAL_TRAINING=NOT_RUN')
           PY
 
       - name: Validate JSONL structure
@@ -46,7 +48,6 @@ jobs:
             Path('training/datasets/svetlana_seed.jsonl'),
             Path('training/datasets/svetlana_capability_seed.jsonl'),
             Path('training/datasets/svetlana_capability_training_v2.jsonl'),
-            Path('training/datasets/multimodal/multimodal_training_curriculum.jsonl'),
             Path('training/datasets/self_employed_official.jsonl'),
             Path('training/datasets/svetlana_eval.jsonl'),
           ]
@@ -67,7 +68,6 @@ jobs:
             Path('training/datasets/svetlana_seed.jsonl'),
             Path('training/datasets/svetlana_capability_seed.jsonl'),
             Path('training/datasets/svetlana_capability_training_v2.jsonl'),
-            Path('training/datasets/multimodal/multimodal_training_curriculum.jsonl'),
           ]
           eval_file = Path('training/datasets/svetlana_eval.jsonl')
           def fp(x):
@@ -82,7 +82,22 @@ jobs:
           PY
 
       - name: Compile text smoke trainer only
-        run: python -m py_compile training/gemma4/train_svetlana_smoke.py
+        run: python -m py_compile training/gemma4/train_svetlana_smoke.py training/gemma4/generate_predictions.py training/gemma4/multimodal_preflight.py training/evaluation/run_structured_eval.py
+
+      - name: Run deterministic training validator
+        run: python training/validate_training.py --root .
+
+      - name: Validate pinned Colab environment specification
+        run: |
+          test -f training/environment/requirements-colab-gpu.txt
+          test -f training/environment/environment.json
+          grep -q '^torch==' training/environment/requirements-colab-gpu.txt
+          grep -q '^transformers==' training/environment/requirements-colab-gpu.txt
+          grep -q '^unsloth==' training/environment/requirements-colab-gpu.txt
+          echo 'PINNED_ENVIRONMENT_SPEC=PASS'
+
+      - name: Run validator tests
+        run: PYTHONPATH=training python -m unittest discover -s training/tests -p 'test_*.py'
 
       - name: Confirm multimodal training remains gated
         run: |

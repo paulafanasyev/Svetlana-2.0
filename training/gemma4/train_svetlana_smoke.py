@@ -9,8 +9,13 @@ import unsloth
 from datasets import load_dataset, concatenate_datasets
 from unsloth import FastLanguageModel
 from trl import SFTTrainer, SFTConfig
+from training.training_evidence import write_evidence
+from training.validate_training import validate_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
+MANIFEST = validate_manifest(ROOT / "datasets" / "manifest_v2.json", ROOT.parent)
+if MANIFEST["training_mode"] != "text_smoke" or MANIFEST["trainer"] != "training/gemma4/train_svetlana_smoke.py":
+    raise RuntimeError("text smoke trainer is not authorized by the active manifest")
 DATA_FILES = [
     ROOT / "datasets" / "svetlana_seed.jsonl",
     ROOT / "datasets" / "svetlana_capability_seed.jsonl",
@@ -104,3 +109,13 @@ adapter_dir = OUT / "adapter"
 model.save_pretrained(str(adapter_dir))
 tokenizer.save_pretrained(str(adapter_dir))
 print(json.dumps({"event":"export_complete","path":str(adapter_dir)}, ensure_ascii=False))
+evidence = write_evidence(
+    OUT / "training_evidence.json",
+    root=ROOT.parent,
+    adapter_dir=adapter_dir,
+    dataset_paths=DATA_FILES,
+    config={"max_seq_length": MAX_SEQ, "max_steps": MAX_STEPS, "seed": 3407, "learning_rate": 5e-5, "lora_r": 16},
+    hardware={"gpu": props.name, "vram_gb": round(props.total_memory / 1024**3, 2), "cuda": torch.version.cuda},
+    model=MODEL,
+)
+print(json.dumps({"event":"evidence_complete","path":str(OUT / "training_evidence.json"),"adapter_sha256":evidence["adapter_sha256"],"dataset_sha256":evidence["dataset_sha256"]}, ensure_ascii=False))

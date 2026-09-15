@@ -1,2 +1,0 @@
-
-".join(json.dumps(x,ensure_ascii=False) for x in train)+"

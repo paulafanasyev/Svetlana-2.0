@@ -3,15 +3,19 @@
   "purpose": "Single source of truth for the next Svetlana multimodal training pipeline.",
   "base_model": "google/gemma-4-E2B-it",
   "runtime_target": "LiteRT-LM",
-  "training_mode": "multimodal_agent",
+  "training_mode": "text_smoke",
+  "trainer": "training/gemma4/train_svetlana_smoke.py",
+  "native_multimodal_trainer": null,
   "train": [
     {"path": "training/datasets/svetlana_seed.jsonl", "format": "messages"},
     {"path": "training/datasets/svetlana_capability_seed.jsonl", "format": "messages"},
-    {"path": "training/datasets/svetlana_capability_training_v2.jsonl", "format": "messages"},
-    {"path": "training/datasets/multimodal/multimodal_training_curriculum.jsonl", "format": "multimodal_v1", "status": "requires_native_multimodal_trainer"}
+    {"path": "training/datasets/svetlana_capability_training_v2.jsonl", "format": "messages"}
   ],
   "reference_knowledge": [
     {"path": "training/datasets/self_employed_official.jsonl", "format": "messages", "role": "official_source_behavior"}
+  ],
+  "pending_multimodal": [
+    {"path": "training/datasets/multimodal/multimodal_training_curriculum.jsonl", "format": "multimodal_v1", "status": "requires_native_multimodal_trainer"}
   ],
   "eval": [
     {"path": "training/datasets/svetlana_eval.jsonl", "format": "messages"}

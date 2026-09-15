@@ -1,0 +1,13 @@
+# Svetlana Gemma 4 E2B text_smoke environment
+# Captured 2026-09-15 from the available package index; validate the full lock in Colab before GPU use.
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.14.0
+transformers==5.17.0
+trl==1.13.0
+unsloth==2026.9.4
+datasets==5.0.1
+accelerate==1.15.0
+peft==0.21.0
+safetensors==0.7.0
+sentencepiece==0.2.1
+pillow==12.3.0

@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "purpose": "Svetlana text_smoke GPU and baseline evaluation",
+  "provider": "Google Colab",
+  "target_gpu": "Tesla T4 15 GB or better",
+  "python": "3.11",
+  "cuda_wheel": "cu126",
+  "model": "google/gemma-4-E2B-it",
+  "requirements": "training/environment/requirements-colab-gpu.txt",
+  "status": "pin_spec_not_runtime_validated",
+  "validation_required": [
+    "pip install succeeds in a fresh Colab runtime",
+    "torch.cuda.is_available() is true",
+    "all package imports succeed",
+    "model and tokenizer load",
+    "baseline inference completes",
+    "dataset and adapter evidence is written"
+  ]
+}
