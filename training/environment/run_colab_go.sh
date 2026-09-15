@@ -6,6 +6,7 @@ cd "$ROOT"
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 OUT="${SVETLANA_OUTPUT_DIR:-training/outputs/colab_go}"
 MIN_BASELINE="${SVETLANA_MIN_BASELINE_PASS_RATE:-0.75}"
+MAX_NEW_TOKENS="${SVETLANA_MAX_NEW_TOKENS:-160}"
 mkdir -p "$OUT"
 
 python -m pip install --upgrade pip
@@ -13,8 +14,9 @@ python -m pip install -r training/environment/requirements-colab-gpu.txt
 
 python - <<'PY'
 import importlib, json, platform, sys
+import unsloth
 import torch
-for name in ['transformers', 'trl', 'unsloth', 'datasets', 'accelerate', 'peft']:
+for name in ['transformers', 'trl', 'datasets', 'accelerate', 'peft']:
     importlib.import_module(name)
 if not torch.cuda.is_available():
     raise SystemExit('CUDA is required; stopping before baseline/training')
@@ -22,7 +24,8 @@ print(json.dumps({'event':'environment_pass','python':platform.python_version(),
 PY
 
 python training/validate_training.py --root .
-python training/gemma4/generate_predictions.py --model google/gemma-4-E2B-it --eval training/datasets/svetlana_eval.jsonl --output "$OUT/baseline_predictions.jsonl"
+python training/gemma4/generate_predictions.py --model google/gemma-4-E2B-it --eval training/datasets/svetlana_eval.jsonl --output "$OUT/baseline_predictions.jsonl" --max-new-tokens "$MAX_NEW_TOKENS" --metadata-output "$OUT/baseline_predictions.metadata.json"
+test -s "$OUT/baseline_predictions.metadata.json"
 python training/evaluation/run_structured_eval.py --eval training/datasets/svetlana_eval.jsonl --predictions "$OUT/baseline_predictions.jsonl" --output "$OUT/baseline_report.json" --label baseline
 python - "$OUT/baseline_report.json" "$MIN_BASELINE" <<'PY'
 import json
@@ -41,7 +44,8 @@ print(json.dumps({"event": "baseline_gate_pass", "pass_rate": rate, "minimum": m
 PY
 python training/gemma4/train_svetlana_smoke.py
 ADAPTER="training/outputs/svetlana_gemma4_e2b_smoke/adapter"
-python training/gemma4/generate_predictions.py --model "$ADAPTER" --eval training/datasets/svetlana_eval.jsonl --output "$OUT/adapter_predictions.jsonl"
+python training/gemma4/generate_predictions.py --model "$ADAPTER" --eval training/datasets/svetlana_eval.jsonl --output "$OUT/adapter_predictions.jsonl" --max-new-tokens "$MAX_NEW_TOKENS" --metadata-output "$OUT/adapter_predictions.metadata.json"
+test -s "$OUT/adapter_predictions.metadata.json"
 python training/evaluation/run_structured_eval.py --eval training/datasets/svetlana_eval.jsonl --predictions "$OUT/adapter_predictions.jsonl" --output "$OUT/adapter_report.json" --label adapter
 python training/evaluation/compare_reports.py --baseline "$OUT/baseline_report.json" --adapter "$OUT/adapter_report.json" --output "$OUT/baseline_vs_adapter.json" --min-baseline "$MIN_BASELINE"
 cp training/outputs/svetlana_gemma4_e2b_smoke/training_evidence.json "$OUT/training_evidence.json"

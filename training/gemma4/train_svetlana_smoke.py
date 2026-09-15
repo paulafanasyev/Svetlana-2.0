@@ -4,8 +4,8 @@ import os
 import platform
 from pathlib import Path
 
-import torch
 import unsloth
+import torch
 from datasets import load_dataset, concatenate_datasets
 from unsloth import FastLanguageModel
 from trl import SFTTrainer, SFTConfig
@@ -16,11 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = validate_manifest(ROOT / "datasets" / "manifest_v2.json", ROOT.parent)
 if MANIFEST["training_mode"] != "text_smoke" or MANIFEST["trainer"] != "training/gemma4/train_svetlana_smoke.py":
     raise RuntimeError("text smoke trainer is not authorized by the active manifest")
-DATA_FILES = [
-    ROOT / "datasets" / "svetlana_seed.jsonl",
-    ROOT / "datasets" / "svetlana_capability_seed.jsonl",
-    ROOT / "datasets" / "svetlana_capability_training_v2.jsonl",
-]
+DATA_FILES = [ROOT.parent / item["path"] for item in MANIFEST["train"]]
 OUT = ROOT / "outputs" / "svetlana_gemma4_e2b_smoke"
 MAX_SEQ = int(os.getenv("SVETLANA_MAX_SEQ_LENGTH", "1536"))
 MAX_STEPS = int(os.getenv("SVETLANA_MAX_STEPS", "200"))
