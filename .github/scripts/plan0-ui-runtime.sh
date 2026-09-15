@@ -52,7 +52,7 @@ echo "ANDROID_BOOT_COMPLETED=PASS" | tee -a "$OUT/boot-readiness.log"
 adb shell getprop sys.boot_completed | tee "$OUT/boot-completed.txt"
 
 CURRENT_USER="$(adb shell am get-current-user | tr -d '\r' | tr -d '[:space:]')"
-test "$CURRENT_USER" =~ ^[0-9]+$
+printf '%s\n' "$CURRENT_USER" | grep -Eq '^[0-9]+$'
 echo "PLAN0_CURRENT_USER=$CURRENT_USER" | tee "$OUT/current-user.txt"
 
 adb shell settings get secure enabled_accessibility_services | tee "$OUT/baseline-enabled-services.txt"
