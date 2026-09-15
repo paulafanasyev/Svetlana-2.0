@@ -7,7 +7,7 @@
   "cuda_wheel": "cu126",
   "model": "google/gemma-4-E2B-it",
   "requirements": "training/environment/requirements-colab-gpu.txt",
-  "status": "pin_spec_not_runtime_validated",
+  "status": "pin_spec_pending_colab_runtime_validation",
   "validation_required": [
     "pip install succeeds in a fresh Colab runtime",
     "torch.cuda.is_available() is true",
