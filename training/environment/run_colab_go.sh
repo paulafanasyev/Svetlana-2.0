@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 OUT="${SVETLANA_OUTPUT_DIR:-training/outputs/colab_go}"
 MIN_BASELINE="${SVETLANA_MIN_BASELINE_PASS_RATE:-0.75}"
 mkdir -p "$OUT"
@@ -23,6 +24,21 @@ PY
 python training/validate_training.py --root .
 python training/gemma4/generate_predictions.py --model google/gemma-4-E2B-it --eval training/datasets/svetlana_eval.jsonl --output "$OUT/baseline_predictions.jsonl"
 python training/evaluation/run_structured_eval.py --eval training/datasets/svetlana_eval.jsonl --predictions "$OUT/baseline_predictions.jsonl" --output "$OUT/baseline_report.json" --label baseline
+python - "$OUT/baseline_report.json" "$MIN_BASELINE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+minimum = float(sys.argv[2])
+rate = float(report["pass_rate"])
+if rate < minimum:
+    raise SystemExit(
+        f"BASELINE_GATE_FAIL: pass_rate={rate:.3f} < minimum={minimum:.3f}; "
+        "training is blocked until the baseline/evaluation contract is fixed."
+    )
+print(json.dumps({"event": "baseline_gate_pass", "pass_rate": rate, "minimum": minimum}))
+PY
 python training/gemma4/train_svetlana_smoke.py
 ADAPTER="training/outputs/svetlana_gemma4_e2b_smoke/adapter"
 python training/gemma4/generate_predictions.py --model "$ADAPTER" --eval training/datasets/svetlana_eval.jsonl --output "$OUT/adapter_predictions.jsonl"
