@@ -1,40 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-test -n "$REPO_ROOT"
-test -d "$REPO_ROOT"
+# Plan 0 runtime: UIAutomator must perform the Accessibility Settings toggle.
+# This script never enables the service through `settings put`.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUT="$REPO_ROOT/plan0-ui-evidence"
+mkdir -p "$OUT"
+
 APK="$REPO_ROOT/android/app/build/outputs/apk/debug/app-debug.apk"
 TEST_APK="$REPO_ROOT/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
-mkdir -p "$OUT"
 test -f "$APK"
 test -f "$TEST_APK"
 
-echo "PLAN0_WORKSPACE=PASS"
-echo "PLAN0_REPO_ROOT=$REPO_ROOT"
-echo "PLAN0_APK_PATH=$APK"
-echo "PLAN0_TEST_APK_PATH=$TEST_APK"
-echo "emulator_ready=$(date -u +%FT%T.%3NZ)" | tee "$OUT/timestamps.txt"
-
-adb start-server | tee "$OUT/adb-start-server.txt"
-adb devices -l | tee "$OUT/adb-devices-initial.txt"
-
-ADB_READY=0
-for i in $(seq 1 90); do
-  STATE="$(adb -s emulator-5554 get-state 2>/dev/null || true)"
-  echo "ADB_WAIT attempt=$i state=${STATE:-unknown}" | tee -a "$OUT/adb-readiness.log"
-  if [ "$STATE" = "device" ]; then
-    ADB_READY=1
-    break
-  fi
-  sleep 2
-done
-
-test "$ADB_READY" = "1"
-echo "ADB_DEVICE_STATE=PASS" | tee -a "$OUT/adb-readiness.log"
-adb devices -l | tee "$OUT/adb-online.txt"
-echo "adb_online=$(date -u +%FT%T.%3NZ)" | tee -a "$OUT/timestamps.txt"
+adb devices | tee "$OUT/adb-devices-before.txt"
+adb -s emulator-5554 wait-for-device
 
 BOOT_READY=0
 for i in $(seq 1 120); do
@@ -60,47 +41,40 @@ adb shell dumpsys accessibility > "$OUT/baseline-accessibility.txt"
 adb install -r "$APK" | tee "$OUT/app-install.txt"
 adb install -r "$TEST_APK" | tee "$OUT/test-install.txt"
 echo "before_instrumentation=$(date -u +%FT%T.%3NZ)" | tee -a "$OUT/timestamps.txt"
+
 set +e
-adb shell am instrument -w -r \
-  --user "$CURRENT_USER" \
-  -e class com.svetlana.android.hands.Plan0AccessibilityUiTest#enableSvetlanaAccessibilityThroughSettingsUi \
-  com.svetlana.android.hands.test 2>&1 | tee "$OUT/uiautomator-instrumentation.log"
-TEST_RC=${PIPESTATUS[0]}
+adb shell am instrument --user "$CURRENT_USER" -w -r \
+  -e class com.svetlana.android.hands.Plan0UiAutomatorTest \
+  com.svetlana.android.hands.test/androidx.test.runner.AndroidJUnitRunner \
+  2>&1 | tee "$OUT/instrumentation.txt"
+INSTRUMENTATION_EXIT=${PIPESTATUS[0]}
 set -e
-echo "instrumentation_exit=$TEST_RC" | tee -a "$OUT/timestamps.txt"
+
+echo "instrumentation_exit=$INSTRUMENTATION_EXIT" | tee "$OUT/instrumentation-exit.txt"
+if grep -Eq 'commandError=true|Invalid userId|Error: Invalid userId' "$OUT/instrumentation.txt"; then
+  echo "FAIL_INSTRUMENTATION_COMMAND_ERROR=1" | tee -a "$OUT/result.txt"
+  exit 1
+fi
+if ! grep -q 'PLAN0_UIAUTOMATOR=RESULT=PASS' "$OUT/instrumentation.txt"; then
+  echo "FAIL_TEST_RESULT_NOT_PROVEN=1" | tee -a "$OUT/result.txt"
+  exit 1
+fi
+
+echo "PLAN0_UIAUTOMATOR_RESULT=PASS" | tee -a "$OUT/result.txt"
+
+FINAL_ENABLED="$(adb shell settings --user "$CURRENT_USER" get secure enabled_accessibility_services | tr -d '\r')"
+printf '%s\n' "$FINAL_ENABLED" | tee "$OUT/final-enabled-services.txt"
+adb shell dumpsys accessibility > "$OUT/final-accessibility.txt"
+adb logcat -d -s SvetlanaPlan0:* AccessibilityManagerService:* | tee "$OUT/plan0-logcat.txt"
+
 echo "after_instrumentation=$(date -u +%FT%T.%3NZ)" | tee -a "$OUT/timestamps.txt"
 
-if grep -qE 'commandError=true|Invalid userId|Error: Invalid userId' "$OUT/uiautomator-instrumentation.log"; then
-  echo "PLAN0_INSTRUMENTATION_COMMAND=FAIL" | tee "$OUT/instrumentation-command-result.txt"
-else
-  echo "PLAN0_INSTRUMENTATION_COMMAND=PASS" | tee "$OUT/instrumentation-command-result.txt"
-fi
+echo "$FINAL_ENABLED" | grep -Fq 'com.svetlana.android.hands/.SvetlanaAccessibilityService'
+echo "PLAN0_ACCESSIBILITY_ENABLED=PASS" | tee -a "$OUT/result.txt"
+grep -q 'PLAN0_SERVICE_CONNECTED=PASS' "$OUT/plan0-logcat.txt"
+echo "PLAN0_SERVICE_CONNECTED=PASS" | tee -a "$OUT/result.txt"
 
-adb shell settings get secure enabled_accessibility_services | tee "$OUT/final-enabled-services.txt"
-adb shell settings get secure accessibility_enabled | tee "$OUT/final-accessibility-enabled.txt"
-adb shell dumpsys accessibility > "$OUT/final-accessibility.txt"
-adb shell dumpsys package com.svetlana.android.hands > "$OUT/final-package.txt"
-adb logcat -d -b all -v threadtime > "$OUT/final-logcat.txt"
-grep -iE 'onServiceConnected|AccessibilityManagerService|SvetlanaAccessibilityService|PLAN0_' "$OUT/final-logcat.txt" | tail -n 500 > "$OUT/accessibility-logcat.txt" || true
-
-if [ "$TEST_RC" -ne 0 ]; then
-  echo "PLAN0_UIAUTOMATOR_RESULT=FAIL"
-  exit "$TEST_RC"
-fi
-if grep -qE 'commandError=true|Invalid userId|Error: Invalid userId' "$OUT/uiautomator-instrumentation.log"; then
-  echo "PLAN0_UIAUTOMATOR_RESULT=FAIL_INSTRUMENTATION_COMMAND"
-  exit 1
-fi
-if ! grep -qF 'PLAN0_UIAUTOMATOR=RESULT=PASS' "$OUT/uiautomator-instrumentation.log"; then
-  echo "PLAN0_UIAUTOMATOR_RESULT=FAIL_TEST_RESULT_NOT_PROVEN"
-  exit 1
-fi
-if ! grep -qF 'com.svetlana.android.hands/com.svetlana.android.hands.SvetlanaAccessibilityService' "$OUT/final-enabled-services.txt"; then
-  echo "PLAN0_UIAUTOMATOR_RESULT=FAIL_NO_ENABLED_SERVICE"
-  exit 1
-fi
-if ! grep -qF 'PLAN0_SERVICE_CONNECTED=PASS' "$OUT/final-logcat.txt"; then
-  echo "PLAN0_UIAUTOMATOR_RESULT=FAIL_NO_ON_SERVICE_CONNECTED"
-  exit 1
-fi
-echo "PLAN0_UIAUTOMATOR_RESULT=PASS"
+grep -q 'PLAN0_NODE_FOUND=PASS' "$OUT/plan0-logcat.txt"
+grep -q 'PLAN0_ACTION_CLICK=PASS' "$OUT/plan0-logcat.txt"
+grep -q 'PLAN0_REAL_ANDROID_ACTION=PASS' "$OUT/plan0-logcat.txt"
+echo "PLAN0_REAL_ANDROID_ACTION=PASS" | tee -a "$OUT/result.txt"
