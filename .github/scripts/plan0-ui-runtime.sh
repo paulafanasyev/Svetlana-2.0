@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Plan 0 runtime: UIAutomator must perform the Accessibility Settings toggle.
-# This script never enables the service through `settings put`.
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUT="$REPO_ROOT/plan0-ui-evidence"
@@ -44,7 +41,7 @@ echo "before_instrumentation=$(date -u +%FT%T.%3NZ)" | tee -a "$OUT/timestamps.t
 
 set +e
 adb shell am instrument --user "$CURRENT_USER" -w -r \
-  -e class com.svetlana.android.hands.Plan0UiAutomatorTest \
+  -e class com.svetlana.android.hands.Plan0AccessibilityUiTest \
   com.svetlana.android.hands.test/androidx.test.runner.AndroidJUnitRunner \
   2>&1 | tee "$OUT/instrumentation.txt"
 INSTRUMENTATION_EXIT=${PIPESTATUS[0]}
@@ -68,7 +65,6 @@ adb shell dumpsys accessibility > "$OUT/final-accessibility.txt"
 adb logcat -d -s SvetlanaPlan0:* AccessibilityManagerService:* | tee "$OUT/plan0-logcat.txt"
 
 echo "after_instrumentation=$(date -u +%FT%T.%3NZ)" | tee -a "$OUT/timestamps.txt"
-
 echo "$FINAL_ENABLED" | grep -Fq 'com.svetlana.android.hands/.SvetlanaAccessibilityService'
 echo "PLAN0_ACCESSIBILITY_ENABLED=PASS" | tee -a "$OUT/result.txt"
 grep -q 'PLAN0_SERVICE_CONNECTED=PASS' "$OUT/plan0-logcat.txt"
