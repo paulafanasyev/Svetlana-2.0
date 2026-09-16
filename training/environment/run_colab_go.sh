@@ -60,11 +60,31 @@ if mode == 'multimodal_agent' and rules.get('do_not_start_training_until_multimo
 print(json.dumps({'event': 'training_mode_gate_pass', 'training_mode': mode}, ensure_ascii=False))
 PY
 
-python training/gemma4/train_svetlana_smoke.py
-ADAPTER="training/outputs/svetlana_gemma4_e2b_smoke/adapter"
+MODE="$(python - <<'PY'
+import json
+from pathlib import Path
+print(json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))['training_mode'])
+PY
+)"
+
+if [[ "$MODE" == "text_production" ]]; then
+  python training/gemma4/train_svetlana_production.py
+  ADAPTER="training/gemma4/outputs/svetlana_gemma4_e2b_production/adapter"
+  EVIDENCE="training/gemma4/outputs/svetlana_gemma4_e2b_production/training_evidence.json"
+elif [[ "$MODE" == "text_smoke" ]]; then
+  python training/gemma4/train_svetlana_smoke.py
+  ADAPTER="training/outputs/svetlana_gemma4_e2b_smoke/adapter"
+  EVIDENCE="training/outputs/svetlana_gemma4_e2b_smoke/training_evidence.json"
+else
+  echo "Unsupported training mode for Colab GO: $MODE" >&2
+  exit 2
+fi
+
+test -d "$ADAPTER"
 python training/gemma4/generate_predictions.py --model "$ADAPTER" --eval training/datasets/svetlana_eval.jsonl --output "$OUT/adapter_predictions.jsonl" --max-new-tokens "$MAX_NEW_TOKENS" --metadata-output "$OUT/adapter_predictions.metadata.json"
 test -s "$OUT/adapter_predictions.metadata.json"
 python training/evaluation/run_structured_eval.py --eval training/datasets/svetlana_eval.jsonl --predictions "$OUT/adapter_predictions.jsonl" --output "$OUT/adapter_report.json" --label adapter
 python training/evaluation/compare_reports.py --baseline "$OUT/baseline_report.json" --adapter "$OUT/adapter_report.json" --output "$OUT/baseline_vs_adapter.json" --min-baseline "$MIN_BASELINE"
-cp training/outputs/svetlana_gemma4_e2b_smoke/training_evidence.json "$OUT/training_evidence.json"
+test -s "$EVIDENCE"
+cp "$EVIDENCE" "$OUT/training_evidence.json"
 printf '%s\n' 'COLAB_GO_GATE=PASS'
