@@ -16,7 +16,15 @@ def validate_report(report: dict, label: str) -> None:
     ids = [row.get("id") for row in results]
     if any(not isinstance(case_id, str) or not case_id for case_id in ids) or len(set(ids)) != len(ids):
         raise ValueError(f"{label} report has missing or duplicate case IDs")
-    counted = sum(bool(row.get("passed")) for row in results)
+    for row in results:
+        if not isinstance(row, dict) or not isinstance(row.get("passed"), bool):
+            raise ValueError(f"{label} report passed must be boolean")
+        checks = row.get("checks")
+        if not isinstance(checks, dict) or any(not isinstance(value, bool) for value in checks.values()):
+            raise ValueError(f"{label} report checks must be boolean mapping")
+        if row["passed"] != all(checks.values()):
+            raise ValueError(f"{label} report passed is inconsistent with checks")
+    counted = sum(row["passed"] for row in results)
     if counted != report["passed_cases"]:
         raise ValueError(f"{label} report passed_cases is not reproducible from results")
     expected_rate = counted / len(results) if results else 0.0

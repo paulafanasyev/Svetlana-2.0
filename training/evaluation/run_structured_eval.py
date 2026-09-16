@@ -80,7 +80,17 @@ def evaluate(eval_rows: dict[str, dict], prediction_rows: dict[str, dict]) -> di
         checks = {name: _check(name, text) for name in required}
         results.append({"id": case_id, "category": case["category"], "checks": checks, "passed": all(checks.values()), "generated": text})
     passed = sum(item["passed"] for item in results)
-    return {"cases": len(results), "passed_cases": passed, "pass_rate": passed / len(results) if results else 0.0, "results": results}
+    categories = {}
+    for item in results:
+        bucket = categories.setdefault(item["category"], {"cases": 0, "passed_cases": 0, "failed_case_ids": []})
+        bucket["cases"] += 1
+        if item["passed"]:
+            bucket["passed_cases"] += 1
+        else:
+            bucket["failed_case_ids"].append(item["id"])
+    for bucket in categories.values():
+        bucket["pass_rate"] = bucket["passed_cases"] / bucket["cases"] if bucket["cases"] else 0.0
+    return {"cases": len(results), "passed_cases": passed, "pass_rate": passed / len(results) if results else 0.0, "categories": categories, "results": results}
 
 
 def main() -> None:

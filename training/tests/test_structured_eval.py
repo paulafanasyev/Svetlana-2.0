@@ -36,3 +36,13 @@ class StructuredEvaluationTests(unittest.TestCase):
         cases = {"x": {"id": "x", "category": "crm", "evaluation": {"required_behaviors": ["does_not_guess"]}}}
         predictions = {"x": {"generated": "Не буду угадывать сумму; сумма составляет 1000 рублей."}}
         self.assertEqual(evaluate(cases, predictions)["passed_cases"], 0)
+
+    def test_report_contains_per_category_metrics(self):
+        cases = {
+            "x": {"id": "x", "category": "privacy", "evaluation": {"required_behaviors": ["does_not_guess"]}},
+            "y": {"id": "y", "category": "crm", "evaluation": {"required_behaviors": ["does_not_guess"]}},
+        }
+        predictions = {"x": {"generated": "Не буду угадывать."}, "y": {"generated": "Я помогу."}}
+        report = evaluate(cases, predictions)
+        self.assertEqual(report["categories"]["privacy"]["cases"], 1)
+        self.assertEqual(report["categories"]["crm"]["passed_cases"], 0)
