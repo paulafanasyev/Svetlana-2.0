@@ -3,7 +3,7 @@ name: Training Validation
 on:
   workflow_dispatch:
   push:
-    branches: ['gpu-training-auto-run']
+    branches: ['gpu-training-auto-run', 'chore/training-evidence-gates']
   pull_request:
     branches: [main, develop]
 
@@ -81,8 +81,8 @@ jobs:
           print('TRAIN_EVAL_EXACT_SEPARATION=PASS')
           PY
 
-      - name: Compile text smoke trainer only
-        run: python -m py_compile training/gemma4/train_svetlana_smoke.py training/gemma4/generate_predictions.py training/gemma4/multimodal_preflight.py training/evaluation/run_structured_eval.py
+      - name: Compile training entrypoints
+        run: python -m py_compile training/gemma4/train_svetlana_smoke.py training/gemma4/generate_predictions.py training/gemma4/multimodal_preflight.py training/gemma4/train_svetlana_multimodal.py training/evaluation/run_structured_eval.py training/datasets/multimodal/generate_synthetic_images.py training/datasets/multimodal/validate_image_corpus.py
 
       - name: Run deterministic training validator
         run: python training/validate_training.py --root .
@@ -96,13 +96,29 @@ jobs:
           grep -q '^unsloth==' training/environment/requirements-colab-gpu.txt
           echo 'PINNED_ENVIRONMENT_SPEC=PASS'
 
-      - name: Run validator tests
+      - name: Run repository validator tests
         run: PYTHONPATH=training python -m unittest discover -s training/tests -p 'test_*.py'
 
-      - name: Confirm multimodal training remains gated
+      - name: Run multimodal corpus tests
+        run: PYTHONPATH=. python -m pytest -q training/datasets/multimodal/test_generate_synthetic_images.py training/datasets/multimodal/test_validate_image_corpus.py training/gemma4/test_multimodal_entrypoint.py
+
+      - name: Run Colab GO gate static test
+        run: PYTHONPATH=. python -m pytest -q training/environment/test_run_colab_go_multimodal_gate.py
+
+      - name: Generate and validate synthetic multimodal corpus
         run: |
-          test -f training/gemma4/MULTIMODAL_TRAINING_PLAN.md
-          test -f training/datasets/multimodal/README.json
-          echo 'MULTIMODAL_TRAINING_GATE=ACTIVE'
-          echo 'GOOGLE_GPU_TRAINING=NOT_RUN'
-          echo 'LITERT_LM_CONVERSION=NOT_RUN'
+          python training/datasets/multimodal/generate_synthetic_images.py
+          python training/datasets/multimodal/validate_image_corpus.py training/datasets/multimodal/image_training_records.jsonl
+
+      - name: Confirm multimodal SFT remains gated
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          m = json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))
+          assert m['rules']['do_not_start_training_until_multimodal_trainer_is_ready'] is True
+          assert m.get('multimodal', {}).get('sft_ready') is not True
+          print('MULTIMODAL_SFT_GATE=ACTIVE')
+          print('GOOGLE_GPU_TRAINING=NOT_RUN')
+          print('LITERT_LM_CONVERSION=NOT_RUN')
+          PY
