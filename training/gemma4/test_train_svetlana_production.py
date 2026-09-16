@@ -6,6 +6,7 @@ from training.gemma4.train_svetlana_production import load_config
 from training.validate_training import validate_manifest
 
 ROOT = Path(__file__).resolve().parents[1].parent
+MANIFEST = ROOT / "training/datasets/manifest_v2.json"
 
 
 def test_production_config_is_deterministic_by_default(monkeypatch):
@@ -25,11 +26,11 @@ def test_production_config_is_deterministic_by_default(monkeypatch):
     assert cfg["per_device_train_batch_size"] == 1
 
 
-def test_active_manifest_must_authorize_production_runner():
-    manifest = validate_manifest(ROOT / "training/datasets/manifest_v2.json", ROOT)
+def test_production_manifest_authorization_contract():
+    manifest = validate_manifest(MANIFEST, ROOT)
     assert manifest["base_model"] == "google/gemma-4-E2B-it"
-    assert manifest["trainer"] != "training/gemma4/train_svetlana_production.py"
-    assert manifest["training_mode"] != "text_production"
+    assert manifest["training_mode"] == "text_production"
+    assert manifest["trainer"] == "training/gemma4/train_svetlana_production.py"
 
 
 def test_production_runner_requires_explicit_manifest_authorization(monkeypatch):
