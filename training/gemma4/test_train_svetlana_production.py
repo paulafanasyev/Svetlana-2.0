@@ -36,3 +36,8 @@ def test_production_manifest_authorization_contract():
 def test_production_runner_requires_explicit_manifest_authorization(monkeypatch):
     monkeypatch.setenv("SVETLANA_EPOCHS", "1")
     assert load_config()["num_train_epochs"] == 1
+
+
+def test_production_imports_unsloth_before_torch():
+    source = Path(__file__).with_name("train_svetlana_production.py").read_text(encoding="utf-8")
+    assert source.index("import unsloth") < source.index("import torch")

@@ -11,7 +11,8 @@
     {"path": "training/datasets/svetlana_capability_seed.jsonl", "format": "messages"},
     {"path": "training/datasets/svetlana_capability_training_v2.jsonl", "format": "messages"},
     {"path": "training/datasets/svetlana_advanced_training_v1.jsonl", "format": "messages", "role": "expanded_behavior_domain"},
-    {"path": "training/datasets/svetlana_russian_source_policy_seed.jsonl", "format": "messages", "role": "source_governance_behavior"}
+    {"path": "training/datasets/svetlana_russian_source_policy_seed.jsonl", "format": "messages", "role": "source_governance_behavior"},
+    {"path": "training/datasets/svetlana_source_governance_v2.jsonl", "format": "messages", "role": "source_governance_behavior_v2"}
   ],
   "reference_knowledge": [
     {"path": "training/datasets/self_employed_official.jsonl", "format": "messages", "role": "official_source_behavior"}

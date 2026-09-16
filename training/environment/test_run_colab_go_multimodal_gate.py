@@ -39,7 +39,7 @@ def test_expanded_text_training_is_not_blocked_by_multimodal_readiness_rule():
 
 
 def test_baseline_is_measurement_by_default_and_only_explicit_threshold_blocks():
-    assert 'SVETLANA_MIN_BASELINE_PASS_RATE:-0.0' in SCRIPT
+    assert 'SVETLANA_MIN_BASELINE_PASS_RATE:-0.75' in SCRIPT
     assert "if minimum > 0 and rate < minimum:" in SCRIPT
 
 
