@@ -39,3 +39,5 @@ def test_record_contract_contains_media_and_privacy_fields():
             assert row["media"][0]["license"] == "synthetic"
             assert len(row["media"][0]["sha256"]) == 64
             assert row["privacy_classification"] == "synthetic_no_private_data"
+            media_path = Path(row["media"][0]["path"])
+            assert media_path.is_file()
