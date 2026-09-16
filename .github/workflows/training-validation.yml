@@ -29,8 +29,8 @@ jobs:
           m = json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))
           assert m['base_model'] == 'google/gemma-4-E2B-it'
           assert m['runtime_target'] == 'LiteRT-LM'
-          assert m['training_mode'] == 'text_smoke'
-          assert m['trainer'] == 'training/gemma4/train_svetlana_smoke.py'
+          assert m['training_mode'] == 'text_production'
+          assert m['trainer'] == 'training/gemma4/train_svetlana_production.py'
           paths = [x['path'] for x in m['train'] + m['reference_knowledge'] + m['eval']]
           for p in paths:
               assert Path(p).exists(), f'missing dataset: {p}'
@@ -38,7 +38,7 @@ jobs:
           assert m['rules']['no_personal_data_in_weights'] is True
           print('MANIFEST=PASS')
           print('DATASET_PATHS=PASS')
-          print('TRAINING_MODE=text_smoke')
+          print('TRAINING_MODE=text_production')
           print('MULTIMODAL_TRAINING=NOT_RUN')
           PY
 
@@ -51,6 +51,8 @@ jobs:
             Path('training/datasets/svetlana_seed.jsonl'),
             Path('training/datasets/svetlana_capability_seed.jsonl'),
             Path('training/datasets/svetlana_capability_training_v2.jsonl'),
+            Path('training/datasets/svetlana_advanced_training_v1.jsonl'),
+            Path('training/datasets/svetlana_russian_source_policy_seed.jsonl'),
             Path('training/datasets/self_employed_official.jsonl'),
             Path('training/datasets/svetlana_eval.jsonl'),
           ]
@@ -71,6 +73,8 @@ jobs:
             Path('training/datasets/svetlana_seed.jsonl'),
             Path('training/datasets/svetlana_capability_seed.jsonl'),
             Path('training/datasets/svetlana_capability_training_v2.jsonl'),
+            Path('training/datasets/svetlana_advanced_training_v1.jsonl'),
+            Path('training/datasets/svetlana_russian_source_policy_seed.jsonl'),
           ]
           eval_file = Path('training/datasets/svetlana_eval.jsonl')
           def fp(x):
@@ -85,7 +89,7 @@ jobs:
           PY
 
       - name: Compile training entrypoints
-        run: python -m py_compile training/gemma4/train_svetlana_smoke.py training/gemma4/generate_predictions.py training/gemma4/multimodal_preflight.py training/gemma4/train_svetlana_multimodal.py training/evaluation/run_structured_eval.py training/datasets/multimodal/generate_synthetic_images.py training/datasets/multimodal/validate_image_corpus.py
+        run: python -m py_compile training/gemma4/train_svetlana_smoke.py training/gemma4/train_svetlana_production.py training/gemma4/generate_predictions.py training/gemma4/multimodal_preflight.py training/gemma4/train_svetlana_multimodal.py training/evaluation/run_structured_eval.py training/datasets/multimodal/generate_synthetic_images.py training/datasets/multimodal/validate_image_corpus.py
 
       - name: Run deterministic training validator
         run: python training/validate_training.py --root .
@@ -102,6 +106,9 @@ jobs:
 
       - name: Run repository validator tests
         run: PYTHONPATH=training python -m unittest discover -s training/tests -p 'test_*.py'
+
+      - name: Run production trainer contract tests
+        run: PYTHONPATH=. python -m pytest -q training/gemma4/test_train_svetlana_production.py
 
       - name: Run multimodal corpus tests
         run: PYTHONPATH=. python -m pytest -q training/datasets/multimodal/test_generate_synthetic_images.py training/datasets/multimodal/test_validate_image_corpus.py training/gemma4/test_multimodal_entrypoint.py
