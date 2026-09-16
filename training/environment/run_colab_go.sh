@@ -24,6 +24,8 @@ print(json.dumps({'event':'environment_pass','python':platform.python_version(),
 PY
 
 python training/validate_training.py --root .
+python training/datasets/multimodal/generate_synthetic_images.py
+python training/datasets/multimodal/validate_image_corpus.py training/datasets/multimodal/image_training_records.jsonl
 python training/gemma4/generate_predictions.py --model google/gemma-4-E2B-it --eval training/datasets/svetlana_eval.jsonl --output "$OUT/baseline_predictions.jsonl" --max-new-tokens "$MAX_NEW_TOKENS" --metadata-output "$OUT/baseline_predictions.metadata.json"
 test -s "$OUT/baseline_predictions.metadata.json"
 python training/evaluation/run_structured_eval.py --eval training/datasets/svetlana_eval.jsonl --predictions "$OUT/baseline_predictions.jsonl" --output "$OUT/baseline_report.json" --label baseline
