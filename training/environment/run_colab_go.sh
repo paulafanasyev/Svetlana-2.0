@@ -13,7 +13,7 @@ python -m pip install --upgrade pip
 python -m pip install -r training/environment/requirements-colab-gpu.txt
 
 python - <<'PY'
-import importlib, json, platform, sys
+import importlib, json, platform
 import unsloth
 import torch
 for name in ['transformers', 'trl', 'datasets', 'accelerate', 'peft']:
@@ -31,17 +31,31 @@ python - "$OUT/baseline_report.json" "$MIN_BASELINE" <<'PY'
 import json
 import sys
 from pathlib import Path
-
 report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 minimum = float(sys.argv[2])
 rate = float(report["pass_rate"])
 if rate < minimum:
-    raise SystemExit(
-        f"BASELINE_GATE_FAIL: pass_rate={rate:.3f} < minimum={minimum:.3f}; "
-        "training is blocked until the baseline/evaluation contract is fixed."
-    )
+    raise SystemExit(f"BASELINE_GATE_FAIL: pass_rate={rate:.3f} < minimum={minimum:.3f}; training is blocked until the baseline/evaluation contract is fixed.")
 print(json.dumps({"event": "baseline_gate_pass", "pass_rate": rate, "minimum": minimum}))
 PY
+
+python - <<'PY'
+import json
+from pathlib import Path
+manifest = json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))
+rules = manifest.get('rules', {})
+if rules.get('do_not_start_training_until_multimodal_trainer_is_ready'):
+    trainer = manifest.get('native_multimodal_trainer')
+    if not trainer or not Path(trainer).is_file():
+        print(json.dumps({
+            'event': 'training_gate_blocked',
+            'reason': 'native_multimodal_trainer_not_ready',
+            'native_multimodal_trainer': trainer,
+            'action': 'prepare real multimodal assets and native trainer before any SFT run'
+        }, ensure_ascii=False))
+        raise SystemExit(2)
+PY
+
 python training/gemma4/train_svetlana_smoke.py
 ADAPTER="training/outputs/svetlana_gemma4_e2b_smoke/adapter"
 python training/gemma4/generate_predictions.py --model "$ADAPTER" --eval training/datasets/svetlana_eval.jsonl --output "$OUT/adapter_predictions.jsonl" --max-new-tokens "$MAX_NEW_TOKENS" --metadata-output "$OUT/adapter_predictions.metadata.json"
