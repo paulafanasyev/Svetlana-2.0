@@ -77,6 +77,14 @@ def make_image(kind: str, description: str, index: int) -> Image.Image:
     return image
 
 
+def _portable_path(path: Path) -> str:
+    """Return a repository-relative path when possible, otherwise the given path."""
+    try:
+        return path.relative_to(Path.cwd()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 def main() -> None:
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -85,12 +93,13 @@ def main() -> None:
         make_image(task, description, index).save(path, format="PNG", optimize=False)
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         split = "eval" if index in (7, 8) else "train"
+        portable_path = _portable_path(path)
         rows.append({
             "id": sample_id,
             "modality": "image",
             "task": task,
-            "messages": [{"role": "user", "content": [{"type": "image", "path": str(path.relative_to(Path.cwd()))}, {"type": "text", "text": "Опиши только то, что действительно видно на изображении."}]}],
-            "media": [{"type": "image", "path": str(path.relative_to(Path.cwd())), "sha256": digest, "license": "synthetic", "provenance": "generated locally by this repository"}],
+            "messages": [{"role": "user", "content": [{"type": "image", "path": portable_path}, {"type": "text", "text": "Опиши только то, что действительно видно на изображении."}]}],
+            "media": [{"type": "image", "path": portable_path, "sha256": digest, "license": "synthetic", "provenance": "generated locally by this repository"}],
             "expected_output": description,
             "privacy_classification": "synthetic_no_private_data",
             "split": split,
