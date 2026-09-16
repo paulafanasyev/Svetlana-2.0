@@ -19,3 +19,13 @@ def test_cuda_gate_precedes_multimodal_work():
     cuda_gate = SCRIPT.index("if not torch.cuda.is_available():")
     generate = SCRIPT.index("python training/datasets/multimodal/generate_synthetic_images.py")
     assert cuda_gate < generate
+
+
+def test_expanded_text_training_is_not_blocked_by_multimodal_readiness_rule():
+    assert "mode == 'multimodal_agent'" in SCRIPT
+    assert "training_mode_gate_pass" in SCRIPT
+
+
+def test_baseline_is_measurement_by_default_and_only_explicit_threshold_blocks():
+    assert 'SVETLANA_MIN_BASELINE_PASS_RATE:-0.0' in SCRIPT
+    assert "if minimum > 0 and rate < minimum:" in SCRIPT
