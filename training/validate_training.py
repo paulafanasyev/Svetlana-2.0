@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
+SUPPORTED_TRAINING_MODES = {"text_smoke", "text_production", "multimodal_agent"}
+
+
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     rows = []
     for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -68,12 +71,18 @@ def validate_manifest(manifest_path: Path, root: Path) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     mode = manifest.get("training_mode")
     trainer = manifest.get("trainer")
-    if mode not in {"text_smoke", "multimodal_agent"}:
-        raise ValueError("training_mode must be text_smoke or multimodal_agent")
+    if mode not in SUPPORTED_TRAINING_MODES:
+        raise ValueError(
+            "training_mode must be one of: " + ", ".join(sorted(SUPPORTED_TRAINING_MODES))
+        )
     if not trainer:
         raise ValueError("manifest must identify the actual trainer")
     if not (root / trainer).is_file():
         raise ValueError(f"trainer does not exist: {trainer}")
+    if mode == "text_production" and trainer != "training/gemma4/train_svetlana_production.py":
+        raise ValueError("text_production requires training/gemma4/train_svetlana_production.py")
+    if mode == "text_smoke" and trainer != "training/gemma4/train_svetlana_smoke.py":
+        raise ValueError("text_smoke requires training/gemma4/train_svetlana_smoke.py")
     if mode == "multimodal_agent":
         if not manifest.get("native_multimodal_trainer"):
             raise ValueError("multimodal_agent requires native_multimodal_trainer")
