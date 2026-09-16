@@ -12,12 +12,6 @@ import os
 import platform
 from pathlib import Path
 
-import unsloth
-import torch
-from datasets import concatenate_datasets, load_dataset
-from trl import SFTConfig, SFTTrainer
-from unsloth import FastLanguageModel
-
 from training.training_evidence import write_evidence
 from training.validate_training import validate_manifest, validate_jsonl_splits
 
@@ -41,6 +35,8 @@ def load_config() -> dict:
 
 
 def load_training_dataset(manifest: dict):
+    from datasets import concatenate_datasets, load_dataset
+
     paths = [REPO_ROOT / item["path"] for item in manifest["train"]]
     eval_paths = [REPO_ROOT / item["path"] for item in manifest.get("eval", [])]
     validate_jsonl_splits(paths, eval_paths, REPO_ROOT)
@@ -65,6 +61,11 @@ def format_dataset(dataset, tokenizer):
 
 
 def run(args: argparse.Namespace) -> dict:
+    import unsloth
+    import torch
+    from trl import SFTConfig, SFTTrainer
+    from unsloth import FastLanguageModel
+
     manifest = validate_manifest(REPO_ROOT / "training/datasets/manifest_v2.json", REPO_ROOT)
     if manifest.get("training_mode") != "text_production":
         raise RuntimeError("Production runner requires manifest training_mode=text_production")
