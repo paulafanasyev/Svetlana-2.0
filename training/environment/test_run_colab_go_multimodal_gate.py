@@ -2,6 +2,7 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).with_name("run_colab_go.sh").read_text(encoding="utf-8")
+WORKFLOW = (Path(__file__).resolve().parents[2] / ".github/workflows/training-validation.yml").read_text(encoding="utf-8")
 
 
 def test_multimodal_generation_and_validation_happen_before_training():
@@ -40,3 +41,9 @@ def test_expanded_text_training_is_not_blocked_by_multimodal_readiness_rule():
 def test_baseline_is_measurement_by_default_and_only_explicit_threshold_blocks():
     assert 'SVETLANA_MIN_BASELINE_PASS_RATE:-0.0' in SCRIPT
     assert "if minimum > 0 and rate < minimum:" in SCRIPT
+
+
+def test_training_validation_workflow_targets_production_manifest():
+    assert "assert m['training_mode'] == 'text_production'" in WORKFLOW
+    assert "assert m['trainer'] == 'training/gemma4/train_svetlana_production.py'" in WORKFLOW
+    assert "training/gemma4/test_train_svetlana_production.py" in WORKFLOW
