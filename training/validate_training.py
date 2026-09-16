@@ -5,9 +5,11 @@ import argparse
 import hashlib
 import json
 import re
+from datetime import date, datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import urlparse
 
 
 SUPPORTED_TRAINING_MODES = {"text_smoke", "text_production", "multimodal_agent"}
@@ -67,6 +69,48 @@ def _check_privacy(record: dict[str, Any]) -> None:
         raise ValueError(f"record {record.get('id', '<unknown>')} lacks privacy_classification")
 
 
+def _check_rag_fact(record: dict[str, Any], path: Path, line_no: int) -> None:
+    if record.get("record_type") != "RAG_FACT":
+        return
+    context = f"RAG_FACT {record.get('id', '<unknown>')} at {path}:{line_no}"
+    required = ("source_url", "source_type", "authority", "verified_at", "jurisdiction", "legal_status", "effective_date", "supersedes", "confidence", "privacy")
+    missing = [field for field in required if field not in record]
+    if missing:
+        raise ValueError(f"{context} missing provenance field(s): {', '.join(missing)}")
+    parsed = urlparse(record["source_url"]) if isinstance(record["source_url"], str) else None
+    if not parsed or parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"{context} source_url must be an absolute http(s) URL")
+    for field in ("source_type", "authority", "jurisdiction", "legal_status", "privacy"):
+        if not isinstance(record[field], str) or not record[field].strip():
+            raise ValueError(f"{context} {field} must be a non-empty string")
+    statuses = {"in_force", "repealed", "superseded", "draft", "historical", "not_applicable", "unknown"}
+    if record["legal_status"] not in statuses:
+        raise ValueError(f"{context} legal_status is unsupported")
+
+    def valid_iso(value: Any) -> bool:
+        if not isinstance(value, str) or not value.strip():
+            return False
+        try:
+            date.fromisoformat(value) if len(value) == 10 else datetime.fromisoformat(value)
+            return True
+        except ValueError:
+            return False
+
+    if not valid_iso(record["verified_at"]):
+        raise ValueError(f"{context} verified_at must be ISO-8601")
+    if record["effective_date"] is None:
+        if record["legal_status"] not in {"not_applicable", "unknown"}:
+            raise ValueError(f"{context} effective_date is required")
+    elif not valid_iso(record["effective_date"]):
+        raise ValueError(f"{context} effective_date must be ISO-8601 or null")
+    supersedes = record["supersedes"]
+    if supersedes is not None and (not isinstance(supersedes, list) or any(not isinstance(item, str) or not item.strip() for item in supersedes) or len(set(supersedes)) != len(supersedes) or record.get("id") in supersedes):
+        raise ValueError(f"{context} supersedes must be null or a unique list without self-reference")
+    confidence = record["confidence"]
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+        raise ValueError(f"{context} confidence must be a number in [0, 1]")
+
+
 def validate_manifest(manifest_path: Path, root: Path) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     mode = manifest.get("training_mode")
@@ -102,18 +146,20 @@ def validate_jsonl_splits(train_paths: Iterable[Path], eval_paths: Iterable[Path
     for path in train_paths:
         rows = _load_jsonl(path)
         train_rows.extend(rows)
-        for row in rows:
+        for line_no, row in enumerate(rows, 1):
             if "messages" not in row and not row.get("media_required"):
                 raise ValueError(f"training record lacks messages: {path}")
             _check_privacy(row)
+            _check_rag_fact(row, path, line_no)
             _check_media(row, root)
     for path in eval_paths:
         rows = _load_jsonl(path)
         eval_rows.extend(rows)
-        for row in rows:
+        for line_no, row in enumerate(rows, 1):
             if "messages" not in row:
                 raise ValueError(f"evaluation record lacks messages: {path}")
             _check_privacy(row)
+            _check_rag_fact(row, path, line_no)
             _check_media(row, root)
 
     exact_train = {_canonical(row) for row in train_rows}
