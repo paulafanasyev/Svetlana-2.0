@@ -10,6 +10,7 @@
     {"path": "training/datasets/svetlana_seed.jsonl", "format": "messages"},
     {"path": "training/datasets/svetlana_capability_seed.jsonl", "format": "messages"},
     {"path": "training/datasets/svetlana_capability_training_v2.jsonl", "format": "messages"},
+    {"path": "training/datasets/svetlana_advanced_training_v1.jsonl", "format": "messages", "role": "expanded_behavior_domain"},
     {"path": "training/datasets/svetlana_russian_source_policy_seed.jsonl", "format": "messages", "role": "source_governance_behavior"}
   ],
   "reference_knowledge": [
