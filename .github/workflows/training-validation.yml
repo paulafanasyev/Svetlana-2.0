@@ -126,3 +126,21 @@ jobs:
           print('GOOGLE_GPU_TRAINING=NOT_RUN')
           print('LITERT_LM_CONVERSION=NOT_RUN')
           PY
+
+      - name: Verify synthetic path portability
+        run: |
+          tmp_dir=$(mktemp -d)
+          PYTHONPATH=. python - <<'PY'
+          import tempfile
+          from pathlib import Path
+          import training.datasets.multimodal.generate_synthetic_images as module
+          with tempfile.TemporaryDirectory() as td:
+              root = Path(td)
+              module.ASSET_DIR = root / 'synthetic_images'
+              module.MANIFEST = root / 'records.jsonl'
+              module.main()
+              rows = module.MANIFEST.read_text(encoding='utf-8').splitlines()
+              assert len(rows) == 8
+              print('SYNTHETIC_PATH_PORTABILITY=PASS')
+          PY
+          rm -rf "$tmp_dir"
