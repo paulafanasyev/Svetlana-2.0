@@ -139,6 +139,8 @@ def run(args: argparse.Namespace) -> dict:
             dataset_num_proc=1,
             report_to="none",
             assistant_only_loss=False,
+            bf16=False,
+            fp16=False,
             save_strategy="steps",
             save_steps=cfg["save_steps"],
             save_total_limit=3,
