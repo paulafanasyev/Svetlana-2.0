@@ -58,15 +58,32 @@ def format_dataset(dataset, tokenizer):
             raise ValueError("Chat template produced empty training text")
         return {"text": text}
 
-    # Keep this explicitly non-batched. Earlier training work exposed a real
-    # failure mode where a batched formatting function returned the wrong shape.
     return dataset.map(convert, remove_columns=dataset.column_names, batched=False, desc="Formatting Gemma dataset")
+
+
+def tokenize_dataset(dataset, tokenizer, max_length: int):
+    def tokenize(example):
+        encoded = tokenizer(
+            example["text"],
+            truncation=True,
+            max_length=max_length,
+            padding=False,
+        )
+        encoded["labels"] = list(encoded["input_ids"])
+        return encoded
+
+    return dataset.map(
+        tokenize,
+        remove_columns=dataset.column_names,
+        batched=False,
+        desc="Tokenizing Gemma dataset",
+    )
 
 
 def run(args: argparse.Namespace) -> dict:
     import unsloth
     import torch
-    from trl import SFTConfig, SFTTrainer
+    from transformers import DataCollatorForLanguageModeling, Trainer, TrainingArguments
     from unsloth import FastLanguageModel
 
     manifest = validate_manifest(REPO_ROOT / "training/datasets/manifest_v2.json", REPO_ROOT)
@@ -120,49 +137,39 @@ def run(args: argparse.Namespace) -> dict:
         raise RuntimeError(f"Production corpus unexpectedly small: {len(formatted)} records")
     print(json.dumps({"event": "production_dataset", "train_examples": len(formatted)}, ensure_ascii=False))
 
-    # Unsloth has already loaded the model in 4-bit and wrapped it with LoRA.
-    # TRL 0.23 nevertheless sees model.peft_config and calls its PEFT preparation
-    # path again. That path invokes PEFT's prepare_model_for_kbit_training(),
-    # which upcasts parameters to float32. On a 14.56 GB T4 this attempts an
-    # additional ~8.75 GB allocation and fails before the first train step.
-    # The supported TRL path for an already wrapped PeftModel is to pass it
-    # directly without a peft_config; temporarily hiding the marker lets TRL
-    # construct the trainer without repeating k-bit preparation. The PeftModel
-    # config is restored immediately after trainer construction for normal
-    # adapter/save behavior.
-    existing_peft_config = getattr(model, "peft_config", None)
-    if existing_peft_config is None:
-        raise RuntimeError("Unsloth did not attach a PEFT adapter before SFTTrainer")
-    model.peft_config = None
-    try:
-        trainer = SFTTrainer(
-            model=model,
-            processing_class=tokenizer,
-            train_dataset=formatted,
-            args=SFTConfig(
-                max_length=cfg["max_seq_length"],
-                dataset_text_field="text",
-                per_device_train_batch_size=cfg["per_device_train_batch_size"],
-                gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
-                warmup_ratio=0.05,
-                num_train_epochs=cfg["num_train_epochs"],
-                learning_rate=cfg["learning_rate"],
-                logging_steps=cfg["logging_steps"],
-                output_dir=str(out),
-                optim="adamw_8bit",
-                seed=cfg["seed"],
-                dataset_num_proc=1,
-                report_to="none",
-                assistant_only_loss=False,
-                bf16=False,
-                fp16=False,
-                save_strategy="steps",
-                save_steps=cfg["save_steps"],
-                save_total_limit=3,
-            ),
-        )
-    finally:
-        model.peft_config = existing_peft_config
+    # The model is already a 4-bit PeftModel prepared by Unsloth. TRL 0.23's
+    # SFTTrainer integration can re-enter PEFT's k-bit preparation path for this
+    # combination, which upcasts base parameters to float32 and causes a second
+    # ~8.75 GB allocation on the 14.56 GB T4 before the first train step.
+    # Use the Transformers Trainer directly: it accepts the already-prepared
+    # PeftModel and never invokes prepare_model_for_kbit_training().
+    tokenized = tokenize_dataset(formatted, tokenizer, cfg["max_seq_length"])
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    training_args = TrainingArguments(
+        per_device_train_batch_size=cfg["per_device_train_batch_size"],
+        gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
+        warmup_ratio=0.05,
+        num_train_epochs=cfg["num_train_epochs"],
+        learning_rate=cfg["learning_rate"],
+        logging_steps=cfg["logging_steps"],
+        output_dir=str(out),
+        optim="adamw_8bit",
+        seed=cfg["seed"],
+        report_to="none",
+        bf16=False,
+        fp16=False,
+        gradient_checkpointing=True,
+        save_strategy="steps",
+        save_steps=cfg["save_steps"],
+        save_total_limit=3,
+    )
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=tokenized,
+        processing_class=tokenizer,
+        data_collator=data_collator,
+    )
 
     result = trainer.train(resume_from_checkpoint=checkpoint)
     adapter_dir = out / "adapter"
