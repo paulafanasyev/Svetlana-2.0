@@ -43,12 +43,25 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def manifest_paths(manifest: dict, key: str) -> list[str]:
+    entries = manifest.get(key)
+    if not isinstance(entries, list):
+        raise ValueError(f"manifest missing {key} list")
+    paths = []
+    for entry in entries:
+        if isinstance(entry, str):
+            paths.append(entry)
+        elif isinstance(entry, dict) and isinstance(entry.get("path"), str):
+            paths.append(entry["path"])
+        else:
+            raise ValueError(f"manifest {key} entry must be a path string or object with a path")
+    return paths
+
+
 def validate_manifest(path: Path, root: Path) -> dict:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     for key in ("train", "eval"):
-        if key not in manifest or not isinstance(manifest[key], list):
-            raise ValueError(f"manifest missing {key} list")
-        for rel in manifest[key]:
+        for rel in manifest_paths(manifest, key):
             candidate = root / rel
             if not candidate.exists():
                 raise FileNotFoundError(candidate)
@@ -58,8 +71,8 @@ def validate_manifest(path: Path, root: Path) -> dict:
 def load_training_dataset(manifest: dict):
     from datasets import concatenate_datasets, load_dataset
 
-    train_paths = manifest["train"]
-    eval_paths = manifest["eval"]
+    train_paths = manifest_paths(manifest, "train")
+    eval_paths = manifest_paths(manifest, "eval")
     train_parts = [load_dataset("json", data_files=str(REPO_ROOT / p), split="train") for p in train_paths]
     train = concatenate_datasets(train_parts)
     eval_parts = [load_dataset("json", data_files=str(REPO_ROOT / p), split="train") for p in eval_paths]
@@ -85,10 +98,6 @@ def format_dataset(dataset, tokenizer):
 
 def tokenize_dataset(dataset, tokenizer, max_length: int):
     def tokenize(example):
-        # Gemma4 exposes a Processor rather than a plain tokenizer. In
-        # transformers 5.5 its __call__ requires the text keyword explicitly;
-        # passing the string positionally leaves `text=None` inside the
-        # processor and fails at `text[0]`.
         encoded = tokenizer(
             text=[example["text"]],
             truncation=True,
@@ -218,73 +227,73 @@ def run(args: argparse.Namespace) -> dict:
 
     dataset, evaluation, data_paths = load_training_dataset(manifest)
     formatted = format_dataset(dataset, tokenizer)
-    if len(formatted) < 100:
-        raise RuntimeError(f"Production corpus unexpectedly small: {len(formatted)} records")
-    print(json.dumps({"event": "production_dataset", "train_examples": len(formatted), "eval_examples": len(evaluation)}, ensure_ascii=False))
-
-    # The model is already a 4-bit PeftModel prepared by Unsloth. TRL 0.23's
-    # SFTTrainer integration can re-enter PEFT's k-bit preparation path for this
-    # combination, which upcasts base parameters to float32 and causes a second
-    # ~8.75 GB allocation on the 14.56 GB T4 before the first train step.
-    # Use the Transformers Trainer directly: it accepts the already-prepared
-    # PeftModel and never invokes prepare_model_for_kbit_training().
+    formatted_eval = format_dataset(evaluation, tokenizer)
     tokenized = tokenize_dataset(formatted, tokenizer, cfg["max_seq_length"])
-    data_collator = make_manual_collator(tokenizer)
+    tokenized_eval = tokenize_dataset(formatted_eval, tokenizer, cfg["max_seq_length"])
+    collator = make_manual_collator(tokenizer)
+
     training_args = TrainingArguments(
-        per_device_train_batch_size=cfg["per_device_train_batch_size"],
-        gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
-        warmup_ratio=0.05,
-        num_train_epochs=cfg["num_train_epochs"],
-        learning_rate=cfg["learning_rate"],
-        logging_steps=cfg["logging_steps"],
         output_dir=str(out),
-        optim="adamw_8bit",
-        seed=cfg["seed"],
-        report_to="none",
-        bf16=False,
-        fp16=False,
-        gradient_checkpointing=True,
-        save_strategy="steps",
+        per_device_train_batch_size=cfg["per_device_train_batch_size"],
+        per_device_eval_batch_size=cfg["per_device_train_batch_size"],
+        gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
+        learning_rate=cfg["learning_rate"],
+        num_train_epochs=cfg["num_train_epochs"],
+        logging_steps=cfg["logging_steps"],
         save_steps=cfg["save_steps"],
-        save_total_limit=3,
+        save_strategy="steps",
+        eval_strategy="steps",
+        eval_steps=cfg["save_steps"],
+        report_to="none",
+        fp16=False,
+        bf16=False,
+        remove_unused_columns=False,
+        seed=cfg["seed"],
     )
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=tokenized,
-        processing_class=tokenizer,
-        data_collator=data_collator,
+        eval_dataset=tokenized_eval,
+        data_collator=collator,
     )
-
-    result = trainer.train(resume_from_checkpoint=checkpoint)
-    adapter_dir = out / "adapter"
-    model.save_pretrained(str(adapter_dir))
-    tokenizer.save_pretrained(str(adapter_dir))
+    print(json.dumps({
+        "event": "training_start",
+        "train_records": len(tokenized),
+        "eval_records": len(tokenized_eval),
+        "epochs": cfg["num_train_epochs"],
+        "batch_size": cfg["per_device_train_batch_size"],
+        "gradient_accumulation_steps": cfg["gradient_accumulation_steps"],
+        "output": str(out),
+        "resume_from": checkpoint,
+    }, ensure_ascii=False))
+    trainer.train(resume_from_checkpoint=checkpoint)
+    model.save_pretrained(out)
+    tokenizer.save_pretrained(out)
+    hardware = {
+        "gpu": props.name,
+        "vram_gb": round(props.total_memory / 1024**3, 2),
+        "cuda": torch.version.cuda,
+        "python": platform.python_version(),
+        "torch": torch.__version__,
+        "unsloth": unsloth.__version__,
+    }
+    evidence_path = out / "training_evidence.json"
     evidence = write_evidence(
-        out / "training_evidence.json",
+        evidence_path,
         root=REPO_ROOT,
-        adapter_dir=adapter_dir,
+        adapter_dir=out,
         dataset_paths=data_paths,
-        config={**cfg, "runner": "train_svetlana_production.py", "resume_from": checkpoint},
-        hardware={"gpu": props.name, "vram_gb": round(props.total_memory / 1024**3, 2), "cuda": torch.version.cuda},
+        config=cfg,
+        hardware=hardware,
         model=model_name,
     )
-    return {
-        "global_step": result.global_step,
-        "training_loss": result.training_loss,
-        "adapter_sha256": evidence["adapter_sha256"],
-        "dataset_sha256": evidence["dataset_sha256"],
-        "output": str(out),
-    }
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output")
-    parser.add_argument("--resume-from")
-    return parser.parse_args()
+    return {"output": str(out), "evidence": evidence}
 
 
 if __name__ == "__main__":
-    args = parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output")
+    parser.add_argument("--resume-from")
+    args = parser.parse_args()
     print(json.dumps({"event": "production_train_complete", **run(args)}, ensure_ascii=False))
