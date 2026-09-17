@@ -116,9 +116,7 @@ def validate_manifest(manifest_path: Path, root: Path) -> dict[str, Any]:
     mode = manifest.get("training_mode")
     trainer = manifest.get("trainer")
     if mode not in SUPPORTED_TRAINING_MODES:
-        raise ValueError(
-            "training_mode must be one of: " + ", ".join(sorted(SUPPORTED_TRAINING_MODES))
-        )
+        raise ValueError("training_mode must be one of: " + ", ".join(sorted(SUPPORTED_TRAINING_MODES)))
     if not trainer:
         raise ValueError("manifest must identify the actual trainer")
     if not (root / trainer).is_file():
@@ -140,27 +138,28 @@ def validate_manifest(manifest_path: Path, root: Path) -> dict[str, Any]:
     return manifest
 
 
+def _validate_records(rows: list[dict[str, Any]], path: Path, root: Path, require_messages: bool) -> None:
+    for line_no, row in enumerate(rows, 1):
+        if require_messages and "messages" not in row:
+            raise ValueError(f"record lacks messages: {path}:{line_no}")
+        if require_messages and not isinstance(row.get("messages"), list):
+            raise ValueError(f"messages must be a list: {path}:{line_no}")
+        _check_privacy(row)
+        _check_rag_fact(row, path, line_no)
+        _check_media(row, root)
+
+
 def validate_jsonl_splits(train_paths: Iterable[Path], eval_paths: Iterable[Path], root: Path) -> dict[str, int]:
     train_rows: list[dict[str, Any]] = []
     eval_rows: list[dict[str, Any]] = []
     for path in train_paths:
         rows = _load_jsonl(path)
         train_rows.extend(rows)
-        for line_no, row in enumerate(rows, 1):
-            if "messages" not in row and not row.get("media_required"):
-                raise ValueError(f"training record lacks messages: {path}")
-            _check_privacy(row)
-            _check_rag_fact(row, path, line_no)
-            _check_media(row, root)
+        _validate_records(rows, path, root, require_messages=True)
     for path in eval_paths:
         rows = _load_jsonl(path)
         eval_rows.extend(rows)
-        for line_no, row in enumerate(rows, 1):
-            if "messages" not in row:
-                raise ValueError(f"evaluation record lacks messages: {path}")
-            _check_privacy(row)
-            _check_rag_fact(row, path, line_no)
-            _check_media(row, root)
+        _validate_records(rows, path, root, require_messages=True)
 
     exact_train = {_canonical(row) for row in train_rows}
     exact_eval = {_canonical(row) for row in eval_rows}
@@ -177,16 +176,29 @@ def validate_jsonl_splits(train_paths: Iterable[Path], eval_paths: Iterable[Path
     return {"train_records": len(train_rows), "eval_records": len(eval_rows)}
 
 
+def validate_reference_knowledge(paths: Iterable[Path], root: Path) -> int:
+    rows_count = 0
+    for path in paths:
+        rows = _load_jsonl(path)
+        _validate_records(rows, path, root, require_messages=True)
+        rows_count += len(rows)
+    return rows_count
+
+
 def validate_repository(root: Path) -> dict[str, Any]:
     manifest = validate_manifest(root / "training/datasets/manifest_v2.json", root)
     train_paths = [root / item["path"] for item in manifest.get("train", [])]
+    reference_paths = [root / item["path"] for item in manifest.get("reference_knowledge", [])]
     eval_paths = [root / item["path"] for item in manifest.get("eval", [])]
     counts = validate_jsonl_splits(train_paths, eval_paths, root)
+    reference_records = validate_reference_knowledge(reference_paths, root)
     return {
         "manifest_mode": manifest["training_mode"],
         "trainer": manifest["trainer"],
         "train_inputs": [str(p.relative_to(root)) for p in train_paths],
+        "reference_inputs": [str(p.relative_to(root)) for p in reference_paths],
         "eval_inputs": [str(p.relative_to(root)) for p in eval_paths],
+        "reference_records": reference_records,
         **counts,
     }
 
