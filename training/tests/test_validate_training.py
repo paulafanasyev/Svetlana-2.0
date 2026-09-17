@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from validate_training import validate_manifest, validate_jsonl_splits
+from validate_training import validate_manifest, validate_jsonl_splits, validate_reference_knowledge
 
 
 class TrainingValidationTests(unittest.TestCase):
@@ -57,6 +57,28 @@ class TrainingValidationTests(unittest.TestCase):
             train.write_text(json.dumps({"messages": [{"role": "user", "content": "Hello"}]}) + "\n", encoding="utf-8")
             with self.assertRaises(ValueError, msg="privacy classification is mandatory"):
                 validate_jsonl_splits([train], [], root)
+
+    def test_reference_knowledge_uses_same_record_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            reference = root / "reference.jsonl"
+            reference.write_text(
+                json.dumps({
+                    "id": "ref_1",
+                    "messages": [{"role": "user", "content": "Проверь источник"}],
+                    "privacy_classification": "synthetic_no_personal_data",
+                }, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            assert validate_reference_knowledge([reference], root) == 1
+
+    def test_reference_knowledge_rejects_missing_privacy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            reference = root / "reference.jsonl"
+            reference.write_text(json.dumps({"messages": [{"role": "user", "content": "x"}]}) + "\n", encoding="utf-8")
+            with self.assertRaises(ValueError, msg="reference knowledge must carry privacy classification"):
+                validate_reference_knowledge([reference], root)
 
 
 if __name__ == "__main__":
