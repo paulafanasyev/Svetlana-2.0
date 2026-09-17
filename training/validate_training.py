@@ -180,8 +180,20 @@ def validate_reference_knowledge(paths: Iterable[Path], root: Path) -> int:
     rows_count = 0
     for path in paths:
         rows = _load_jsonl(path)
-        _validate_records(rows, path, root, require_messages=True)
-        rows_count += len(rows)
+        for line_no, row in enumerate(rows, 1):
+            for field in ("question", "answer", "source_url", "source_type", "verified_at"):
+                if not isinstance(row.get(field), str) or not row[field].strip():
+                    raise ValueError(f"reference record missing non-empty {field}: {path}:{line_no}")
+            parsed = urlparse(row["source_url"])
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError(f"reference record has invalid source_url: {path}:{line_no}")
+            try:
+                date.fromisoformat(row["verified_at"])
+            except ValueError as exc:
+                raise ValueError(f"reference record verified_at must be ISO-8601: {path}:{line_no}") from exc
+            _check_privacy(row)
+            _check_media(row, root)
+            rows_count += 1
     return rows_count
 
 
