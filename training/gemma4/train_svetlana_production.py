@@ -54,10 +54,13 @@ def format_dataset(dataset, tokenizer):
         if not all(isinstance(m, dict) and m.get("role") and "content" in m for m in messages):
             raise ValueError("Every message must contain role and content")
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
-        if not text.strip():
+        if not isinstance(text, str) or not text.strip():
             raise ValueError("Chat template produced empty training text")
         return {"text": text}
-    return dataset.map(convert, remove_columns=dataset.column_names, desc="Formatting Gemma dataset")
+
+    # Keep this explicitly non-batched. Earlier training work exposed a real
+    # failure mode where a batched formatting function returned the wrong shape.
+    return dataset.map(convert, remove_columns=dataset.column_names, batched=False, desc="Formatting Gemma dataset")
 
 
 def run(args: argparse.Namespace) -> dict:
@@ -121,9 +124,9 @@ def run(args: argparse.Namespace) -> dict:
         model=model,
         processing_class=tokenizer,
         train_dataset=formatted,
-        dataset_text_field="text",
         args=SFTConfig(
             max_length=cfg["max_seq_length"],
+            dataset_text_field="text",
             per_device_train_batch_size=cfg["per_device_train_batch_size"],
             gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
             warmup_ratio=0.05,
