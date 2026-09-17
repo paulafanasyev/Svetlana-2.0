@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.3",
+  "schema_version": "1.4",
   "purpose": "Single source of truth for the next Svetlana training pipeline.",
   "base_model": "google/gemma-4-E2B-it",
   "runtime_target": "LiteRT-LM",
@@ -13,7 +13,8 @@
     {"path": "training/datasets/svetlana_advanced_training_v1.jsonl", "format": "messages", "role": "expanded_behavior_domain"},
     {"path": "training/datasets/svetlana_russian_source_policy_seed.jsonl", "format": "messages", "role": "source_governance_behavior"},
     {"path": "training/datasets/svetlana_source_governance_v2.jsonl", "format": "messages", "role": "source_governance_behavior_v2"},
-    {"path": "training/datasets/svetlana_child_multimodal_behavior_seed.jsonl", "format": "messages", "role": "child_cv_art_finance_safety_behavior"}
+    {"path": "training/datasets/svetlana_child_multimodal_behavior_seed.jsonl", "format": "messages", "role": "child_cv_art_finance_safety_behavior"},
+    {"path": "training/datasets/svetlana_expansion_2026_v1.jsonl", "format": "messages", "role": "planned_40_direction_expansion"}
   ],
   "reference_knowledge": [
     {"path": "training/datasets/self_employed_official.jsonl", "format": "messages", "role": "official_source_behavior"}
