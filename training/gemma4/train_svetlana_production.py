@@ -63,12 +63,23 @@ def format_dataset(dataset, tokenizer):
 
 def tokenize_dataset(dataset, tokenizer, max_length: int):
     def tokenize(example):
+        # Gemma4 exposes a Processor rather than a plain tokenizer. In
+        # transformers 5.5 its __call__ requires the text keyword explicitly;
+        # passing the string positionally leaves `text=None` inside the
+        # processor and fails at `text[0]`.
         encoded = tokenizer(
-            example["text"],
+            text=[example["text"]],
             truncation=True,
             max_length=max_length,
             padding=False,
         )
+        for key, value in list(encoded.items()):
+            if hasattr(value, "ndim") and value.ndim > 1 and value.shape[0] == 1:
+                encoded[key] = value[0].tolist()
+            elif isinstance(value, list) and len(value) == 1 and isinstance(value[0], list):
+                encoded[key] = value[0]
+        if "input_ids" not in encoded:
+            raise RuntimeError("Gemma4 processor did not return input_ids")
         encoded["labels"] = list(encoded["input_ids"])
         return encoded
 
