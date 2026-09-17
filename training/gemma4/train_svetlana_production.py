@@ -120,32 +120,50 @@ def run(args: argparse.Namespace) -> dict:
         raise RuntimeError(f"Production corpus unexpectedly small: {len(formatted)} records")
     print(json.dumps({"event": "production_dataset", "train_examples": len(formatted)}, ensure_ascii=False))
 
-    trainer = SFTTrainer(
-        model=model,
-        processing_class=tokenizer,
-        train_dataset=formatted,
-        args=SFTConfig(
-            max_length=cfg["max_seq_length"],
-            dataset_text_field="text",
-            per_device_train_batch_size=cfg["per_device_train_batch_size"],
-            gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
-            warmup_ratio=0.05,
-            num_train_epochs=cfg["num_train_epochs"],
-            learning_rate=cfg["learning_rate"],
-            logging_steps=cfg["logging_steps"],
-            output_dir=str(out),
-            optim="adamw_8bit",
-            seed=cfg["seed"],
-            dataset_num_proc=1,
-            report_to="none",
-            assistant_only_loss=False,
-            bf16=False,
-            fp16=False,
-            save_strategy="steps",
-            save_steps=cfg["save_steps"],
-            save_total_limit=3,
-        ),
-    )
+    # Unsloth has already loaded the model in 4-bit and wrapped it with LoRA.
+    # TRL 0.23 nevertheless sees model.peft_config and calls its PEFT preparation
+    # path again. That path invokes PEFT's prepare_model_for_kbit_training(),
+    # which upcasts parameters to float32. On a 14.56 GB T4 this attempts an
+    # additional ~8.75 GB allocation and fails before the first train step.
+    # The supported TRL path for an already wrapped PeftModel is to pass it
+    # directly without a peft_config; temporarily hiding the marker lets TRL
+    # construct the trainer without repeating k-bit preparation. The PeftModel
+    # config is restored immediately after trainer construction for normal
+    # adapter/save behavior.
+    existing_peft_config = getattr(model, "peft_config", None)
+    if existing_peft_config is None:
+        raise RuntimeError("Unsloth did not attach a PEFT adapter before SFTTrainer")
+    model.peft_config = None
+    try:
+        trainer = SFTTrainer(
+            model=model,
+            processing_class=tokenizer,
+            train_dataset=formatted,
+            args=SFTConfig(
+                max_length=cfg["max_seq_length"],
+                dataset_text_field="text",
+                per_device_train_batch_size=cfg["per_device_train_batch_size"],
+                gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
+                warmup_ratio=0.05,
+                num_train_epochs=cfg["num_train_epochs"],
+                learning_rate=cfg["learning_rate"],
+                logging_steps=cfg["logging_steps"],
+                output_dir=str(out),
+                optim="adamw_8bit",
+                seed=cfg["seed"],
+                dataset_num_proc=1,
+                report_to="none",
+                assistant_only_loss=False,
+                bf16=False,
+                fp16=False,
+                save_strategy="steps",
+                save_steps=cfg["save_steps"],
+                save_total_limit=3,
+            ),
+        )
+    finally:
+        model.peft_config = existing_peft_config
+
     result = trainer.train(resume_from_checkpoint=checkpoint)
     adapter_dir = out / "adapter"
     model.save_pretrained(str(adapter_dir))
