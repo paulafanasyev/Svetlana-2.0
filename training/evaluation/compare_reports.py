@@ -55,7 +55,7 @@ def main() -> None:
         "delta": adapter["pass_rate"] - baseline["pass_rate"],
         "cases": baseline["cases"],
         "evaluator_version": baseline.get("evaluator_version"),
-        "pass": baseline["pass_rate"] >= args.min_baseline and adapter["pass_rate"] >= baseline["pass_rate"],
+        "pass": adapter["pass_rate"] >= args.min_baseline and adapter["pass_rate"] >= baseline["pass_rate"],
         "human_review_required": True,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
