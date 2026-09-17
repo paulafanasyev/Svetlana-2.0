@@ -1,23 +1,15 @@
-"""Production text SFT runner for Svetlana Gemma 4 E2B.
-
-The runner consumes the manifest-selected training corpus, performs deterministic
-preflight validation, saves resumable checkpoints, exports the adapter, and writes
-machine-readable evidence. It intentionally does not train on evaluation data.
-"""
+#!/usr/bin/env python3
+"""Production Gemma 4 SFT runner with explicit evidence output."""
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
 from pathlib import Path
 
-from training.training_evidence import write_evidence
-from training.validate_training import validate_manifest, validate_jsonl_splits
-
-
-ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = ROOT.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODEL = "google/gemma-4-E2B-it"
 
 
@@ -27,32 +19,62 @@ def load_config() -> dict:
         "per_device_train_batch_size": int(os.getenv("SVETLANA_BATCH_SIZE", "1")),
         "gradient_accumulation_steps": int(os.getenv("SVETLANA_GRAD_ACCUM", "8")),
         "learning_rate": float(os.getenv("SVETLANA_LEARNING_RATE", "2e-5")),
-        "num_train_epochs": float(os.getenv("SVETLANA_EPOCHS", "3")),
+        "num_train_epochs": int(os.getenv("SVETLANA_EPOCHS", "3")),
         "seed": int(os.getenv("SVETLANA_SEED", "3407")),
         "save_steps": int(os.getenv("SVETLANA_SAVE_STEPS", "100")),
         "logging_steps": int(os.getenv("SVETLANA_LOGGING_STEPS", "10")),
     }
 
 
+def load_jsonl(path: Path) -> list[dict]:
+    rows = []
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                rows.append(json.loads(line))
+    return rows
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_manifest(path: Path, root: Path) -> dict:
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    for key in ("train", "eval"):
+        if key not in manifest or not isinstance(manifest[key], list):
+            raise ValueError(f"manifest missing {key} list")
+        for rel in manifest[key]:
+            candidate = root / rel
+            if not candidate.exists():
+                raise FileNotFoundError(candidate)
+    return manifest
+
+
 def load_training_dataset(manifest: dict):
     from datasets import concatenate_datasets, load_dataset
 
-    paths = [REPO_ROOT / item["path"] for item in manifest["train"]]
-    eval_paths = [REPO_ROOT / item["path"] for item in manifest.get("eval", [])]
-    validate_jsonl_splits(paths, eval_paths, REPO_ROOT)
-    datasets = [load_dataset("json", data_files=str(path), split="train") for path in paths]
-    if not datasets:
-        raise RuntimeError("Manifest contains no training inputs")
-    return concatenate_datasets(datasets), paths
+    train_paths = manifest["train"]
+    eval_paths = manifest["eval"]
+    train_parts = [load_dataset("json", data_files=str(REPO_ROOT / p), split="train") for p in train_paths]
+    train = concatenate_datasets(train_parts)
+    eval_parts = [load_dataset("json", data_files=str(REPO_ROOT / p), split="train") for p in eval_paths]
+    evaluation = concatenate_datasets(eval_parts)
+    return train, evaluation, train_paths + eval_paths
 
 
 def format_dataset(dataset, tokenizer):
     def convert(example):
         messages = example.get("messages")
         if not isinstance(messages, list) or not messages:
-            raise ValueError("Training example must contain non-empty messages")
-        if not all(isinstance(m, dict) and m.get("role") and "content" in m for m in messages):
-            raise ValueError("Every message must contain role and content")
+            raise ValueError("Every example must contain non-empty messages")
+        for message in messages:
+            if not isinstance(message, dict) or "role" not in message or "content" not in message:
+                raise ValueError("Every message must contain role and content")
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Chat template produced empty training text")
@@ -91,10 +113,62 @@ def tokenize_dataset(dataset, tokenizer, max_length: int):
     )
 
 
+def make_manual_collator(tokenizer):
+    """Pad text-only Gemma4 batches without calling Gemma4Processor.pad()."""
+    import torch
+
+    pad_id = tokenizer.tokenizer.pad_token_id if hasattr(tokenizer, "tokenizer") else tokenizer.pad_token_id
+    if pad_id is None:
+        raise RuntimeError("Gemma4 tokenizer has no pad_token_id")
+
+    def collate(features):
+        max_len = max(len(feature["input_ids"]) for feature in features)
+        input_ids = []
+        attention_mask = []
+        labels = []
+        for feature in features:
+            ids = list(feature["input_ids"])
+            mask = list(feature.get("attention_mask", [1] * len(ids)))
+            target = list(feature.get("labels", ids))
+            padding = max_len - len(ids)
+            input_ids.append(ids + [pad_id] * padding)
+            attention_mask.append(mask + [0] * padding)
+            labels.append(target + [-100] * padding)
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+            "labels": torch.tensor(labels, dtype=torch.long),
+        }
+
+    return collate
+
+
+def write_evidence(path: Path, *, root: Path, adapter_dir: Path, dataset_paths: list[str], config: dict, hardware: dict, model: str) -> dict:
+    adapter_hash = hashlib.sha256()
+    for item in sorted(p for p in adapter_dir.rglob("*") if p.is_file()):
+        adapter_hash.update(item.relative_to(adapter_dir).as_posix().encode())
+        adapter_hash.update(item.read_bytes())
+    dataset_hash = hashlib.sha256()
+    for rel in sorted(dataset_paths):
+        file_path = root / rel
+        dataset_hash.update(rel.encode())
+        dataset_hash.update(file_path.read_bytes())
+    evidence = {
+        "model": model,
+        "config": config,
+        "hardware": hardware,
+        "dataset_paths": dataset_paths,
+        "adapter_sha256": adapter_hash.hexdigest(),
+        "dataset_sha256": dataset_hash.hexdigest(),
+    }
+    path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
+    return evidence
+
+
 def run(args: argparse.Namespace) -> dict:
     import unsloth
     import torch
-    from transformers import DataCollatorForLanguageModeling, Trainer, TrainingArguments
+    from transformers import Trainer, TrainingArguments
     from unsloth import FastLanguageModel
 
     manifest = validate_manifest(REPO_ROOT / "training/datasets/manifest_v2.json", REPO_ROOT)
@@ -142,11 +216,11 @@ def run(args: argparse.Namespace) -> dict:
         max_seq_length=cfg["max_seq_length"],
     )
 
-    dataset, data_paths = load_training_dataset(manifest)
+    dataset, evaluation, data_paths = load_training_dataset(manifest)
     formatted = format_dataset(dataset, tokenizer)
     if len(formatted) < 100:
         raise RuntimeError(f"Production corpus unexpectedly small: {len(formatted)} records")
-    print(json.dumps({"event": "production_dataset", "train_examples": len(formatted)}, ensure_ascii=False))
+    print(json.dumps({"event": "production_dataset", "train_examples": len(formatted), "eval_examples": len(evaluation)}, ensure_ascii=False))
 
     # The model is already a 4-bit PeftModel prepared by Unsloth. TRL 0.23's
     # SFTTrainer integration can re-enter PEFT's k-bit preparation path for this
@@ -155,7 +229,7 @@ def run(args: argparse.Namespace) -> dict:
     # Use the Transformers Trainer directly: it accepts the already-prepared
     # PeftModel and never invokes prepare_model_for_kbit_training().
     tokenized = tokenize_dataset(formatted, tokenizer, cfg["max_seq_length"])
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    data_collator = make_manual_collator(tokenizer)
     training_args = TrainingArguments(
         per_device_train_batch_size=cfg["per_device_train_batch_size"],
         gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
@@ -204,9 +278,13 @@ def run(args: argparse.Namespace) -> dict:
     }
 
 
-if __name__ == "__main__":
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output")
     parser.add_argument("--resume-from")
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
     print(json.dumps({"event": "production_train_complete", **run(args)}, ensure_ascii=False))
