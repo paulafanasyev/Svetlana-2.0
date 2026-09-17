@@ -36,8 +36,13 @@ from pathlib import Path
 report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 minimum = float(sys.argv[2])
 rate = float(report["pass_rate"])
-status = "PASS" if rate >= minimum else "BELOW_TARGET"
-print(json.dumps({"event": "baseline_measurement", "pass_rate": rate, "minimum": minimum, "status": status}))
+print(json.dumps({"event": "baseline_measurement", "pass_rate": rate, "minimum": minimum,
+                  "status": "PASS" if rate >= minimum else "BELOW_TARGET"}))
+if minimum > 0 and rate < minimum:
+    raise SystemExit(
+        f"BASELINE_GATE_FAIL: pass_rate={rate} < minimum={minimum}; "
+        "set SVETLANA_MIN_BASELINE_PASS_RATE=0 to measure baseline without blocking SFT"
+    )
 PY
 
 python - <<'PY'
