@@ -21,7 +21,7 @@ jobs:
       - name: Install test runner and image dependency
         run: python -m pip install --disable-pip-version-check pytest 'pillow==12.3.0'
 
-      - name: Validate manifest and dataset paths
+      - name: Validate manifest and all referenced dataset paths
         run: |
           python - <<'PY'
           import json
@@ -31,62 +31,40 @@ jobs:
           assert m['runtime_target'] == 'LiteRT-LM'
           assert m['training_mode'] == 'text_production'
           assert m['trainer'] == 'training/gemma4/train_svetlana_production.py'
-          paths = [x['path'] for x in m['train'] + m['reference_knowledge'] + m['eval']]
-          for p in paths:
-              assert Path(p).exists(), f'missing dataset: {p}'
+          groups = ('train', 'reference_knowledge', 'eval')
+          paths = []
+          for group in groups:
+              for item in m.get(group, []):
+                  paths.append(item['path'])
+                  assert Path(item['path']).is_file(), f'missing dataset: {item["path"]}'
+          assert len(paths) == len(set(paths)), 'manifest contains duplicate dataset paths'
           assert m['rules']['no_eval_in_train'] is True
           assert m['rules']['no_personal_data_in_weights'] is True
           print('MANIFEST=PASS')
           print('DATASET_PATHS=PASS')
+          print(f'DATASET_PATH_COUNT={len(paths)}')
           print('TRAINING_MODE=text_production')
           print('MULTIMODAL_TRAINING=NOT_RUN')
           PY
 
-      - name: Validate JSONL structure
+      - name: Validate JSONL structure from manifest
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          files = [
-            Path('training/datasets/svetlana_seed.jsonl'),
-            Path('training/datasets/svetlana_capability_seed.jsonl'),
-            Path('training/datasets/svetlana_capability_training_v2.jsonl'),
-            Path('training/datasets/svetlana_advanced_training_v1.jsonl'),
-            Path('training/datasets/svetlana_russian_source_policy_seed.jsonl'),
-            Path('training/datasets/self_employed_official.jsonl'),
-            Path('training/datasets/svetlana_eval.jsonl'),
-          ]
-          for p in files:
-              for n, line in enumerate(p.read_text(encoding='utf-8').splitlines(), 1):
-                  if line.strip():
-                      obj = json.loads(line)
-                      assert isinstance(obj, dict), f'{p}:{n}'
+          m = json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))
+          for group in ('train', 'reference_knowledge', 'eval'):
+              for item in m.get(group, []):
+                  p = Path(item['path'])
+                  for n, line in enumerate(p.read_text(encoding='utf-8').splitlines(), 1):
+                      if line.strip():
+                          obj = json.loads(line)
+                          assert isinstance(obj, dict), f'{p}:{n}'
           print('JSONL=PASS')
           PY
 
       - name: Validate exact train/eval separation
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          train_files = [
-            Path('training/datasets/svetlana_seed.jsonl'),
-            Path('training/datasets/svetlana_capability_seed.jsonl'),
-            Path('training/datasets/svetlana_capability_training_v2.jsonl'),
-            Path('training/datasets/svetlana_advanced_training_v1.jsonl'),
-            Path('training/datasets/svetlana_russian_source_policy_seed.jsonl'),
-          ]
-          eval_file = Path('training/datasets/svetlana_eval.jsonl')
-          def fp(x):
-              return json.dumps(x, ensure_ascii=False, sort_keys=True)
-          train = set()
-          for p in train_files:
-              for line in p.read_text(encoding='utf-8').splitlines():
-                  if line.strip(): train.add(fp(json.loads(line)))
-          for line in eval_file.read_text(encoding='utf-8').splitlines():
-              if line.strip(): assert fp(json.loads(line)) not in train
-          print('TRAIN_EVAL_EXACT_SEPARATION=PASS')
-          PY
+        run: python training/validate_training.py --root .
 
       - name: Compile training entrypoints
         run: python -m py_compile training/gemma4/train_svetlana_smoke.py training/gemma4/train_svetlana_production.py training/gemma4/generate_predictions.py training/gemma4/multimodal_preflight.py training/gemma4/train_svetlana_multimodal.py training/evaluation/run_structured_eval.py training/datasets/multimodal/generate_synthetic_images.py training/datasets/multimodal/validate_image_corpus.py
@@ -136,7 +114,6 @@ jobs:
 
       - name: Verify synthetic path portability
         run: |
-          tmp_dir=$(mktemp -d)
           PYTHONPATH=. python - <<'PY'
           import tempfile
           from pathlib import Path
@@ -150,4 +127,3 @@ jobs:
               assert len(rows) == 8
               print('SYNTHETIC_PATH_PORTABILITY=PASS')
           PY
-          rm -rf "$tmp_dir"
