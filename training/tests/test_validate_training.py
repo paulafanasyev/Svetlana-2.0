@@ -45,8 +45,8 @@ class TrainingValidationTests(unittest.TestCase):
             root = Path(tmp)
             train = root / "train.jsonl"
             evaluation = root / "eval.jsonl"
-            train.write_text(json.dumps({"messages": [{"role": "user", "content": "Hello  world"}]}) + "\n", encoding="utf-8")
-            evaluation.write_text(json.dumps({"messages": [{"role": "user", "content": " hello world "}]}) + "\n", encoding="utf-8")
+            train.write_text(json.dumps({"messages": [{"role": "user", "content": "Hello  world"}], "privacy_classification": "synthetic_no_personal_data"}) + "\n", encoding="utf-8")
+            evaluation.write_text(json.dumps({"messages": [{"role": "user", "content": " hello world "}], "privacy_classification": "synthetic_no_personal_data"}) + "\n", encoding="utf-8")
             with self.assertRaises(ValueError, msg="normalized train/eval duplicate must fail validation"):
                 validate_jsonl_splits([train], [evaluation], root)
 
@@ -58,26 +58,31 @@ class TrainingValidationTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg="privacy classification is mandatory"):
                 validate_jsonl_splits([train], [], root)
 
-    def test_reference_knowledge_uses_same_record_contract(self):
+    def test_reference_knowledge_uses_source_record_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             reference = root / "reference.jsonl"
             reference.write_text(
                 json.dumps({
                     "id": "ref_1",
-                    "messages": [{"role": "user", "content": "Проверь источник"}],
-                    "privacy_classification": "synthetic_no_personal_data",
+                    "topic": "НПД",
+                    "question": "Какая ставка?",
+                    "answer": "Проверяется по официальному источнику.",
+                    "source_url": "https://example.com/source",
+                    "source_type": "official_test_source",
+                    "verified_at": "2026-09-17",
+                    "privacy_classification": "synthetic_public_official_source_behavior",
                 }, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
             assert validate_reference_knowledge([reference], root) == 1
 
-    def test_reference_knowledge_rejects_missing_privacy(self):
+    def test_reference_knowledge_rejects_missing_provenance(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             reference = root / "reference.jsonl"
-            reference.write_text(json.dumps({"messages": [{"role": "user", "content": "x"}]}) + "\n", encoding="utf-8")
-            with self.assertRaises(ValueError, msg="reference knowledge must carry privacy classification"):
+            reference.write_text(json.dumps({"question": "x", "answer": "y", "privacy_classification": "synthetic_no_personal_data"}) + "\n", encoding="utf-8")
+            with self.assertRaises(ValueError, msg="reference knowledge must carry provenance"):
                 validate_reference_knowledge([reference], root)
 
 
