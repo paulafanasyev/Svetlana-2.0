@@ -40,7 +40,10 @@ def test_production_runner_requires_explicit_manifest_authorization(monkeypatch)
 
 def test_production_imports_unsloth_before_torch():
     source = Path(__file__).with_name("train_svetlana_production.py").read_text(encoding="utf-8")
-    assert source.index("import unsloth") < source.index("import torch")
+    # torch is also imported by the manual collator, so compare the imports
+    # inside the production run() function rather than raw file positions.
+    run_source = source[source.index("def run("):]
+    assert run_source.index("import unsloth") < run_source.index("import torch")
 
 
 def test_format_dataset_is_non_batched_and_returns_one_text_per_example():
