@@ -143,18 +143,14 @@ def load_training_dataset(manifest: dict):
     def make_dataset(rows):
         return Dataset.from_list(rows)
 
-    def restore(example):
-        example["messages"] = json.loads(example["messages"])
-        for message in example["messages"]:
-            for call in message.get("tool_calls", []):
-                arguments = call.get("function", {}).get("arguments")
-                if isinstance(arguments, str):
-                    call["function"]["arguments"] = json.loads(arguments)
-        return example
-
-    train = make_dataset(load_rows(train_paths)).map(restore, desc="Restoring message objects")
-    evaluation = make_dataset(load_rows(eval_paths)).map(restore, desc="Restoring eval message objects")
+    # Keep messages serialized as JSON strings all the way through the HF Dataset.
+    # Re-materializing nested message objects with Dataset.map() causes Arrow to
+    # infer optional tool_calls fields and can synthesize tool_calls=[] on rows that
+    # did not contain the field. Formatting parses the canonical JSON string below.
+    train = make_dataset(load_rows(train_paths))
+    evaluation = make_dataset(load_rows(eval_paths))
     return train, evaluation, train_paths + eval_paths
+
 
 
 def format_dataset(dataset, tokenizer):
@@ -163,6 +159,14 @@ def format_dataset(dataset, tokenizer):
         messages = json.loads(raw_messages) if isinstance(raw_messages, str) else raw_messages
         if not isinstance(messages, list) or not messages:
             raise ValueError("Every example must contain non-empty messages")
+        # load_training_dataset stores tool-call arguments as JSON strings to keep
+        # the HF/Arrow schema uniform. Convert them back to objects only in this
+        # local Python value immediately before applying Gemma's chat template.
+        for message in messages:
+            for call in message.get("tool_calls", []):
+                arguments = call.get("function", {}).get("arguments")
+                if isinstance(arguments, str):
+                    call["function"]["arguments"] = json.loads(arguments)
         for message in messages:
             if not isinstance(message, dict) or "role" not in message:
                 raise ValueError("Every message must contain a role")
