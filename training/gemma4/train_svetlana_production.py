@@ -106,7 +106,9 @@ def tokenize_dataset(dataset, tokenizer, max_length: int):
             tokenize=False,
             add_generation_prompt=False,
         )
-        encoded = tokenizer(text, add_special_tokens=False)
+        # Gemma4Processor.__call__ has images as its first positional argument.
+        # Pass text by keyword so a rendered string is not interpreted as images.
+        encoded = tokenizer(text=text, add_special_tokens=False)
         value = encoded["input_ids"]
         if hasattr(value, "tolist"):
             value = value.tolist()
