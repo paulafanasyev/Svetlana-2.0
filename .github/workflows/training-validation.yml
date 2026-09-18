@@ -66,8 +66,11 @@ jobs:
       - name: Validate exact train/eval separation
         run: python training/validate_training.py --root .
 
+      - name: Audit native action corpus
+        run: python training/evaluation/audit_action_corpus.py
+
       - name: Compile training entrypoints
-        run: python -m py_compile training/gemma4/train_svetlana_smoke.py training/gemma4/train_svetlana_production.py training/gemma4/generate_predictions.py training/gemma4/multimodal_preflight.py training/gemma4/train_svetlana_multimodal.py training/evaluation/run_structured_eval.py training/datasets/multimodal/generate_synthetic_images.py training/datasets/multimodal/validate_image_corpus.py
+        run: python -m py_compile training/gemma4/train_svetlana_smoke.py training/gemma4/train_svetlana_production.py training/gemma4/generate_predictions.py training/gemma4/multimodal_preflight.py training/gemma4/train_svetlana_multimodal.py training/evaluation/run_structured_eval.py training/evaluation/run_action_eval.py training/evaluation/audit_action_corpus.py training/datasets/multimodal/generate_synthetic_images.py training/datasets/multimodal/validate_image_corpus.py
 
       - name: Run deterministic training validator
         run: python training/validate_training.py --root .

@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import pytest
 
@@ -84,25 +85,98 @@ def test_tokenize_dataset_masks_non_assistant_tokens_and_labels_assistant_tokens
 
     class FakeTokenizer:
         def apply_chat_template(self, messages, tokenize, add_generation_prompt):
-            assert tokenize is True
+            assert tokenize is False
             assert add_generation_prompt is False
-            ids = []
-            for message in messages:
-                role_id = {"system": 10, "user": 20, "assistant": 30}[message["role"]]
-                ids.extend([role_id] + list(range(100 + len(ids), 100 + len(ids) + len(message["content"]))))
-            return ids
+            return "|".join(f"{m['role']}:{m.get('content','')}" for m in messages)
+
+        def __call__(self, *, text, add_special_tokens):
+            assert add_special_tokens is False
+            # Deterministic one-token-per-character surrogate.
+            return {"input_ids": [ord(ch) for ch in text]}
 
     rows = [{"messages": [
         {"role": "system", "content": "S"},
         {"role": "user", "content": "U"},
         {"role": "assistant", "content": "AB"},
     ]}]
-    result = tokenize_dataset(FakeDataset(rows), FakeTokenizer(), max_length=32)
+    result = tokenize_dataset(FakeDataset(rows), FakeTokenizer(), max_length=64)
     labels = result[0]["labels"]
     ids = result[0]["input_ids"]
-    assert sum(label != -100 for label in labels) == 3
-    assert all(label == -100 for label in labels[:4])
-    assert labels[4:] == ids[4:]
+    assert sum(label != -100 for label in labels) > 0
+    assert all(label == -100 for label in labels[:len("system:S|user:U|")])
+    assert labels[len("system:S|user:U|"):] == ids[len("system:S|user:U|"):]
+
+
+def test_format_dataset_accepts_native_tool_calls():
+    from training.gemma4.train_svetlana_production import format_dataset
+
+    class FakeDataset:
+        column_names = ["messages"]
+        def map(self, fn, **kwargs):
+            assert kwargs["batched"] is False
+            return [fn({
+                "messages": [
+                    {"role": "system", "content": "Use tools"},
+                    {"role": "user", "content": "Find deals"},
+                    {"role": "assistant", "content": "", "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "crm.lookup_deals", "arguments": {"status": "open"}},
+                    }]},
+                    {"role": "tool", "tool_call_id": "call_1", "name": "crm.lookup_deals", "content": "{\"status\":\"ok\"}"},
+                    {"role": "assistant", "content": "Verified result."},
+                ]
+            })]
+        }
+
+    class FakeTokenizer:
+        def apply_chat_template(self, messages, tokenize, add_generation_prompt):
+            assert any("tool_calls" in m for m in messages)
+            assert tokenize is False
+            assert add_generation_prompt is False
+            return "rendered"
+
+    result = format_dataset(FakeDataset(), FakeTokenizer())
+    assert result[0]["text"] == "rendered"
+
+
+def test_load_training_dataset_keeps_messages_serialized(monkeypatch):
+    import tempfile
+    import training.gemma4.train_svetlana_production as prod
+
+    monkeypatch.setattr(prod, "REPO_ROOT", Path(tempfile.mkdtemp()))
+    root = prod.REPO_ROOT
+    rows_a = [{"id":"a","messages":[{"role":"assistant","content":"","tool_calls":[{"id":"1","type":"function","function":{"name":"crm.lookup","arguments":{"status":"open"}}}]}]}]
+    rows_b = [{"id":"b","messages":[{"role":"assistant","content":"","tool_calls":[{"id":"2","type":"function","function":{"name":"calendar.list","arguments":{"date":"today","domains":["work"]}}}]}]}]
+    (root / "a.jsonl").write_text("".join(json.dumps(r) + "\\n" for r in rows_a), encoding="utf-8")
+    (root / "b.jsonl").write_text("".join(json.dumps(r) + "\\n" for r in rows_b), encoding="utf-8")
+    manifest={"train":["a.jsonl","b.jsonl"],"eval":["a.jsonl"]}
+    train, evaluation, _ = prod.load_training_dataset(manifest)
+    assert len(train)==2 and len(evaluation)==1
+    for row in train:
+        messages = json.loads(row["messages"])
+        calls = messages[0]["tool_calls"]
+        assert isinstance(calls[0]["function"]["arguments"], str)
+
+
+def test_format_dataset_normalizes_empty_tool_calls():
+    from training.gemma4.train_svetlana_production import format_dataset
+
+    class FakeDataset:
+        column_names = ["messages"]
+        def map(self, fn, **kwargs):
+            return [fn({"messages": [
+                {"role": "user", "content": "Привет"},
+                {"role": "assistant", "content": "Ответ", "tool_calls": []},
+            ]})]
+
+    class FakeTokenizer:
+        def apply_chat_template(self, messages, tokenize, add_generation_prompt):
+            assert "tool_calls" not in messages[-1]
+            return "rendered"
+
+    result = format_dataset(FakeDataset(), FakeTokenizer())
+    assert result[0]["text"] == "rendered"
 
 
 def test_tokenize_dataset_fails_when_no_assistant_loss_tokens_exist():

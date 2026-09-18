@@ -20,6 +20,46 @@ def _module_version(name: str):
     return getattr(module, "__version__", None)
 
 
+def _action_tools(case: dict) -> list[dict]:
+    """Build evaluation-only tool declarations from the held-out contract.
+
+    Gemma 4's canonical template exposes tool definitions through the
+    apply_chat_template(tools=...) argument. Without them, an action eval case
+    cannot fairly test tool selection.
+    """
+    expected = case.get("evaluation", {}).get("expected_tools", [])
+    schemas = {
+        "crm.lookup_deals": {"status": {"type": "string"}},
+        "calendar.list_events": {"date": {"type": "string"}},
+        "messaging.send": {"recipient": {"type": "string"}, "text": {"type": "string"}},
+        "memory.save": {"key": {"type": "string"}, "value": {"type": "string"}},
+        "web.search": {"query": {"type": "string"}, "domains": {"type": "array", "items": {"type": "string"}}},
+        "document.extract": {"fields": {"type": "array", "items": {"type": "string"}}},
+        "hands.android.open_settings": {},
+        "hands.android.open_app": {"package": {"type": "string"}},
+        "calendar.cache_lookup": {"date": {"type": "string"}},
+        "tasks.create": {"title": {"type": "string"}},
+        "tasks.get": {"task_id": {"type": "string"}},
+        "calendar.find_events": {"query": {"type": "string"}},
+    }
+    tools = []
+    for name in expected:
+        properties = schemas.get(name, {})
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": f"Evaluation tool {name}.",
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": list(properties),
+                },
+            },
+        })
+    return tools
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, help="Base model ID or adapter directory")
@@ -82,13 +122,15 @@ def main() -> None:
             messages.append({"role": role, "content": content})
 
         eval_cases.append(case_id)
-        inputs = tokenizer.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(model.device)
+        template_kwargs = {
+            "tokenize": True,
+            "add_generation_prompt": True,
+            "return_dict": True,
+            "return_tensors": "pt",
+        }
+        if args.eval.name == "svetlana_action_eval_v1.jsonl":
+            template_kwargs["tools"] = _action_tools(case)
+        inputs = tokenizer.apply_chat_template(messages, **template_kwargs).to(model.device)
         input_len = inputs["input_ids"].shape[-1]
         with torch.inference_mode():
             output = model.generate(

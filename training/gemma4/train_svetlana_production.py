@@ -69,29 +69,138 @@ def validate_manifest(path: Path, root: Path) -> dict:
 
 
 def load_training_dataset(manifest: dict):
-    from datasets import concatenate_datasets, load_dataset
+    """Load JSONL rows through a uniform string payload, then build one HF Dataset.
+
+    Native tool-call arguments are intentionally serialized before Arrow schema
+    inference. Otherwise datasets infers a different nested struct for every
+    JSONL file and concatenate_datasets() fails on feature alignment.
+    """
+    from datasets import Dataset
 
     train_paths = manifest_paths(manifest, "train")
     eval_paths = manifest_paths(manifest, "eval")
-    train_parts = [load_dataset("json", data_files=str(REPO_ROOT / p), split="train") for p in train_paths]
-    train = concatenate_datasets(train_parts)
-    eval_parts = [load_dataset("json", data_files=str(REPO_ROOT / p), split="train") for p in eval_paths]
-    evaluation = concatenate_datasets(eval_parts)
+
+    def load_rows(paths):
+        rows = []
+        for rel in paths:
+            path = REPO_ROOT / rel
+            for row in load_jsonl(path):
+                if not isinstance(row, dict):
+                    raise ValueError(f"{path}: each row must be an object")
+                messages = row.get("messages")
+                if not isinstance(messages, list) or not messages:
+                    raise ValueError(f"{path}: messages must be a non-empty list")
+                normalized_messages = []
+                for message in messages:
+                    if not isinstance(message, dict) or "role" not in message:
+                        raise ValueError(f"{path}: invalid message")
+                    item = {"role": message["role"]}
+                    if "content" in message:
+                        item["content"] = message["content"]
+                    if "tool_calls" in message:
+                        raw_calls = message["tool_calls"]
+                        if raw_calls is None:
+                            raise ValueError(f"{path}: tool_calls must be a list when present")
+                        if not isinstance(raw_calls, list):
+                            raise ValueError(f"{path}: tool_calls must be a list when present")
+                        # Some source rows encode an ordinary assistant message as
+                        # tool_calls=[]; semantically this is equivalent to omitting
+                        # the field. Normalize it here so the Gemma formatter sees
+                        # one canonical representation instead of rejecting valid
+                        # assistant text messages.
+                        calls = []
+                        for call in raw_calls:
+                            function = call.get("function", {})
+                            calls.append({
+                                "id": str(call["id"]),
+                                "type": str(call.get("type", "function")),
+                                "function": {
+                                    "name": str(function["name"]),
+                                    "arguments": json.dumps(
+                                        function.get("arguments", {}),
+                                        ensure_ascii=False,
+                                        sort_keys=True,
+                                        separators=(",", ":"),
+                                    ),
+                                },
+                            })
+                        if calls:
+                            item["tool_calls"] = calls
+                    if "tool_call_id" in message:
+                        item["tool_call_id"] = str(message["tool_call_id"])
+                    if "name" in message:
+                        item["name"] = str(message["name"])
+                    normalized_messages.append(item)
+                row = dict(row)
+                row["messages"] = json.dumps(
+                    normalized_messages,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                rows.append(row)
+        return rows
+
+    def make_dataset(rows):
+        return Dataset.from_list(rows)
+
+    # Keep messages serialized as JSON strings all the way through the HF Dataset.
+    # Re-materializing nested message objects with Dataset.map() causes Arrow to
+    # infer optional tool_calls fields and can synthesize tool_calls=[] on rows that
+    # did not contain the field. Formatting parses the canonical JSON string below.
+    train = make_dataset(load_rows(train_paths))
+    evaluation = make_dataset(load_rows(eval_paths))
     return train, evaluation, train_paths + eval_paths
+
 
 
 def format_dataset(dataset, tokenizer):
     def convert(example):
-        messages = example.get("messages")
+        raw_messages = example.get("messages")
+        messages = json.loads(raw_messages) if isinstance(raw_messages, str) else raw_messages
         if not isinstance(messages, list) or not messages:
             raise ValueError("Every example must contain non-empty messages")
+        # load_training_dataset stores tool-call arguments as JSON strings to keep
+        # the HF/Arrow schema uniform. Convert them back to objects only in this
+        # local Python value immediately before applying Gemma's chat template.
         for message in messages:
-            if not isinstance(message, dict) or "role" not in message or "content" not in message:
-                raise ValueError("Every message must contain role and content")
+            for call in message.get("tool_calls", []):
+                arguments = call.get("function", {}).get("arguments")
+                if isinstance(arguments, str):
+                    call["function"]["arguments"] = json.loads(arguments)
+        for message in messages:
+            if not isinstance(message, dict) or "role" not in message:
+                raise ValueError("Every message must contain a role")
+            role = message["role"]
+            if role == "assistant" and "tool_calls" in message:
+                calls = message["tool_calls"]
+                if not isinstance(calls, list):
+                    raise ValueError("assistant tool_calls must be a list when present")
+                # Empty tool_calls carries no semantic information. Treat it as
+                # an ordinary assistant message. This is robust to datasets
+                # implementations that materialize an absent optional field as [].
+                if not calls:
+                    message.pop("tool_calls", None)
+                else:
+                    for call in calls:
+                        if not isinstance(call, dict) or not isinstance(call.get("id"), str):
+                            raise ValueError("assistant tool call must contain a string id")
+                        function = call.get("function")
+                        if not isinstance(function, dict) or not isinstance(function.get("name"), str):
+                            raise ValueError("assistant tool call must contain function.name")
+                        if not isinstance(function.get("arguments", {}), dict):
+                            raise ValueError("assistant tool call arguments must be an object")
+                    if "content" in message and not isinstance(message["content"], str):
+                        raise ValueError("assistant tool-call content must be a string when present")
+            if "content" in message and not isinstance(message["content"], str):
+                raise ValueError("message content must be a string")
+            if "tool_calls" not in message and "content" not in message:
+                raise ValueError("Every non-tool-call message must contain content")
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Chat template produced empty training text")
-        return {"text": text, "messages": messages}
+        # Keep messages serialized in the HF Dataset as well. Native nested
+        # tool_calls must never be re-inferred by Arrow during map().
+        return {"text": text, "messages": json.dumps(messages, ensure_ascii=False, separators=(",", ":"))}
 
     return dataset.map(convert, remove_columns=dataset.column_names, batched=False, desc="Formatting Gemma dataset")
 
@@ -123,8 +232,13 @@ def tokenize_dataset(dataset, tokenizer, max_length: int):
         return value
 
     def tokenize(example):
-        messages = example["messages"]
-        full_ids = chat_ids(messages)
+        record_id = example.get("id", "<unknown>")
+        try:
+            raw_messages = example["messages"]
+            messages = json.loads(raw_messages) if isinstance(raw_messages, str) else raw_messages
+            full_ids = chat_ids(messages)
+        except Exception as exc:
+            raise RuntimeError(f"Tokenization failed for record {record_id}: {exc}") from exc
         truncated = len(full_ids) > max_length
         ids = full_ids[:max_length]
 
@@ -133,8 +247,13 @@ def tokenize_dataset(dataset, tokenizer, max_length: int):
         for index, message in enumerate(messages):
             if message["role"] != "assistant":
                 continue
-            before_ids = chat_ids(messages[:index])
-            through_ids = chat_ids(messages[: index + 1])
+            try:
+                before_ids = chat_ids(messages[:index])
+                through_ids = chat_ids(messages[: index + 1])
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Assistant-span tokenization failed for record {record_id}, message_index={index}: {exc}"
+                ) from exc
             start = len(before_ids)
             end = len(through_ids)
 
@@ -146,7 +265,9 @@ def tokenize_dataset(dataset, tokenizer, max_length: int):
 
         assistant_loss_tokens = sum(label != -100 for label in labels)
         if assistant_loss_tokens == 0:
-            raise RuntimeError("Example produced zero assistant loss tokens")
+            raise RuntimeError(
+                f"Example produced zero assistant loss tokens: record {record_id}"
+            )
 
         return {
             "input_ids": ids,
@@ -329,8 +450,10 @@ def run(args: argparse.Namespace) -> dict:
         "resume_from": checkpoint,
     }, ensure_ascii=False))
     trainer.train(resume_from_checkpoint=checkpoint)
-    model.save_pretrained(out)
-    tokenizer.save_pretrained(out)
+    adapter_dir = out / "adapter"
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(adapter_dir)
+    tokenizer.save_pretrained(adapter_dir)
     hardware = {
         "gpu": props.name,
         "vram_gb": round(props.total_memory / 1024**3, 2),
@@ -343,7 +466,7 @@ def run(args: argparse.Namespace) -> dict:
     evidence = write_evidence(
         evidence_path,
         root=REPO_ROOT,
-        adapter_dir=out,
+        adapter_dir=adapter_dir,
         dataset_paths=data_paths,
         config=cfg,
         hardware=hardware,

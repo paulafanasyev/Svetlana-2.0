@@ -1,0 +1,40 @@
+name: Action Corpus Validation
+
+on:
+  push:
+    branches:
+      - 'feat/action-corpus-v1-20260919'
+  pull_request:
+    branches:
+      - 'fix/assistant-only-sft-loss-20260918'
+
+jobs:
+  validate-action-corpus:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Python syntax
+        run: python -m py_compile training/evaluation/run_action_eval.py training/evaluation/audit_action_corpus.py training/gemma4/tokenizer_preflight.py training/gemma4/train_svetlana_production.py training/gemma4/generate_predictions.py
+
+      - name: Audit action corpus
+        run: python training/evaluation/audit_action_corpus.py
+
+      - name: Test action evaluator
+        run: python -m unittest -v training/evaluation/test_run_action_eval.py
+      - name: Validate JSONL
+        run: python - <<'PY'
+          import json
+          from pathlib import Path
+          for p in [
+              Path('training/datasets/svetlana_action_training_v1.jsonl'),
+              Path('training/datasets/svetlana_action_eval_v1.jsonl'),
+          ]:
+              for n, line in enumerate(p.read_text(encoding='utf-8').splitlines(), 1):
+                  if line.strip():
+                      json.loads(line)
+          print('ACTION_JSONL=PASS')
+          PY
