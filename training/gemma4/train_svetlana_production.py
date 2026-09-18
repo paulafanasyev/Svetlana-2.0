@@ -98,19 +98,26 @@ def format_dataset(dataset, tokenizer):
 
 def tokenize_dataset(dataset, tokenizer, max_length: int):
     def chat_ids(messages):
-        value = tokenizer.apply_chat_template(
+        # Gemma 4 may return non-builtin integer scalar types when chat_template
+        # tokenization is requested directly. Render first, then use the tokenizer's
+        # normal text path so input_ids are a plain flat Python-int list.
+        text = tokenizer.apply_chat_template(
             messages,
-            tokenize=True,
+            tokenize=False,
             add_generation_prompt=False,
         )
-        if isinstance(value, dict):
-            value = value["input_ids"]
+        encoded = tokenizer(text, add_special_tokens=False)
+        value = encoded["input_ids"]
         if hasattr(value, "tolist"):
             value = value.tolist()
         if isinstance(value, list) and value and isinstance(value[0], list):
             value = value[0]
-        if not isinstance(value, list) or not all(isinstance(item, int) for item in value):
-            raise RuntimeError("Gemma4 chat template did not return a flat token-id list")
+        try:
+            value = [int(item) for item in value]
+        except (TypeError, ValueError):
+            raise RuntimeError("Gemma4 tokenizer did not return a flat token-id list") from None
+        if not isinstance(value, list):
+            raise RuntimeError("Gemma4 tokenizer did not return a flat token-id list")
         return value
 
     def tokenize(example):
