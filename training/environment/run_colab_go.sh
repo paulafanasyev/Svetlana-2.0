@@ -30,8 +30,16 @@ PY
 python training/validate_training.py --root .
 python training/evaluation/audit_action_corpus.py
 python training/gemma4/tokenizer_preflight.py --model google/gemma-4-E2B-it --max-length 2048
-python training/datasets/multimodal/generate_synthetic_images.py
-python training/datasets/multimodal/validate_image_corpus.py training/datasets/multimodal/image_training_records.jsonl
+MODE="$(python - <<'PY'
+import json
+from pathlib import Path
+print(json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))['training_mode'])
+PY
+)"
+if [[ "$MODE" == "multimodal_agent" ]]; then
+  python training/datasets/multimodal/generate_synthetic_images.py
+  python training/datasets/multimodal/validate_image_corpus.py training/datasets/multimodal/image_training_records.jsonl
+fi
 
 python training/gemma4/generate_predictions.py --model google/gemma-4-E2B-it --eval training/datasets/svetlana_eval.jsonl --output "$OUT/baseline_predictions.jsonl" --max-seq-length 2048 --max-new-tokens "$MAX_NEW_TOKENS" --metadata-output "$OUT/baseline_predictions.metadata.json"
 test -s "$OUT/baseline_predictions.metadata.json"
@@ -47,12 +55,6 @@ print(json.dumps({"event":"baseline_measurement","pass_rate":r["pass_rate"],"min
 if m>0 and r["pass_rate"]<m: raise SystemExit(f"BASELINE_GATE_FAIL: pass_rate={r['pass_rate']} < minimum={m}; set SVETLANA_MIN_BASELINE_PASS_RATE=0 to measure baseline without blocking SFT")
 PY
 
-MODE="$(python - <<'PY'
-import json
-from pathlib import Path
-print(json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))['training_mode'])
-PY
-)"
 if [[ "$MODE" == "text_production" ]]; then
   python training/gemma4/train_svetlana_production.py
   ADAPTER="training/gemma4/outputs/svetlana_gemma4_e2b_production/adapter"
