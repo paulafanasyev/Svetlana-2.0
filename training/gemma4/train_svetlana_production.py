@@ -86,8 +86,26 @@ def format_dataset(dataset, tokenizer):
         if not isinstance(messages, list) or not messages:
             raise ValueError("Every example must contain non-empty messages")
         for message in messages:
-            if not isinstance(message, dict) or "role" not in message or "content" not in message:
-                raise ValueError("Every message must contain role and content")
+            if not isinstance(message, dict) or "role" not in message:
+                raise ValueError("Every message must contain a role")
+            role = message["role"]
+            if role == "assistant" and "tool_calls" in message:
+                if not isinstance(message["tool_calls"], list) or not message["tool_calls"]:
+                    raise ValueError("assistant tool_calls must be a non-empty list")
+                for call in message["tool_calls"]:
+                    if not isinstance(call, dict) or not isinstance(call.get("id"), str):
+                        raise ValueError("assistant tool call must contain a string id")
+                    function = call.get("function")
+                    if not isinstance(function, dict) or not isinstance(function.get("name"), str):
+                        raise ValueError("assistant tool call must contain function.name")
+                    if not isinstance(function.get("arguments", {}), dict):
+                        raise ValueError("assistant tool call arguments must be an object")
+                if "content" in message and not isinstance(message["content"], str):
+                    raise ValueError("assistant tool-call content must be a string when present")
+            elif "content" not in message:
+                raise ValueError("Every non-tool-call message must contain content")
+            elif not isinstance(message["content"], str):
+                raise ValueError("message content must be a string")
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Chat template produced empty training text")
