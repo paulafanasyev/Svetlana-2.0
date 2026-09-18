@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
-export PYTHONPATH="$ROOT\${PYTHONPATH:+:$PYTHONPATH}"
-OUT="\${SVETLANA_OUTPUT_DIR:-training/outputs/colab_go}"
-MIN_BASELINE="\${SVETLANA_MIN_BASELINE_PASS_RATE:-0.0}"
-MAX_NEW_TOKENS="\${SVETLANA_MAX_NEW_TOKENS:-160}"
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+OUT="${SVETLANA_OUTPUT_DIR:-training/outputs/colab_go}"
+MIN_BASELINE="${SVETLANA_MIN_BASELINE_PASS_RATE:-0.0}"
+MAX_NEW_TOKENS="${SVETLANA_MAX_NEW_TOKENS:-160}"
 mkdir -p "$OUT"
 
 python -m pip install --upgrade pip
