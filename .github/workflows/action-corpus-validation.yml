@@ -24,7 +24,7 @@ jobs:
         run: python training/evaluation/audit_action_corpus.py
 
       - name: Test action evaluator
-        run: python -m pytest -q training/evaluation/test_run_action_eval.py
+        run: python -m unittest -v training/evaluation/test_run_action_eval.py
       - name: Validate JSONL
         run: python - <<'PY'
           import json
