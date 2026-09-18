@@ -94,6 +94,6 @@ jobs:
       with:
         python-version: '3.12'
     - name: Install training preflight dependencies
-      run: python -m pip install --upgrade pip && python -m pip install 'transformers>=5.0.0' datasets sentencepiece
+      run: python -m pip install --upgrade pip && python -m pip install 'transformers>=5.0.0' datasets sentencepiece jinja2
     - name: Run real Gemma 4 tokenizer preflight
       run: python training/gemma4/tokenizer_preflight.py --model google/gemma-4-E2B-it --max-length 2048
