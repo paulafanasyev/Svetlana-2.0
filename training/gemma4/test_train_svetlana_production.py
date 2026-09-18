@@ -70,3 +70,52 @@ def test_format_dataset_is_non_batched_and_returns_one_text_per_example():
     result = format_dataset(FakeDataset(), FakeTokenizer())
     assert len(result) == 2
     assert result[0]["text"] == "Привет <eos>"
+
+
+def test_tokenize_dataset_masks_non_assistant_tokens_and_labels_assistant_tokens():
+    from training.gemma4.train_svetlana_production import tokenize_dataset
+
+    class FakeDataset:
+        column_names = ["messages"]
+        def __init__(self, rows): self.rows = rows
+        def map(self, fn, **kwargs):
+            assert kwargs["batched"] is False
+            return [fn(row) for row in self.rows]
+
+    class FakeTokenizer:
+        def apply_chat_template(self, messages, tokenize, add_generation_prompt):
+            assert tokenize is True
+            assert add_generation_prompt is False
+            ids = []
+            for message in messages:
+                role_id = {"system": 10, "user": 20, "assistant": 30}[message["role"]]
+                ids.extend([role_id] + list(range(100 + len(ids), 100 + len(ids) + len(message["content"]))))
+            return ids
+
+    rows = [{"messages": [
+        {"role": "system", "content": "S"},
+        {"role": "user", "content": "U"},
+        {"role": "assistant", "content": "AB"},
+    ]}]
+    result = tokenize_dataset(FakeDataset(rows), FakeTokenizer(), max_length=32)
+    labels = result[0]["labels"]
+    ids = result[0]["input_ids"]
+    assert sum(label != -100 for label in labels) == 3
+    assert all(label == -100 for label in labels[:4])
+    assert labels[4:] == ids[4:]
+
+
+def test_tokenize_dataset_fails_when_no_assistant_loss_tokens_exist():
+    from training.gemma4.train_svetlana_production import tokenize_dataset
+
+    class FakeDataset:
+        column_names = ["messages"]
+        def map(self, fn, **kwargs):
+            return [fn({"messages": [{"role": "user", "content": "U"}]})]
+
+    class FakeTokenizer:
+        def apply_chat_template(self, messages, tokenize, add_generation_prompt):
+            return [1, 2]
+
+    with pytest.raises(RuntimeError, match="zero assistant loss tokens"):
+        tokenize_dataset(FakeDataset(), FakeTokenizer(), max_length=32)

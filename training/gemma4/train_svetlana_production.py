@@ -91,34 +91,76 @@ def format_dataset(dataset, tokenizer):
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Chat template produced empty training text")
-        return {"text": text}
+        return {"text": text, "messages": messages}
 
     return dataset.map(convert, remove_columns=dataset.column_names, batched=False, desc="Formatting Gemma dataset")
 
 
 def tokenize_dataset(dataset, tokenizer, max_length: int):
-    def tokenize(example):
-        encoded = tokenizer(
-            text=[example["text"]],
-            truncation=True,
-            max_length=max_length,
-            padding=False,
+    def chat_ids(messages):
+        # Gemma 4 may return non-builtin integer scalar types when chat_template
+        # tokenization is requested directly. Render first, then use the tokenizer's
+        # normal text path so input_ids are a plain flat Python-int list.
+        text = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=False,
         )
-        for key, value in list(encoded.items()):
-            if hasattr(value, "ndim") and value.ndim > 1 and value.shape[0] == 1:
-                encoded[key] = value[0].tolist()
-            elif isinstance(value, list) and len(value) == 1 and isinstance(value[0], list):
-                encoded[key] = value[0]
-        if "input_ids" not in encoded:
-            raise RuntimeError("Gemma4 processor did not return input_ids")
-        encoded["labels"] = list(encoded["input_ids"])
-        return encoded
+        # Gemma4Processor.__call__ has images as its first positional argument.
+        # Pass text by keyword so a rendered string is not interpreted as images.
+        encoded = tokenizer(text=text, add_special_tokens=False)
+        value = encoded["input_ids"]
+        if hasattr(value, "tolist"):
+            value = value.tolist()
+        if isinstance(value, list) and value and isinstance(value[0], list):
+            value = value[0]
+        try:
+            value = [int(item) for item in value]
+        except (TypeError, ValueError):
+            raise RuntimeError("Gemma4 tokenizer did not return a flat token-id list") from None
+        if not isinstance(value, list):
+            raise RuntimeError("Gemma4 tokenizer did not return a flat token-id list")
+        return value
+
+    def tokenize(example):
+        messages = example["messages"]
+        full_ids = chat_ids(messages)
+        truncated = len(full_ids) > max_length
+        ids = full_ids[:max_length]
+
+        labels = [-100] * len(ids)
+
+        for index, message in enumerate(messages):
+            if message["role"] != "assistant":
+                continue
+            before_ids = chat_ids(messages[:index])
+            through_ids = chat_ids(messages[: index + 1])
+            start = len(before_ids)
+            end = len(through_ids)
+
+            clipped_start = max(0, min(start, len(ids)))
+            clipped_end = max(0, min(end, len(ids)))
+            if clipped_end > clipped_start:
+                for position in range(clipped_start, clipped_end):
+                    labels[position] = ids[position]
+
+        assistant_loss_tokens = sum(label != -100 for label in labels)
+        if assistant_loss_tokens == 0:
+            raise RuntimeError("Example produced zero assistant loss tokens")
+
+        return {
+            "input_ids": ids,
+            "attention_mask": [1] * len(ids),
+            "labels": labels,
+            "_assistant_loss_tokens": assistant_loss_tokens,
+            "_was_truncated": truncated,
+        }
 
     return dataset.map(
         tokenize,
         remove_columns=dataset.column_names,
         batched=False,
-        desc="Tokenizing Gemma dataset",
+        desc="Tokenizing Gemma dataset with assistant-only loss",
     )
 
 
@@ -230,6 +272,25 @@ def run(args: argparse.Namespace) -> dict:
     formatted_eval = format_dataset(evaluation, tokenizer)
     tokenized = tokenize_dataset(formatted, tokenizer, cfg["max_seq_length"])
     tokenized_eval = tokenize_dataset(formatted_eval, tokenizer, cfg["max_seq_length"])
+
+    def print_tokenization_diagnostics(label, dataset):
+        loss_tokens = sum(dataset["_assistant_loss_tokens"])
+        truncated = sum(dataset["_was_truncated"])
+        zero_loss = sum(1 for count in dataset["_assistant_loss_tokens"] if count == 0)
+        print(json.dumps({
+            "event": "assistant_loss_diagnostics",
+            "label": label,
+            "records": len(dataset),
+            "assistant_loss_tokens": loss_tokens,
+            "truncated_records": truncated,
+            "zero_loss_records": zero_loss,
+            "max_seq_length": cfg["max_seq_length"],
+        }, ensure_ascii=False))
+
+    print_tokenization_diagnostics("train", tokenized)
+    print_tokenization_diagnostics("eval", tokenized_eval)
+    tokenized = tokenized.remove_columns(["_assistant_loss_tokens", "_was_truncated"])
+    tokenized_eval = tokenized_eval.remove_columns(["_assistant_loss_tokens", "_was_truncated"])
     collator = make_manual_collator(tokenizer)
 
     training_args = TrainingArguments(
