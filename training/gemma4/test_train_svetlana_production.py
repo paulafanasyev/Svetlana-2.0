@@ -140,15 +140,9 @@ def test_format_dataset_accepts_native_tool_calls():
     assert result[0]["text"] == "rendered"
 
 
-def test_load_training_dataset_normalizes_nested_tool_call_arrow_schema(monkeypatch):
+def test_load_training_dataset_keeps_messages_serialized(monkeypatch):
     import tempfile
     import training.gemma4.train_svetlana_production as prod
-
-    class FakeDataset:
-        def __init__(self, rows): self.rows = rows
-        def map(self, fn, **kwargs): return FakeDataset([fn(dict(r)) for r in self.rows])
-        def __len__(self): return len(self.rows)
-        def __getitem__(self, key): return [r[key] for r in self.rows]
 
     monkeypatch.setattr(prod, "REPO_ROOT", Path(tempfile.mkdtemp()))
     root = prod.REPO_ROOT
@@ -160,8 +154,29 @@ def test_load_training_dataset_normalizes_nested_tool_call_arrow_schema(monkeypa
     train, evaluation, _ = prod.load_training_dataset(manifest)
     assert len(train)==2 and len(evaluation)==1
     for row in train:
-        calls=row["messages"][0]["tool_calls"]
-        assert isinstance(calls[0]["function"]["arguments"], dict)
+        messages = json.loads(row["messages"])
+        calls = messages[0]["tool_calls"]
+        assert isinstance(calls[0]["function"]["arguments"], str)
+
+
+def test_format_dataset_normalizes_empty_tool_calls():
+    from training.gemma4.train_svetlana_production import format_dataset
+
+    class FakeDataset:
+        column_names = ["messages"]
+        def map(self, fn, **kwargs):
+            return [fn({"messages": [
+                {"role": "user", "content": "Привет"},
+                {"role": "assistant", "content": "Ответ", "tool_calls": []},
+            ]})]
+
+    class FakeTokenizer:
+        def apply_chat_template(self, messages, tokenize, add_generation_prompt):
+            assert "tool_calls" not in messages[-1]
+            return "rendered"
+
+    result = format_dataset(FakeDataset(), FakeTokenizer())
+    assert result[0]["text"] == "rendered"
 
 
 def test_tokenize_dataset_fails_when_no_assistant_loss_tokens_exist():
