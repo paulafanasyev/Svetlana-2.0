@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import pytest
 
@@ -137,6 +138,31 @@ def test_format_dataset_accepts_native_tool_calls():
 
     result = format_dataset(FakeDataset(), FakeTokenizer())
     assert result[0]["text"] == "rendered"
+
+
+def test_load_training_dataset_normalizes_nested_tool_call_schema(monkeypatch):
+    import tempfile
+    import training.gemma4.train_svetlana_production as prod
+
+    class FakeDataset:
+        def __init__(self, rows): self.rows = rows
+        def map(self, fn, **kwargs): return FakeDataset([fn(dict(r)) for r in self.rows])
+        def __len__(self): return len(self.rows)
+        def __getitem__(self, key): return [r[key] for r in self.rows]
+
+    monkeypatch.setattr(prod, "REPO_ROOT", Path(tempfile.mkdtemp()))
+    root = prod.REPO_ROOT
+    rows_a = [{"id":"a","messages":[{"role":"assistant","content":"","tool_calls":[{"id":"1","type":"function","function":{"name":"crm.lookup","arguments":{"status":"open"}}}]}]}]
+    rows_b = [{"id":"b","messages":[{"role":"assistant","content":"","tool_calls":[{"id":"2","type":"function","function":{"name":"calendar.list","arguments":{"date":"today","domains":["work"]}}}]}]}]
+    (root / "a.jsonl").write_text("".join(json.dumps(r) + "\\n" for r in rows_a), encoding="utf-8")
+    (root / "b.jsonl").write_text("".join(json.dumps(r) + "\\n" for r in rows_b), encoding="utf-8")
+    manifest={"train":["a.jsonl","b.jsonl"],"eval":["a.jsonl"]}
+    train, evaluation, _ = prod.load_training_dataset(manifest)
+    assert len(train)==2 and len(evaluation)==1
+    for row in train:
+        calls=row["messages"][0]["tool_calls"]
+        assert isinstance(calls[0]["function"]["arguments"], dict)
+
 
 def test_tokenize_dataset_fails_when_no_assistant_loss_tokens_exist():
     from training.gemma4.train_svetlana_production import tokenize_dataset
