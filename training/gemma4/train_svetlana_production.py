@@ -172,19 +172,27 @@ def format_dataset(dataset, tokenizer):
                 raise ValueError("Every message must contain a role")
             role = message["role"]
             if role == "assistant" and "tool_calls" in message:
-                if not isinstance(message["tool_calls"], list) or not message["tool_calls"]:
-                    raise ValueError("assistant tool_calls must be a non-empty list")
-                for call in message["tool_calls"]:
-                    if not isinstance(call, dict) or not isinstance(call.get("id"), str):
-                        raise ValueError("assistant tool call must contain a string id")
-                    function = call.get("function")
-                    if not isinstance(function, dict) or not isinstance(function.get("name"), str):
-                        raise ValueError("assistant tool call must contain function.name")
-                    if not isinstance(function.get("arguments", {}), dict):
-                        raise ValueError("assistant tool call arguments must be an object")
-                if "content" in message and not isinstance(message["content"], str):
-                    raise ValueError("assistant tool-call content must be a string when present")
-            elif "content" not in message:
+                calls = message["tool_calls"]
+                if not isinstance(calls, list):
+                    raise ValueError("assistant tool_calls must be a list when present")
+                # Empty tool_calls carries no semantic information. Treat it as
+                # an ordinary assistant message. This is also robust to datasets
+                # implementations that materialize an absent optional field as [].
+                if not calls:
+                    message.pop("tool_calls", None)
+                else:
+                    for call in calls:
+                        if not isinstance(call, dict) or not isinstance(call.get("id"), str):
+                            raise ValueError("assistant tool call must contain a string id")
+                        function = call.get("function")
+                        if not isinstance(function, dict) or not isinstance(function.get("name"), str):
+                            raise ValueError("assistant tool call must contain function.name")
+                        if not isinstance(function.get("arguments", {}), dict):
+                            raise ValueError("assistant tool call arguments must be an object")
+                    if "tool_calls" in message and message["tool_calls"]:
+                        if "content" in message and not isinstance(message["content"], str):
+                            raise ValueError("assistant tool-call content must be a string when present")
+            if "tool_calls" not in message and "content" not in message:
                 raise ValueError("Every non-tool-call message must contain content")
             elif not isinstance(message["content"], str):
                 raise ValueError("message content must be a string")
