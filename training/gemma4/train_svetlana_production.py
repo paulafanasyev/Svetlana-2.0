@@ -98,8 +98,18 @@ def load_training_dataset(manifest: dict):
                     if "content" in message:
                         item["content"] = message["content"]
                     if "tool_calls" in message:
+                        raw_calls = message["tool_calls"]
+                        if raw_calls is None:
+                            raise ValueError(f"{path}: tool_calls must be a list when present")
+                        if not isinstance(raw_calls, list):
+                            raise ValueError(f"{path}: tool_calls must be a list when present")
+                        # Some source rows encode an ordinary assistant message as
+                        # tool_calls=[]; semantically this is equivalent to omitting
+                        # the field. Normalize it here so the Gemma formatter sees
+                        # one canonical representation instead of rejecting valid
+                        # assistant text messages.
                         calls = []
-                        for call in message["tool_calls"]:
+                        for call in raw_calls:
                             function = call.get("function", {})
                             calls.append({
                                 "id": str(call["id"]),
@@ -114,7 +124,8 @@ def load_training_dataset(manifest: dict):
                                     ),
                                 },
                             })
-                        item["tool_calls"] = calls
+                        if calls:
+                            item["tool_calls"] = calls
                     if "tool_call_id" in message:
                         item["tool_call_id"] = str(message["tool_call_id"])
                     if "name" in message:
