@@ -440,8 +440,10 @@ def run(args: argparse.Namespace) -> dict:
         "resume_from": checkpoint,
     }, ensure_ascii=False))
     trainer.train(resume_from_checkpoint=checkpoint)
-    model.save_pretrained(out)
-    tokenizer.save_pretrained(out)
+    adapter_dir = out / "adapter"
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(adapter_dir)
+    tokenizer.save_pretrained(adapter_dir)
     hardware = {
         "gpu": props.name,
         "vram_gb": round(props.total_memory / 1024**3, 2),
@@ -454,7 +456,7 @@ def run(args: argparse.Namespace) -> dict:
     evidence = write_evidence(
         evidence_path,
         root=REPO_ROOT,
-        adapter_dir=out,
+        adapter_dir=adapter_dir,
         dataset_paths=data_paths,
         config=cfg,
         hardware=hardware,
