@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import os
 from train_svetlana_production import format_dataset, load_training_dataset, tokenize_dataset, validate_manifest
 
 def main() -> int:
@@ -17,6 +18,8 @@ def main() -> int:
     if manifest.get("base_model") != args.model:
         raise RuntimeError(f"Manifest base model {manifest.get('base_model')!r} != requested {args.model!r}")
     tokenizer = AutoTokenizer.from_pretrained(args.model)
+    if hasattr(tokenizer, "tokenizer"):
+        tokenizer = tokenizer.tokenizer
     train, evaluation, paths = load_training_dataset(manifest)
     tokenized = tokenize_dataset(format_dataset(train, tokenizer), tokenizer, args.max_length)
     tokenized_eval = tokenize_dataset(format_dataset(evaluation, tokenizer), tokenizer, args.max_length)
