@@ -25,10 +25,10 @@ python training/gemma4/tokenizer_preflight.py --model google/gemma-4-E2B-it --ma
 python training/datasets/multimodal/generate_synthetic_images.py
 python training/datasets/multimodal/validate_image_corpus.py training/datasets/multimodal/image_training_records.jsonl
 
-python training/gemma4/generate_predictions.py --model google/gemma-4-E2B-it --eval training/datasets/svetlana_eval.jsonl --output "$OUT/baseline_predictions.jsonl" --max-new-tokens "$MAX_NEW_TOKENS" --metadata-output "$OUT/baseline_predictions.metadata.json"
+python training/gemma4/generate_predictions.py --model google/gemma-4-E2B-it --eval training/datasets/svetlana_eval.jsonl --output "$OUT/baseline_predictions.jsonl" --max-seq-length 2048 --max-new-tokens "$MAX_NEW_TOKENS" --metadata-output "$OUT/baseline_predictions.metadata.json"
 test -s "$OUT/baseline_predictions.metadata.json"
 python training/evaluation/run_structured_eval.py --eval training/datasets/svetlana_eval.jsonl --predictions "$OUT/baseline_predictions.jsonl" --output "$OUT/baseline_report.json" --label baseline
-python training/gemma4/generate_predictions.py --model google/gemma-4-E2B-it --eval training/datasets/svetlana_action_eval_v1.jsonl --output "$OUT/baseline_action_predictions.jsonl" --max-new-tokens "$MAX_NEW_TOKENS" --metadata-output "$OUT/baseline_action_predictions.metadata.json"
+python training/gemma4/generate_predictions.py --model google/gemma-4-E2B-it --eval training/datasets/svetlana_action_eval_v1.jsonl --output "$OUT/baseline_action_predictions.jsonl" --max-seq-length 2048 --max-new-tokens "$MAX_NEW_TOKENS" --metadata-output "$OUT/baseline_action_predictions.metadata.json"
 python training/evaluation/run_action_eval.py --eval training/datasets/svetlana_action_eval_v1.jsonl --predictions "$OUT/baseline_action_predictions.jsonl" --output "$OUT/baseline_action_report.json"
 
 python - "$OUT/baseline_report.json" "$MIN_BASELINE" <<'PY'
@@ -58,12 +58,12 @@ else
 fi
 
 test -d "$ADAPTER"
-python training/gemma4/generate_predictions.py --model "$ADAPTER" --eval training/datasets/svetlana_eval.jsonl --output "$OUT/adapter_predictions.jsonl" --max-new-tokens "$MAX_NEW_TOKENS" --metadata-output "$OUT/adapter_predictions.metadata.json"
+python training/gemma4/generate_predictions.py --model "$ADAPTER" --eval training/datasets/svetlana_eval.jsonl --output "$OUT/adapter_predictions.jsonl" --max-seq-length 2048 --max-new-tokens "$MAX_NEW_TOKENS" --metadata-output "$OUT/adapter_predictions.metadata.json"
 test -s "$OUT/adapter_predictions.metadata.json"
 python training/evaluation/run_structured_eval.py --eval training/datasets/svetlana_eval.jsonl --predictions "$OUT/adapter_predictions.jsonl" --output "$OUT/adapter_report.json" --label adapter
 python training/evaluation/compare_reports.py --baseline "$OUT/baseline_report.json" --adapter "$OUT/adapter_report.json" --output "$OUT/baseline_vs_adapter.json" --min-baseline "$MIN_BASELINE"
 
-python training/gemma4/generate_predictions.py --model "$ADAPTER" --eval training/datasets/svetlana_action_eval_v1.jsonl --output "$OUT/adapter_action_predictions.jsonl" --max-new-tokens "$MAX_NEW_TOKENS" --metadata-output "$OUT/adapter_action_predictions.metadata.json"
+python training/gemma4/generate_predictions.py --model "$ADAPTER" --eval training/datasets/svetlana_action_eval_v1.jsonl --output "$OUT/adapter_action_predictions.jsonl" --max-seq-length 2048 --max-new-tokens "$MAX_NEW_TOKENS" --metadata-output "$OUT/adapter_action_predictions.metadata.json"
 python training/evaluation/run_action_eval.py --eval training/datasets/svetlana_action_eval_v1.jsonl --predictions "$OUT/adapter_action_predictions.jsonl" --output "$OUT/adapter_action_report.json"
 python - "$OUT/baseline_action_report.json" "$OUT/adapter_action_report.json" <<'PY'
 import json,sys
