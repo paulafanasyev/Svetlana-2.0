@@ -232,9 +232,13 @@ def tokenize_dataset(dataset, tokenizer, max_length: int):
         return value
 
     def tokenize(example):
-        raw_messages = example["messages"]
-        messages = json.loads(raw_messages) if isinstance(raw_messages, str) else raw_messages
-        full_ids = chat_ids(messages)
+        record_id = example.get("id", "<unknown>")
+        try:
+            raw_messages = example["messages"]
+            messages = json.loads(raw_messages) if isinstance(raw_messages, str) else raw_messages
+            full_ids = chat_ids(messages)
+        except Exception as exc:
+            raise RuntimeError(f"Tokenization failed for record {record_id}: {exc}") from exc
         truncated = len(full_ids) > max_length
         ids = full_ids[:max_length]
 
@@ -243,8 +247,13 @@ def tokenize_dataset(dataset, tokenizer, max_length: int):
         for index, message in enumerate(messages):
             if message["role"] != "assistant":
                 continue
-            before_ids = chat_ids(messages[:index])
-            through_ids = chat_ids(messages[: index + 1])
+            try:
+                before_ids = chat_ids(messages[:index])
+                through_ids = chat_ids(messages[: index + 1])
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Assistant-span tokenization failed for record {record_id}, message_index={index}: {exc}"
+                ) from exc
             start = len(before_ids)
             end = len(through_ids)
 
@@ -256,7 +265,9 @@ def tokenize_dataset(dataset, tokenizer, max_length: int):
 
         assistant_loss_tokens = sum(label != -100 for label in labels)
         if assistant_loss_tokens == 0:
-            raise RuntimeError("Example produced zero assistant loss tokens")
+            raise RuntimeError(
+                f"Example produced zero assistant loss tokens: record {record_id}"
+            )
 
         return {
             "input_ids": ids,
