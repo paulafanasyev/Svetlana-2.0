@@ -69,14 +69,80 @@ def validate_manifest(path: Path, root: Path) -> dict:
 
 
 def load_training_dataset(manifest: dict):
-    from datasets import concatenate_datasets, load_dataset
+    """Load JSONL rows through a uniform string payload, then build one HF Dataset.
+
+    Native tool-call arguments are intentionally serialized before Arrow schema
+    inference. Otherwise datasets infers a different nested struct for every
+    JSONL file and concatenate_datasets() fails on feature alignment.
+    """
+    from datasets import Dataset
 
     train_paths = manifest_paths(manifest, "train")
     eval_paths = manifest_paths(manifest, "eval")
-    train_parts = [load_dataset("json", data_files=str(REPO_ROOT / p), split="train") for p in train_paths]
-    train = concatenate_datasets(train_parts)
-    eval_parts = [load_dataset("json", data_files=str(REPO_ROOT / p), split="train") for p in eval_paths]
-    evaluation = concatenate_datasets(eval_parts)
+
+    def load_rows(paths):
+        rows = []
+        for rel in paths:
+            path = REPO_ROOT / rel
+            for row in load_jsonl(path):
+                if not isinstance(row, dict):
+                    raise ValueError(f"{path}: each row must be an object")
+                messages = row.get("messages")
+                if not isinstance(messages, list) or not messages:
+                    raise ValueError(f"{path}: messages must be a non-empty list")
+                normalized_messages = []
+                for message in messages:
+                    if not isinstance(message, dict) or "role" not in message:
+                        raise ValueError(f"{path}: invalid message")
+                    item = {"role": message["role"]}
+                    if "content" in message:
+                        item["content"] = message["content"]
+                    if "tool_calls" in message:
+                        calls = []
+                        for call in message["tool_calls"]:
+                            function = call.get("function", {})
+                            calls.append({
+                                "id": str(call["id"]),
+                                "type": str(call.get("type", "function")),
+                                "function": {
+                                    "name": str(function["name"]),
+                                    "arguments": json.dumps(
+                                        function.get("arguments", {}),
+                                        ensure_ascii=False,
+                                        sort_keys=True,
+                                        separators=(",", ":"),
+                                    ),
+                                },
+                            })
+                        item["tool_calls"] = calls
+                    if "tool_call_id" in message:
+                        item["tool_call_id"] = str(message["tool_call_id"])
+                    if "name" in message:
+                        item["name"] = str(message["name"])
+                    normalized_messages.append(item)
+                row = dict(row)
+                row["messages"] = json.dumps(
+                    normalized_messages,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                rows.append(row)
+        return rows
+
+    def make_dataset(rows):
+        return Dataset.from_list(rows)
+
+    def restore(example):
+        example["messages"] = json.loads(example["messages"])
+        for message in example["messages"]:
+            for call in message.get("tool_calls", []):
+                arguments = call.get("function", {}).get("arguments")
+                if isinstance(arguments, str):
+                    call["function"]["arguments"] = json.loads(arguments)
+        return example
+
+    train = make_dataset(load_rows(train_paths)).map(restore, desc="Restoring message objects")
+    evaluation = make_dataset(load_rows(eval_paths)).map(restore, desc="Restoring eval message objects")
     return train, evaluation, train_paths + eval_paths
 
 
