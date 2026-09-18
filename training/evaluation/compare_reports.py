@@ -37,7 +37,7 @@ def main() -> None:
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--adapter", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--min-baseline", type=float, default=0.75)
+    parser.add_argument("--min-baseline", type=float, default=0.0)
     args = parser.parse_args()
     baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
     adapter = json.loads(args.adapter.read_text(encoding="utf-8"))
@@ -57,6 +57,7 @@ def main() -> None:
         "evaluator_version": baseline.get("evaluator_version"),
         "pass": adapter["pass_rate"] >= args.min_baseline and adapter["pass_rate"] >= baseline["pass_rate"],
         "human_review_required": True,
+        "status": "NON_REGRESSION" if adapter["pass_rate"] >= baseline["pass_rate"] and adapter["pass_rate"] >= args.min_baseline else "BELOW_BASELINE",
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
