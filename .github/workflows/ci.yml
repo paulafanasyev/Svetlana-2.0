@@ -3,7 +3,7 @@ name: CI
 on:
   workflow_dispatch:
   push:
-    branches: [ main, develop, 'svetlana-2.0-core-development-*', 'svetlana-self-employed-crm-foundation' ]
+    branches: [ main, develop, 'svetlana-2.0-core-development-*', 'svetlana-self-employed-crm-foundation', 'fix/assistant-only-sft-loss-20260918' ]
   pull_request:
     branches: [ main, develop ]
 
