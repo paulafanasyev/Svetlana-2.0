@@ -140,7 +140,7 @@ def test_format_dataset_accepts_native_tool_calls():
     assert result[0]["text"] == "rendered"
 
 
-def test_load_training_dataset_normalizes_nested_tool_call_schema(monkeypatch):
+def test_load_training_dataset_normalizes_nested_tool_call_arrow_schema(monkeypatch):
     import tempfile
     import training.gemma4.train_svetlana_production as prod
 
