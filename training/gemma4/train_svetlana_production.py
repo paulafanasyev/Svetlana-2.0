@@ -176,7 +176,7 @@ def format_dataset(dataset, tokenizer):
                 if not isinstance(calls, list):
                     raise ValueError("assistant tool_calls must be a list when present")
                 # Empty tool_calls carries no semantic information. Treat it as
-                # an ordinary assistant message. This is also robust to datasets
+                # an ordinary assistant message. This is robust to datasets
                 # implementations that materialize an absent optional field as [].
                 if not calls:
                     message.pop("tool_calls", None)
@@ -189,13 +189,12 @@ def format_dataset(dataset, tokenizer):
                             raise ValueError("assistant tool call must contain function.name")
                         if not isinstance(function.get("arguments", {}), dict):
                             raise ValueError("assistant tool call arguments must be an object")
-                    if "tool_calls" in message and message["tool_calls"]:
-                        if "content" in message and not isinstance(message["content"], str):
-                            raise ValueError("assistant tool-call content must be a string when present")
+                    if "content" in message and not isinstance(message["content"], str):
+                        raise ValueError("assistant tool-call content must be a string when present")
+            if "content" in message and not isinstance(message["content"], str):
+                raise ValueError("message content must be a string")
             if "tool_calls" not in message and "content" not in message:
                 raise ValueError("Every non-tool-call message must contain content")
-            elif not isinstance(message["content"], str):
-                raise ValueError("message content must be a string")
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Chat template produced empty training text")
