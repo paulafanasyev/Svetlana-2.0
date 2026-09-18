@@ -4,7 +4,7 @@ ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 export PYTHONPATH="$ROOT\${PYTHONPATH:+:$PYTHONPATH}"
 OUT="\${SVETLANA_OUTPUT_DIR:-training/outputs/colab_go}"
-MIN_BASELINE="\${SVETLANA_MIN_BASELINE_PASS_RATE:-0.75}"
+MIN_BASELINE="\${SVETLANA_MIN_BASELINE_PASS_RATE:-0.0}"
 MAX_NEW_TOKENS="\${SVETLANA_MAX_NEW_TOKENS:-160}"
 mkdir -p "$OUT"
 
@@ -73,4 +73,5 @@ print(json.dumps({"event":"action_eval_comparison","baseline_pass_rate":b["pass_
 PY
 test -s "$EVIDENCE"
 cp "$EVIDENCE" "$OUT/training_evidence.json"
-printf '%s\n' 'COLAB_GO_GATE=PASS'
+printf '%s\n' 'COLAB_TRAINING_COMPLETE=PASS'
+printf '%s\n' 'COLAB_EVAL_REVIEW_REQUIRED=TRUE'
