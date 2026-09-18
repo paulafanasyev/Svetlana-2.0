@@ -17,8 +17,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Python syntax
+        run: python -m py_compile training/evaluation/run_action_eval.py training/evaluation/audit_action_corpus.py training/gemma4/tokenizer_preflight.py training/gemma4/train_svetlana_production.py training/gemma4/generate_predictions.py
+
       - name: Audit action corpus
         run: python training/evaluation/audit_action_corpus.py
+
+      - name: Test action evaluator
+        run: python -m pytest -q training/evaluation/test_run_action_eval.py
       - name: Validate JSONL
         run: python - <<'PY'
           import json
