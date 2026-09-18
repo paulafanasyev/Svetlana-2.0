@@ -148,7 +148,8 @@ def load_training_dataset(manifest: dict):
 
 def format_dataset(dataset, tokenizer):
     def convert(example):
-        messages = example.get("messages")
+        raw_messages = example.get("messages")
+        messages = json.loads(raw_messages) if isinstance(raw_messages, str) else raw_messages
         if not isinstance(messages, list) or not messages:
             raise ValueError("Every example must contain non-empty messages")
         for message in messages:
@@ -175,7 +176,9 @@ def format_dataset(dataset, tokenizer):
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Chat template produced empty training text")
-        return {"text": text, "messages": messages}
+        # Keep messages serialized in the HF Dataset as well. Native nested
+        # tool_calls must never be re-inferred by Arrow during map().
+        return {"text": text, "messages": json.dumps(messages, ensure_ascii=False, separators=(",", ":"))}
 
     return dataset.map(convert, remove_columns=dataset.column_names, batched=False, desc="Formatting Gemma dataset")
 
@@ -207,7 +210,8 @@ def tokenize_dataset(dataset, tokenizer, max_length: int):
         return value
 
     def tokenize(example):
-        messages = example["messages"]
+        raw_messages = example["messages"]
+        messages = json.loads(raw_messages) if isinstance(raw_messages, str) else raw_messages
         full_ids = chat_ids(messages)
         truncated = len(full_ids) > max_length
         ids = full_ids[:max_length]
