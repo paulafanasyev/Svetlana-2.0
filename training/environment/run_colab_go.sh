@@ -10,6 +10,14 @@ mkdir -p "$OUT"
 
 python -m pip install --upgrade pip
 python -m pip install -r training/environment/requirements-colab-gpu.txt
+# Keep optional media codecs on the same CUDA ABI as the pinned torch build.
+python -m pip install --upgrade --index-url https://download.pytorch.org/whl/cu126 "torchcodec>=0.12.0" || true
+python - <<'PY'
+import importlib.metadata as md
+for name in ("torch","torchaudio","torchcodec"):
+    try: print(name, md.version(name))
+    except md.PackageNotFoundError: print(name, "not-installed")
+PY
 
 python - <<'PY'
 import importlib, json, platform
