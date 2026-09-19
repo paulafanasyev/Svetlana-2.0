@@ -89,7 +89,7 @@ export class NativeWebViewHands implements PlatformHands {
 
   async getCurrentApp(): Promise<string | null> {
     const tree = await this.getAccessibilityTree();
-    return tree.root?.packageName || null;
+    return tree.packageName || null;
   }
 
   async tap(x: number, y: number): Promise<ActionResult> {
