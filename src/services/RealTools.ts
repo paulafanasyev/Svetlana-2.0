@@ -81,13 +81,11 @@ export const tapElementTool: Tool = {
     const changed = signature(beforeTree.root) !== signature(afterTree.root) ||
       JSON.stringify(beforeNodes.map((n) => signature(n))) !== JSON.stringify(afterNodes.map((n) => signature(n)));
 
-    // Do not claim success merely because top-level child counts are equal.
-    return beforeTarget !== undefined &&
-      (
-        afterTarget === undefined ||
-        changed ||
-        result.data.beforeApp !== result.data.afterApp
-      );
+    // The action executor already proved the target existed before tapping.
+    // Verification requires an observable full-tree change or app navigation.
+    // Requiring target re-identification would reject valid navigation where the
+    // tapped node disappears from the post-action hierarchy.
+    return changed || result.data.beforeApp !== result.data.afterApp;
   },
   async isAvailable() { return await handsManager.isConnected(); },
 };
