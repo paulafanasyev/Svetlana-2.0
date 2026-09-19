@@ -40,11 +40,54 @@ export const tapElementTool: Tool = {
     const afterTree = await hands.getAccessibilityTree(); const afterApp = await hands.getCurrentApp();
     return { success: true, data: { element: { id: element.id, text: element.text, bounds: element.bounds }, tappedAt: { x: centerX, y: centerY }, beforeTree, afterTree, beforeApp, afterApp, timestamp: Date.now() } };
   },
-  async verify(_params, result) {
+  async verify(params, result) {
     if (!result.success || !result.data?.beforeTree || !result.data?.afterTree) return false;
-    const beforeTree = result.data.beforeTree; const afterTree = result.data.afterTree;
-    const beforeCount = beforeTree.root?.children?.length || 0; const afterCount = afterTree.root?.children?.length || 0;
-    return beforeCount !== afterCount || result.data.beforeApp !== result.data.afterApp;
+
+    const beforeTree = result.data.beforeTree;
+    const afterTree = result.data.afterTree;
+    const flatten = (node: any): any[] => {
+      if (!node) return [];
+      return [node, ...(node.children || []).flatMap((child: any) => flatten(child))];
+    };
+
+    const beforeNodes = flatten(beforeTree.root);
+    const afterNodes = flatten(afterTree.root);
+    const target = params.elementId || params.elementText;
+
+    const findTarget = (nodes: any[]) => nodes.find((node) =>
+      (params.elementId && node.id === params.elementId) ||
+      (params.elementText && (
+        node.text === params.elementText ||
+        node.contentDescription === params.elementText ||
+        String(node.text || '').includes(params.elementText)
+      ))
+    );
+
+    const beforeTarget = findTarget(beforeNodes);
+    const afterTarget = findTarget(afterNodes);
+
+    const signature = (node: any) => JSON.stringify({
+      id: node?.id,
+      text: node?.text,
+      contentDescription: node?.contentDescription,
+      resourceId: node?.resourceId,
+      bounds: node?.bounds,
+      clickable: node?.clickable,
+      enabled: node?.enabled,
+      selected: node?.selected,
+      focused: node?.focused,
+    });
+
+    const changed = signature(beforeTree.root) !== signature(afterTree.root) ||
+      JSON.stringify(beforeNodes.map((n) => signature(n))) !== JSON.stringify(afterNodes.map((n) => signature(n)));
+
+    // Do not claim success merely because top-level child counts are equal.
+    return beforeTarget !== undefined &&
+      (
+        afterTarget === undefined ||
+        changed ||
+        result.data.beforeApp !== result.data.afterApp
+      );
   },
   async isAvailable() { return await handsManager.isConnected(); },
 };
