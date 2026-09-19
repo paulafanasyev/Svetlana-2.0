@@ -15,7 +15,6 @@ function response(payload: any): string {
 
 describe('NativeWebViewHands', () => {
   const originalWindow = (globalThis as any).window;
-  const originalNavigator = (globalThis as any).navigator;
 
   beforeEach(() => {
     const bridge = {
@@ -63,12 +62,10 @@ describe('NativeWebViewHands', () => {
       innerHeight: 300,
       devicePixelRatio: 2,
     };
-    (globalThis as any).navigator = { userAgent: 'Android test' };
   });
 
   afterEach(() => {
     (globalThis as any).window = originalWindow;
-    (globalThis as any).navigator = originalNavigator;
   });
 
   it('connects to the native bridge and observes generation metadata', async () => {
