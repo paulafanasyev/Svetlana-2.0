@@ -5,7 +5,7 @@ on:
   push:
     branches: [ main, develop, 'svetlana-2.0-core-development-*' ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, develop, 'svetlana-2.0-core-development-*' ]
 
 jobs:
   test:
