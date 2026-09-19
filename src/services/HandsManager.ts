@@ -2,6 +2,7 @@
 import type { PlatformHands, PlatformHandsConfig, ConnectionStatus } from './PlatformHands';
 import { WebSocketHands } from './WebSocketHands';
 import { HTTPHands } from './HTTPHands';
+import { NativeWebViewHands } from './NativeWebViewHands';
 
 export class HandsManager {
   private hands: PlatformHands | null = null;
@@ -18,6 +19,8 @@ export class HandsManager {
         this.hands = new WebSocketHands(config);
       } else if (config.transport === 'http') {
         this.hands = new HTTPHands(config);
+      } else if (config.transport === 'native') {
+        this.hands = new NativeWebViewHands(config);
       } else {
         throw new Error(`Unsupported transport: ${config.transport}`);
       }

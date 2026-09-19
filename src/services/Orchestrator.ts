@@ -213,16 +213,37 @@ class Orchestrator {
         this.emit({ type: 'verify_compare', state: 'verifying', detail: `State changed: ${comparison.changed}`, data: { comparison } });
       }
 
-      // Use verification module
+      // Require the tool's own evidence-aware verification when available.
+      // A successful command execution is not, by itself, proof that the requested
+      // device state was reached.
+      const toolVerified = actionResult.verification?.status === 'PASS';
+      const stateVerified = !preState || !postState
+        ? false
+        : verificationSuccess;
+
       const verificationResult = await verification.verify({
         action: step.action,
         expectedState: { success: true },
         actualState: actionResult,
       });
 
-      this.emit({ type: 'verify_result', state: 'verifying', detail: `Verification: ${verificationResult.success ? 'PASS' : 'FAIL'}`, data: { verification: verificationResult } });
+      const finalVerified = actionResult.verification
+        ? toolVerified
+        : (verificationResult.success && stateVerified);
 
-      if (!verificationResult.success) {
+      this.emit({
+        type: 'verify_result',
+        state: 'verifying',
+        detail: `Verification: ${finalVerified ? 'PASS' : 'FAIL'}`,
+        data: {
+          verification: verificationResult,
+          toolVerification: actionResult.verification,
+          stateChanged: verificationSuccess,
+          finalVerified,
+        },
+      });
+
+      if (!finalVerified) {
         // RETRY
         for (let retry = 0; retry < this.config.maxRetries; retry++) {
           this.emit({ type: 'retry', state: 'verifying', detail: `Retry ${retry + 1}/${this.config.maxRetries}` });
