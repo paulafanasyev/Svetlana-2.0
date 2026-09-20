@@ -12,21 +12,21 @@ The target capability surface is defined in `docs/SVETLANA_CAPABILITY_MAP.md`. I
 - `evaluation/` — held-out tests; never used for training
 
 ## Training stages
-1. Baseline evaluation.
-2. SFT for Svetlana behavior and domain reasoning.
-3. Tool-calling fine-tuning with synthetic validated traces.
+1. Baseline evaluation (diagnostic; never blocks the start of SFT).
+2. Production SFT for Svetlana behavior and domain reasoning.
+3. Tool-calling fine-tuning with synthetic validated traces when that corpus is explicitly included in the active manifest.
 4. Expanded held-out evaluation.
 5. Adapter/model export.
 6. LiteRT-LM runtime validation and separate phone/tool validation.
 
 ## Compute
-The active pipeline uses `training/gemma4/train_svetlana_smoke.py` with `google/gemma-4-E2B-it`, SFT+LoRA+4bit and a real CUDA GPU. The current Colab/T4 path is development infrastructure, not a production-quality claim.
+The active manifest authorizes `training/gemma4/train_svetlana_production.py` with `google/gemma-4-E2B-it`, LoRA+4bit and a real CUDA GPU. `train_svetlana_smoke.py` remains an explicit fallback only when the manifest selects `text_smoke`. The Colab/T4 path is execution infrastructure; a completed training run is accepted only after adapter/evaluation evidence is produced.
 
 ## Data rules
 No real user data, credentials or private documents. Legal/tax facts require source and verification date. Tool records are synthetic. Evaluation data stays separate. Current laws, competitors, jobs and other changing facts belong in refreshable knowledge/research layers rather than only in model weights.
 
 ## Acceptance
-Do not call a run successful merely because loss decreased. Record configuration, model revision, dataset revision/hash, per-domain evaluation, tool-call validity, hallucination/error cases, export checksum and runtime compatibility.
+Do not call a run successful merely because loss decreased. A valid run must produce resumable checkpoints during SFT, a non-empty adapter at `training/gemma4/outputs/svetlana_gemma4_e2b_production/adapter`, training evidence, baseline/adapter predictions, and an evaluation comparison. Tool-call quality remains a separate requirement when its held-out corpus is available.
 
 Status vocabulary: VERIFIED / NOT PROVEN / PENDING.
 
@@ -34,7 +34,7 @@ Status vocabulary: VERIFIED / NOT PROVEN / PENDING.
 - Capability map: VERIFIED.
 - Expanded capability seed: VERIFIED.
 - 120-case target evaluation matrix: VERIFIED; execution PENDING.
-- Real GPU training: VERIFIED for the previous 10-example seed run; expanded-dataset run PENDING.
+- Production training pipeline: CODE FIXED; fresh expanded-dataset GPU execution PENDING.
 - Expanded held-out quality: NOT PROVEN.
 - Fine-tuned adapter -> LiteRT-LM: NOT PROVEN.
 - Native phone Hands: separate runtime gate; NOT PROVEN by this training pipeline.
