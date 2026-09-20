@@ -54,7 +54,7 @@ def _git_commit(root: Path) -> str:
 
 
 def _package_versions() -> dict[str, str]:
-    packages = ["torch", "transformers", "trl", "unsloth", "datasets", "accelerate", "peft"]
+    packages = ["torch", "transformers", "trl", "unsloth", "unsloth-zoo", "datasets", "accelerate", "peft"]
     result = {}
     for package in packages:
         try:
