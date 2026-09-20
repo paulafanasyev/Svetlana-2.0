@@ -64,6 +64,12 @@ def test_production_has_resumable_checkpoints():
     assert 'save_total_limit=3' in source
     assert 'trainer.train(resume_from_checkpoint=checkpoint)' in source
 
+def test_production_supports_evidence_only_recovery():
+    source = Path(__file__).with_name("train_svetlana_production.py").read_text(encoding="utf-8")
+    assert '"--evidence-only"' in source
+    assert "write_existing_evidence" in source
+    assert 'training_result_path = out / "training_result.json"' in source
+    assert "global_step" in source
 
 def test_format_dataset_is_non_batched_and_returns_one_text_per_example():
     class FakeDataset:
