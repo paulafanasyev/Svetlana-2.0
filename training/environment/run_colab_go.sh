@@ -18,19 +18,23 @@ import json
 import platform
 from importlib.metadata import version
 
-EXPECTED = {
-    'transformers': '5.5.0',
-    'trl': '0.28.0',
-    'unsloth': '2026.9.4',
-    'datasets': '4.3.0',
-    'accelerate': '1.15.0',
-    'peft': '0.21.0',
-}
+REQUIREMENTS = Path('training/environment/requirements-colab-gpu.txt')
+required_names = ('transformers', 'trl', 'unsloth', 'datasets', 'accelerate', 'peft')
+pins = {}
+for line in REQUIREMENTS.read_text(encoding='utf-8').splitlines():
+    match = re.fullmatch(r'([A-Za-z0-9_.-]+)==([^\s]+)', line.strip())
+    if match:
+        pins[match.group(1).lower().replace('_', '-')] = match.group(2)
+EXPECTED = {name: pins.get(name) for name in required_names}
+missing_pins = [name for name, expected in EXPECTED.items() if not expected]
+if missing_pins:
+    raise SystemExit(f'PACKAGE_PIN_SPEC_FAIL: missing exact pins for {missing_pins}')
 for name in EXPECTED:
     importlib.import_module(name)
 for name, expected in EXPECTED.items():
     actual = version(name)
-    if actual != expected:
+    # CUDA wheels can expose a local suffix such as +cu126.
+    if actual != expected and not actual.startswith(expected + '+'):
         raise SystemExit(f'PACKAGE_PIN_FAIL: {name}={actual}, expected {expected}')
 import torch
 if not torch.cuda.is_available():
