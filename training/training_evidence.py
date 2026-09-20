@@ -21,7 +21,12 @@ def _sha256_file(path: Path) -> str:
 def _sha256_paths(paths: Iterable[Path], *, root: Path | None = None) -> str:
     digest = hashlib.sha256()
     normalized_root = root.resolve() if root is not None else None
-    normalized_paths = [Path(path).resolve() for path in paths]
+    normalized_paths = []
+    for path in paths:
+        candidate = Path(path)
+        if normalized_root is not None and not candidate.is_absolute():
+            candidate = normalized_root / candidate
+        normalized_paths.append(candidate.resolve())
     for path in sorted(normalized_paths, key=lambda item: item.as_posix()):
         if normalized_root is not None:
             try:
@@ -68,7 +73,7 @@ def build_evidence(
     model: str = "google/gemma-4-E2B-it",
 ) -> dict[str, Any]:
     root = root.resolve()
-    adapter_dir = adapter_dir.resolve()
+    adapter_dir = (root / adapter_dir if not adapter_dir.is_absolute() else adapter_dir).resolve()
     try:
         adapter_dir.relative_to(root)
     except ValueError as exc:
