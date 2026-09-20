@@ -49,6 +49,16 @@ def main() -> None:
         raise SystemExit("baseline and adapter case IDs differ or are out of order")
     if baseline["cases"] != adapter["cases"]:
         raise SystemExit("baseline and adapter case counts differ")
+    failed_cases = []
+    for row in adapter["results"]:
+        if not row["passed"]:
+            failed_cases.append(
+                {
+                    "id": row["id"],
+                    "category": row.get("category"),
+                    "failed_checks": [name for name, value in row["checks"].items() if not value],
+                }
+            )
     report = {
         "baseline_pass_rate": baseline["pass_rate"],
         "adapter_pass_rate": adapter["pass_rate"],
@@ -57,6 +67,8 @@ def main() -> None:
         "evaluator_version": baseline.get("evaluator_version"),
         "pass": adapter["pass_rate"] >= args.min_baseline and adapter["pass_rate"] >= baseline["pass_rate"],
         "human_review_required": True,
+        "failed_cases": failed_cases,
+        "category_results": adapter.get("categories", {}),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
