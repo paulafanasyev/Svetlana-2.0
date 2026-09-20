@@ -99,7 +99,11 @@ PY
 )"
 
 if [[ "$MODE" == "text_production" ]]; then
-  python training/gemma4/train_svetlana_production.py
+  if [[ "${SVETLANA_EVIDENCE_ONLY:-0}" == "1" ]]; then
+    python training/gemma4/train_svetlana_production.py --evidence-only
+  else
+    python training/gemma4/train_svetlana_production.py
+  fi
   ADAPTER="training/gemma4/outputs/svetlana_gemma4_e2b_production/adapter"
   EVIDENCE="training/gemma4/outputs/svetlana_gemma4_e2b_production/training_evidence.json"
 elif [[ "$MODE" == "text_smoke" ]]; then
