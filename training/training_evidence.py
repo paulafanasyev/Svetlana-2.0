@@ -18,17 +18,32 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _sha256_paths(paths: Iterable[Path]) -> str:
+def _sha256_paths(paths: Iterable[Path], *, root: Path | None = None) -> str:
     digest = hashlib.sha256()
-    for path in sorted(paths):
-        digest.update(str(path).encode())
-        digest.update(_sha256_file(path).encode())
+    normalized_root = root.resolve() if root is not None else None
+    normalized_paths = [Path(path).resolve() for path in paths]
+    for path in sorted(normalized_paths, key=lambda item: item.as_posix()):
+        if normalized_root is not None:
+            try:
+                label = path.relative_to(normalized_root).as_posix()
+            except ValueError as exc:
+                raise ValueError(
+                    f"Evidence path {path} is outside repository root {normalized_root}"
+                ) from exc
+        else:
+            label = path.as_posix()
+        digest.update(label.encode("utf-8"))
+        digest.update(_sha256_file(path).encode("ascii"))
     return digest.hexdigest()
 
 
 def _git_commit(root: Path) -> str:
     try:
-        return subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL).strip()
+        return subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
 
@@ -52,9 +67,22 @@ def build_evidence(
     hardware: dict[str, Any],
     model: str = "google/gemma-4-E2B-it",
 ) -> dict[str, Any]:
-    adapter_files = [p for p in adapter_dir.rglob("*") if p.is_file()]
+    root = root.resolve()
+    adapter_dir = adapter_dir.resolve()
+    try:
+        adapter_dir.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f"Adapter directory {adapter_dir} must be inside repository root {root}"
+        ) from exc
+
+    adapter_files = sorted(
+        (path for path in adapter_dir.rglob("*") if path.is_file()),
+        key=lambda path: path.as_posix(),
+    )
     if not adapter_files:
         raise ValueError("adapter directory is empty; refusing to create training evidence")
+
     return {
         "schema_version": "1.0",
         "git_commit": _git_commit(root),
@@ -63,13 +91,17 @@ def build_evidence(
         "model": model,
         "hardware": hardware,
         "config": config,
-        "dataset_sha256": _sha256_paths(dataset_paths),
-        "adapter_sha256": _sha256_paths(adapter_files),
-        "adapter_files": [str(p.relative_to(root)) for p in sorted(adapter_files)],
+        "dataset_sha256": _sha256_paths(dataset_paths, root=root),
+        "adapter_sha256": _sha256_paths(adapter_files, root=root),
+        "adapter_files": [str(path.relative_to(root).as_posix()) for path in adapter_files],
     }
 
 
 def write_evidence(path: Path, **kwargs: Any) -> dict[str, Any]:
     evidence = build_evidence(**kwargs)
-    path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(evidence, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     return evidence
