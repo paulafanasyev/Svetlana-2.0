@@ -13,11 +13,26 @@ python -m pip install --upgrade pip
 python -m pip install -r training/environment/requirements-colab-gpu.txt
 
 python - <<'PY'
-import importlib, json, platform
-import unsloth
-import torch
-for name in ['transformers', 'trl', 'datasets', 'accelerate', 'peft']:
+import importlib
+import json
+import platform
+from importlib.metadata import version
+
+EXPECTED = {
+    'transformers': '5.5.0',
+    'trl': '0.28.0',
+    'unsloth': '2026.9.4',
+    'datasets': '4.3.0',
+    'accelerate': '1.15.0',
+    'peft': '0.21.0',
+}
+for name in EXPECTED:
     importlib.import_module(name)
+for name, expected in EXPECTED.items():
+    actual = version(name)
+    if actual != expected:
+        raise SystemExit(f'PACKAGE_PIN_FAIL: {name}={actual}, expected {expected}')
+import torch
 if not torch.cuda.is_available():
     raise SystemExit('CUDA is required; stopping before baseline/training')
 print(json.dumps({
@@ -26,6 +41,7 @@ print(json.dumps({
     'cuda': torch.version.cuda,
     'gpu': torch.cuda.get_device_name(0),
     'vram_gb': round(torch.cuda.get_device_properties(0).total_memory/1024**3, 2),
+    'packages': EXPECTED,
 }, ensure_ascii=False))
 PY
 
