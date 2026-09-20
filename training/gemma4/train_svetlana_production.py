@@ -76,28 +76,31 @@ def load_training_dataset(manifest: dict):
     return concatenate_datasets(train_parts), concatenate_datasets(eval_parts), train_paths + eval_paths
 
 
-def format_dataset(dataset, tokenizer):
+def format_dataset(dataset):
+    """Convert conversations to TRL prompt/completion examples.
+
+    Keeping the final assistant turn in ``completion`` makes the SFT objective
+    explicitly completion-only instead of training on system/user prompt tokens.
+    """
     def convert(example):
         messages = example.get("messages")
-        if not isinstance(messages, list) or not messages:
-            raise ValueError("Every example must contain non-empty messages")
+        if not isinstance(messages, list) or len(messages) < 2:
+            raise ValueError("Every example must contain a prompt and assistant completion")
         for message in messages:
             if not isinstance(message, dict) or "role" not in message or "content" not in message:
                 raise ValueError("Every message must contain role and content")
-        text = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=False,
-        )
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError("Chat template produced empty training text")
-        return {"text": text}
+        if messages[-1].get("role") != "assistant":
+            raise ValueError("Every training example must end with an assistant message")
+        return {
+            "prompt": messages[:-1],
+            "completion": [messages[-1]],
+        }
 
     return dataset.map(
         convert,
         remove_columns=dataset.column_names,
         batched=False,
-        desc="Formatting Gemma dataset",
+        desc="Formatting Gemma prompt/completion dataset",
     )
 
 
@@ -263,15 +266,14 @@ def run(args: argparse.Namespace) -> dict:
         model.config.use_cache = False
 
     dataset, evaluation, data_paths = load_training_dataset(manifest)
-    formatted = format_dataset(dataset, tokenizer)
-    formatted_eval = format_dataset(evaluation, tokenizer)
+    formatted = format_dataset(dataset)
+    formatted_eval = format_dataset(evaluation)
 
     trainer = SFTTrainer(
         model=model,
         processing_class=tokenizer,
         train_dataset=formatted,
         eval_dataset=formatted_eval,
-        dataset_text_field="text",
         args=SFTConfig(
             output_dir=str(out),
             max_length=cfg["max_seq_length"],
@@ -285,6 +287,7 @@ def run(args: argparse.Namespace) -> dict:
             # to prevent TRL/Transformers from implicitly enabling BF16.
             bf16=False,
             fp16=False,
+            completion_only_loss=True,
             warmup_ratio=0.05,
             max_grad_norm=0.3,
             logging_steps=cfg["logging_steps"],
