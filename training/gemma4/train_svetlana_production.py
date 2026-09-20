@@ -101,6 +101,72 @@ def format_dataset(dataset, tokenizer):
     )
 
 
+def write_existing_evidence(args: argparse.Namespace) -> dict:
+    """Build evidence from an already-exported adapter without re-running SFT."""
+    import importlib.metadata
+    import torch
+    from training.training_evidence import write_evidence
+
+    manifest = validate_manifest(REPO_ROOT / "training/datasets/manifest_v2.json", REPO_ROOT)
+    if manifest.get("training_mode") != "text_production":
+        raise RuntimeError("Evidence recovery requires manifest training_mode=text_production")
+    if not torch.cuda.is_available():
+        raise RuntimeError("Evidence recovery requires CUDA so hardware evidence is real")
+
+    cfg = load_config()
+    out = Path(
+        args.output
+        or os.getenv(
+            "SVETLANA_OUTPUT",
+            "training/gemma4/outputs/svetlana_gemma4_e2b_production",
+        )
+    )
+    adapter_dir = (out / "adapter").resolve()
+    if not adapter_dir.is_dir():
+        raise FileNotFoundError(f"Existing adapter directory not found: {adapter_dir}")
+    if not any(path.is_file() for path in adapter_dir.rglob("*")):
+        raise ValueError(f"Existing adapter directory is empty: {adapter_dir}")
+
+    props = torch.cuda.get_device_properties(0)
+    hardware = {
+        "gpu": props.name,
+        "vram_gb": round(props.total_memory / 1024**3, 2),
+        "cuda": torch.version.cuda,
+        "python": platform.python_version(),
+        "torch": torch.__version__,
+        "unsloth": importlib.metadata.version("unsloth"),
+    }
+    train_paths = manifest_paths(manifest, "train")
+    eval_paths = manifest_paths(manifest, "eval")
+    evidence_path = out / "training_evidence.json"
+    evidence = write_evidence(
+        evidence_path,
+        root=REPO_ROOT,
+        adapter_dir=adapter_dir,
+        dataset_paths=[REPO_ROOT / path for path in train_paths + eval_paths],
+        config=cfg,
+        hardware=hardware,
+        model=os.getenv("SVETLANA_BASE_MODEL", manifest.get("base_model", DEFAULT_MODEL)),
+    )
+    print(
+        json.dumps(
+            {
+                "event": "evidence_complete",
+                "recovered": True,
+                "path": str(evidence_path),
+                "adapter_sha256": evidence["adapter_sha256"],
+                "dataset_sha256": evidence["dataset_sha256"],
+            },
+            ensure_ascii=False,
+        )
+    )
+    return {
+        "output": str(out),
+        "adapter": str(adapter_dir),
+        "evidence": str(evidence_path),
+        "recovered": True,
+    }
+
 def run(args: argparse.Namespace) -> dict:
     # Unsloth must see this before its first import so the trainer receives real logits.
     os.environ["UNSLOTH_RETURN_LOGITS"] = "1"
@@ -295,5 +361,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output")
     parser.add_argument("--resume-from")
+    parser.add_argument(
+        "--evidence-only",
+        action="store_true",
+        help="Recover evidence from an already-exported adapter without re-running SFT",
+    )
     args = parser.parse_args()
-    print(json.dumps({"event": "production_train_complete", **run(args)}, ensure_ascii=False))
+    result = write_existing_evidence(args) if args.evidence_only else run(args)
+    print(json.dumps({"event": "production_train_complete", **result}, ensure_ascii=False))
