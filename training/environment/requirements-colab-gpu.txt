@@ -1,5 +1,5 @@
 # Svetlana Gemma 4 E2B text production/Colab GPU environment
-# Gemma 4 requires Transformers >=5.5.0 and TRL >=0.28.0.
+# Unsloth 2026.9.4 constrains TRL to >=0.18.2, <=0.24.0 and Transformers to <=5.5.0.
 --extra-index-url https://download.pytorch.org/whl/cu126
 torch==2.12.1
 transformers==5.5.0
