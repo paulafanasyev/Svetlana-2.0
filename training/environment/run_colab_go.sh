@@ -21,7 +21,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 REQUIREMENTS = Path('training/environment/requirements-colab-gpu.txt')
-required_names = ('transformers', 'trl', 'unsloth', 'unsloth-zoo', 'datasets', 'accelerate', 'peft')
+required_names = ('unsloth', 'unsloth-zoo', 'transformers', 'trl', 'datasets', 'accelerate', 'peft')
 pins = {}
 for line in REQUIREMENTS.read_text(encoding='utf-8').splitlines():
     match = re.fullmatch(r'([A-Za-z0-9_.-]+)==([^\s]+)', line.strip())
