@@ -53,3 +53,7 @@ def test_environment_gate_uses_the_single_pinned_requirements_file():
     assert "requirements-colab-gpu.txt" in SCRIPT
     assert "PACKAGE_PIN_FAIL" in SCRIPT
     assert "0.28.0" not in SCRIPT
+
+def test_production_can_reuse_completed_training_for_evidence_recovery():
+    assert "SVETLANA_EVIDENCE_ONLY" in SCRIPT
+    assert "python training/gemma4/train_svetlana_production.py --evidence-only" in SCRIPT
