@@ -16,7 +16,9 @@ python - <<'PY'
 import importlib
 import json
 import platform
+import re
 from importlib.metadata import version
+from pathlib import Path
 
 REQUIREMENTS = Path('training/environment/requirements-colab-gpu.txt')
 required_names = ('transformers', 'trl', 'unsloth', 'datasets', 'accelerate', 'peft')
