@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.4",
+  "schema_version": "1.5",
   "purpose": "Single source of truth for the next Svetlana training pipeline.",
   "base_model": "google/gemma-4-E2B-it",
   "runtime_target": "LiteRT-LM",
@@ -7,23 +7,68 @@
   "trainer": "training/gemma4/train_svetlana_production.py",
   "native_multimodal_trainer": "training/gemma4/train_svetlana_multimodal.py",
   "train": [
-    {"path": "training/datasets/svetlana_seed.jsonl", "format": "messages"},
-    {"path": "training/datasets/svetlana_capability_seed.jsonl", "format": "messages"},
-    {"path": "training/datasets/svetlana_capability_training_v2.jsonl", "format": "messages"},
-    {"path": "training/datasets/svetlana_advanced_training_v1.jsonl", "format": "messages", "role": "expanded_behavior_domain"},
-    {"path": "training/datasets/svetlana_russian_source_policy_seed.jsonl", "format": "messages", "role": "source_governance_behavior"},
-    {"path": "training/datasets/svetlana_source_governance_v2.jsonl", "format": "messages", "role": "source_governance_behavior_v2"},
-    {"path": "training/datasets/svetlana_child_multimodal_behavior_seed.jsonl", "format": "messages", "role": "child_cv_art_finance_safety_behavior"},
-    {"path": "training/datasets/svetlana_expansion_2026_v1.jsonl", "format": "messages", "role": "planned_40_direction_expansion"}
+    {
+      "path": "training/datasets/svetlana_seed.jsonl",
+      "format": "messages"
+    },
+    {
+      "path": "training/datasets/svetlana_capability_seed.jsonl",
+      "format": "messages"
+    },
+    {
+      "path": "training/datasets/svetlana_capability_training_v2.jsonl",
+      "format": "messages"
+    },
+    {
+      "path": "training/datasets/svetlana_advanced_training_v1.jsonl",
+      "format": "messages",
+      "role": "expanded_behavior_domain"
+    },
+    {
+      "path": "training/datasets/svetlana_russian_source_policy_seed.jsonl",
+      "format": "messages",
+      "role": "source_governance_behavior"
+    },
+    {
+      "path": "training/datasets/svetlana_source_governance_v2.jsonl",
+      "format": "messages",
+      "role": "source_governance_behavior_v2"
+    },
+    {
+      "path": "training/datasets/svetlana_child_multimodal_behavior_seed.jsonl",
+      "format": "messages",
+      "role": "child_cv_art_finance_safety_behavior"
+    },
+    {
+      "path": "training/datasets/svetlana_expansion_2026_v1.jsonl",
+      "format": "messages",
+      "role": "planned_40_direction_expansion"
+    },
+    {
+      "path": "training/datasets/svetlana_behavior_coverage_v1.jsonl",
+      "format": "messages",
+      "role": "targeted_behavior_coverage_v1"
+    }
   ],
   "reference_knowledge": [
-    {"path": "training/datasets/self_employed_official.jsonl", "format": "messages", "role": "official_source_behavior"}
+    {
+      "path": "training/datasets/self_employed_official.jsonl",
+      "format": "messages",
+      "role": "official_source_behavior"
+    }
   ],
   "pending_multimodal": [
-    {"path": "training/datasets/multimodal/multimodal_training_curriculum.jsonl", "format": "multimodal_v1", "status": "requires_real_media_assets"}
+    {
+      "path": "training/datasets/multimodal/multimodal_training_curriculum.jsonl",
+      "format": "multimodal_v1",
+      "status": "requires_real_media_assets"
+    }
   ],
   "eval": [
-    {"path": "training/datasets/svetlana_eval.jsonl", "format": "messages"}
+    {
+      "path": "training/datasets/svetlana_eval.jsonl",
+      "format": "messages"
+    }
   ],
   "rules": {
     "no_personal_data_in_weights": true,
