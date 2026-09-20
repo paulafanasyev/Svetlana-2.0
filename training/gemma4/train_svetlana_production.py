@@ -246,17 +246,9 @@ def run(args: argparse.Namespace) -> dict:
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,
-        target_modules=[
-            "q_proj",
-            "k_proj",
-            "v_proj",
-            "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
-        ],
+        target_modules="all-linear",
         lora_alpha=32,
-        lora_dropout=0.05,
+        lora_dropout=0.0,
         bias="none",
         use_gradient_checkpointing="unsloth",
         random_state=cfg["seed"],
@@ -304,6 +296,28 @@ def run(args: argparse.Namespace) -> dict:
         ),
     )
 
+    objective_batch = next(iter(trainer.get_train_dataloader()))
+    labels = objective_batch.get("labels")
+    if labels is None:
+        raise RuntimeError("Training objective gate failed: trainer batch has no labels")
+    supervised_tokens = int((labels != -100).sum().item())
+    total_tokens = int(labels.numel())
+    if supervised_tokens <= 0:
+        raise RuntimeError("Training objective gate failed: zero supervised completion tokens")
+    if supervised_tokens >= total_tokens:
+        raise RuntimeError("Training objective gate failed: full-sequence labels detected")
+    print(
+        json.dumps(
+            {
+                "event": "training_objective_gate_pass",
+                "objective": "completion_only",
+                "supervised_tokens_first_batch": supervised_tokens,
+                "total_tokens_first_batch": total_tokens,
+            },
+            ensure_ascii=False,
+        )
+    )
+    del objective_batch, labels
     print(
         json.dumps(
             {
