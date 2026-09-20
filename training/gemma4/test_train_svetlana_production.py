@@ -17,6 +17,9 @@ def test_production_config_is_deterministic_by_default(monkeypatch):
         "SVETLANA_LEARNING_RATE",
         "SVETLANA_EPOCHS",
         "SVETLANA_SEED",
+        "SVETLANA_SAVE_STEPS",
+        "SVETLANA_LOGGING_STEPS",
+        "SVETLANA_EVAL_STEPS",
     ):
         monkeypatch.delenv(name, raising=False)
     cfg = load_config()
@@ -24,6 +27,9 @@ def test_production_config_is_deterministic_by_default(monkeypatch):
     assert cfg["num_train_epochs"] == 3
     assert cfg["max_seq_length"] == 2048
     assert cfg["per_device_train_batch_size"] == 1
+    assert cfg["save_steps"] == 25
+    assert cfg["eval_steps"] == 25
+    assert cfg["logging_steps"] == 5
 
 
 def test_production_manifest_authorization_contract():
@@ -40,10 +46,23 @@ def test_production_runner_requires_explicit_manifest_authorization(monkeypatch)
 
 def test_production_imports_unsloth_before_torch():
     source = Path(__file__).with_name("train_svetlana_production.py").read_text(encoding="utf-8")
-    # torch is also imported by the manual collator, so compare the imports
-    # inside the production run() function rather than raw file positions.
     run_source = source[source.index("def run("):]
+    assert 'os.environ["UNSLOTH_RETURN_LOGITS"] = "1"' in run_source
     assert run_source.index("import unsloth") < run_source.index("import torch")
+
+
+def test_production_exports_to_adapter_subdirectory():
+    source = Path(__file__).with_name("train_svetlana_production.py").read_text(encoding="utf-8")
+    assert 'adapter_dir = out / "adapter"' in source
+    assert "model.save_pretrained(adapter_dir)" in source
+    assert "tokenizer.save_pretrained(adapter_dir)" in source
+
+
+def test_production_has_resumable_checkpoints():
+    source = Path(__file__).with_name("train_svetlana_production.py").read_text(encoding="utf-8")
+    assert '"save_steps": int(os.getenv("SVETLANA_SAVE_STEPS", "25"))' in source
+    assert 'save_total_limit=3' in source
+    assert 'trainer.train(resume_from_checkpoint=checkpoint)' in source
 
 
 def test_format_dataset_is_non_batched_and_returns_one_text_per_example():
