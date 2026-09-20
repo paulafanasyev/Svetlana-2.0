@@ -121,6 +121,16 @@ def write_existing_evidence(args: argparse.Namespace) -> dict:
             "training/gemma4/outputs/svetlana_gemma4_e2b_production",
         )
     )
+    training_result_path = out / "training_result.json"
+    if not training_result_path.is_file():
+        raise FileNotFoundError(f"Training result not found: {training_result_path}")
+    try:
+        training_result = json.loads(training_result_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid training result JSON: {training_result_path}") from exc
+    if int(training_result.get("global_step", 0)) <= 0:
+        raise ValueError("Training result does not prove any optimizer steps were completed")
+
     adapter_dir = (out / "adapter").resolve()
     if not adapter_dir.is_dir():
         raise FileNotFoundError(f"Existing adapter directory not found: {adapter_dir}")
@@ -156,6 +166,7 @@ def write_existing_evidence(args: argparse.Namespace) -> dict:
                 "path": str(evidence_path),
                 "adapter_sha256": evidence["adapter_sha256"],
                 "dataset_sha256": evidence["dataset_sha256"],
+                "global_step": int(training_result["global_step"]),
             },
             ensure_ascii=False,
         )
