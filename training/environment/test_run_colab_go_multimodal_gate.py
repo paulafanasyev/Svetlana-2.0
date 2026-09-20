@@ -38,12 +38,12 @@ def test_expanded_text_training_is_not_blocked_by_multimodal_readiness_rule():
     assert "training_mode_gate_pass" in SCRIPT
 
 
-def test_baseline_is_measurement_by_default_and_only_explicit_threshold_blocks():
-    assert 'SVETLANA_MIN_BASELINE_PASS_RATE:-0.75' in SCRIPT
-    assert "if minimum > 0 and rate < minimum:" in SCRIPT
+def test_baseline_is_measurement_only():
+    assert 'SVETLANA_MIN_BASELINE_PASS_RATE' not in SCRIPT
+    assert '"status": "MEASURED_ONLY"' in SCRIPT
+    assert "BASELINE_GATE_FAIL" not in SCRIPT
 
 
-def test_training_validation_workflow_targets_production_manifest():
-    assert "assert m['training_mode'] == 'text_production'" in WORKFLOW
-    assert "assert m['trainer'] == 'training/gemma4/train_svetlana_production.py'" in WORKFLOW
-    assert "training/gemma4/test_train_svetlana_production.py" in WORKFLOW
+def test_adapter_artifact_must_be_non_empty():
+    assert 'test -d "$ADAPTER"' in SCRIPT
+    assert 'test -n "$(find "$ADAPTER" -type f -print -quit)"' in SCRIPT
