@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Production Gemma 4 SFT runner with explicit evidence output."""
+"""Production Gemma 4 E2B SFT runner with resumable checkpoints and evidence."""
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import platform
@@ -21,8 +20,9 @@ def load_config() -> dict:
         "learning_rate": float(os.getenv("SVETLANA_LEARNING_RATE", "2e-5")),
         "num_train_epochs": int(os.getenv("SVETLANA_EPOCHS", "3")),
         "seed": int(os.getenv("SVETLANA_SEED", "3407")),
-        "save_steps": int(os.getenv("SVETLANA_SAVE_STEPS", "100")),
-        "logging_steps": int(os.getenv("SVETLANA_LOGGING_STEPS", "10")),
+        "save_steps": int(os.getenv("SVETLANA_SAVE_STEPS", "25")),
+        "logging_steps": int(os.getenv("SVETLANA_LOGGING_STEPS", "5")),
+        "eval_steps": int(os.getenv("SVETLANA_EVAL_STEPS", "25")),
     }
 
 
@@ -33,14 +33,6 @@ def load_jsonl(path: Path) -> list[dict]:
             if line.strip():
                 rows.append(json.loads(line))
     return rows
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def manifest_paths(manifest: dict, key: str) -> list[str]:
@@ -73,11 +65,15 @@ def load_training_dataset(manifest: dict):
 
     train_paths = manifest_paths(manifest, "train")
     eval_paths = manifest_paths(manifest, "eval")
-    train_parts = [load_dataset("json", data_files=str(REPO_ROOT / p), split="train") for p in train_paths]
-    train = concatenate_datasets(train_parts)
-    eval_parts = [load_dataset("json", data_files=str(REPO_ROOT / p), split="train") for p in eval_paths]
-    evaluation = concatenate_datasets(eval_parts)
-    return train, evaluation, train_paths + eval_paths
+    train_parts = [
+        load_dataset("json", data_files=str(REPO_ROOT / p), split="train")
+        for p in train_paths
+    ]
+    eval_parts = [
+        load_dataset("json", data_files=str(REPO_ROOT / p), split="train")
+        for p in eval_paths
+    ]
+    return concatenate_datasets(train_parts), concatenate_datasets(eval_parts), train_paths + eval_paths
 
 
 def format_dataset(dataset, tokenizer):
@@ -88,97 +84,32 @@ def format_dataset(dataset, tokenizer):
         for message in messages:
             if not isinstance(message, dict) or "role" not in message or "content" not in message:
                 raise ValueError("Every message must contain role and content")
-        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+        text = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=False,
+        )
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Chat template produced empty training text")
         return {"text": text}
 
-    return dataset.map(convert, remove_columns=dataset.column_names, batched=False, desc="Formatting Gemma dataset")
-
-
-def tokenize_dataset(dataset, tokenizer, max_length: int):
-    def tokenize(example):
-        encoded = tokenizer(
-            text=[example["text"]],
-            truncation=True,
-            max_length=max_length,
-            padding=False,
-        )
-        for key, value in list(encoded.items()):
-            if hasattr(value, "ndim") and value.ndim > 1 and value.shape[0] == 1:
-                encoded[key] = value[0].tolist()
-            elif isinstance(value, list) and len(value) == 1 and isinstance(value[0], list):
-                encoded[key] = value[0]
-        if "input_ids" not in encoded:
-            raise RuntimeError("Gemma4 processor did not return input_ids")
-        encoded["labels"] = list(encoded["input_ids"])
-        return encoded
-
     return dataset.map(
-        tokenize,
+        convert,
         remove_columns=dataset.column_names,
         batched=False,
-        desc="Tokenizing Gemma dataset",
+        desc="Formatting Gemma dataset",
     )
 
 
-def make_manual_collator(tokenizer):
-    """Pad text-only Gemma4 batches without calling Gemma4Processor.pad()."""
-    import torch
-
-    pad_id = tokenizer.tokenizer.pad_token_id if hasattr(tokenizer, "tokenizer") else tokenizer.pad_token_id
-    if pad_id is None:
-        raise RuntimeError("Gemma4 tokenizer has no pad_token_id")
-
-    def collate(features):
-        max_len = max(len(feature["input_ids"]) for feature in features)
-        input_ids = []
-        attention_mask = []
-        labels = []
-        for feature in features:
-            ids = list(feature["input_ids"])
-            mask = list(feature.get("attention_mask", [1] * len(ids)))
-            target = list(feature.get("labels", ids))
-            padding = max_len - len(ids)
-            input_ids.append(ids + [pad_id] * padding)
-            attention_mask.append(mask + [0] * padding)
-            labels.append(target + [-100] * padding)
-        return {
-            "input_ids": torch.tensor(input_ids, dtype=torch.long),
-            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
-            "labels": torch.tensor(labels, dtype=torch.long),
-        }
-
-    return collate
-
-
-def write_evidence(path: Path, *, root: Path, adapter_dir: Path, dataset_paths: list[str], config: dict, hardware: dict, model: str) -> dict:
-    adapter_hash = hashlib.sha256()
-    for item in sorted(p for p in adapter_dir.rglob("*") if p.is_file()):
-        adapter_hash.update(item.relative_to(adapter_dir).as_posix().encode())
-        adapter_hash.update(item.read_bytes())
-    dataset_hash = hashlib.sha256()
-    for rel in sorted(dataset_paths):
-        file_path = root / rel
-        dataset_hash.update(rel.encode())
-        dataset_hash.update(file_path.read_bytes())
-    evidence = {
-        "model": model,
-        "config": config,
-        "hardware": hardware,
-        "dataset_paths": dataset_paths,
-        "adapter_sha256": adapter_hash.hexdigest(),
-        "dataset_sha256": dataset_hash.hexdigest(),
-    }
-    path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
-    return evidence
-
-
 def run(args: argparse.Namespace) -> dict:
+    # Unsloth must see this before its first import so the trainer receives real logits.
+    os.environ["UNSLOTH_RETURN_LOGITS"] = "1"
+
     import unsloth
     import torch
-    from transformers import Trainer, TrainingArguments
+    from trl import SFTConfig, SFTTrainer
     from unsloth import FastLanguageModel
+    from training.training_evidence import write_evidence
 
     manifest = validate_manifest(REPO_ROOT / "training/datasets/manifest_v2.json", REPO_ROOT)
     if manifest.get("training_mode") != "text_production":
@@ -189,87 +120,22 @@ def run(args: argparse.Namespace) -> dict:
         raise RuntimeError("No CUDA GPU detected; production training requires GPU evidence")
 
     cfg = load_config()
+    if cfg["save_steps"] <= 0 or cfg["eval_steps"] <= 0:
+        raise ValueError("save/eval steps must be positive")
+
     model_name = os.getenv("SVETLANA_BASE_MODEL", manifest.get("base_model", DEFAULT_MODEL))
-    out = Path(args.output or os.getenv("SVETLANA_OUTPUT", "training/gemma4/outputs/svetlana_gemma4_e2b_production"))
+    out = Path(
+        args.output
+        or os.getenv(
+            "SVETLANA_OUTPUT",
+            "training/gemma4/outputs/svetlana_gemma4_e2b_production",
+        )
+    )
     out.mkdir(parents=True, exist_ok=True)
+    adapter_dir = out / "adapter"
     checkpoint = args.resume_from or os.getenv("SVETLANA_RESUME_FROM")
 
     props = torch.cuda.get_device_properties(0)
-    print(json.dumps({
-        "event": "production_hardware",
-        "gpu": props.name,
-        "vram_gb": round(props.total_memory / 1024**3, 2),
-        "cuda": torch.version.cuda,
-        "python": platform.python_version(),
-        "torch": torch.__version__,
-        "unsloth": unsloth.__version__,
-        "model": model_name,
-    }, ensure_ascii=False))
-
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=model_name,
-        max_seq_length=cfg["max_seq_length"],
-        load_in_4bit=True,
-        load_in_16bit=False,
-        full_finetuning=False,
-    )
-    model = FastLanguageModel.get_peft_model(
-        model,
-        r=16,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        lora_alpha=32,
-        lora_dropout=0.05,
-        bias="none",
-        use_gradient_checkpointing="unsloth",
-        random_state=cfg["seed"],
-        max_seq_length=cfg["max_seq_length"],
-    )
-
-    dataset, evaluation, data_paths = load_training_dataset(manifest)
-    formatted = format_dataset(dataset, tokenizer)
-    formatted_eval = format_dataset(evaluation, tokenizer)
-    tokenized = tokenize_dataset(formatted, tokenizer, cfg["max_seq_length"])
-    tokenized_eval = tokenize_dataset(formatted_eval, tokenizer, cfg["max_seq_length"])
-    collator = make_manual_collator(tokenizer)
-
-    training_args = TrainingArguments(
-        output_dir=str(out),
-        per_device_train_batch_size=cfg["per_device_train_batch_size"],
-        per_device_eval_batch_size=cfg["per_device_train_batch_size"],
-        gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
-        learning_rate=cfg["learning_rate"],
-        num_train_epochs=cfg["num_train_epochs"],
-        logging_steps=cfg["logging_steps"],
-        save_steps=cfg["save_steps"],
-        save_strategy="steps",
-        eval_strategy="steps",
-        eval_steps=cfg["save_steps"],
-        report_to="none",
-        fp16=False,
-        bf16=False,
-        remove_unused_columns=False,
-        seed=cfg["seed"],
-    )
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=tokenized,
-        eval_dataset=tokenized_eval,
-        data_collator=collator,
-    )
-    print(json.dumps({
-        "event": "training_start",
-        "train_records": len(tokenized),
-        "eval_records": len(tokenized_eval),
-        "epochs": cfg["num_train_epochs"],
-        "batch_size": cfg["per_device_train_batch_size"],
-        "gradient_accumulation_steps": cfg["gradient_accumulation_steps"],
-        "output": str(out),
-        "resume_from": checkpoint,
-    }, ensure_ascii=False))
-    trainer.train(resume_from_checkpoint=checkpoint)
-    model.save_pretrained(out)
-    tokenizer.save_pretrained(out)
     hardware = {
         "gpu": props.name,
         "vram_gb": round(props.total_memory / 1024**3, 2),
@@ -278,17 +144,146 @@ def run(args: argparse.Namespace) -> dict:
         "torch": torch.__version__,
         "unsloth": unsloth.__version__,
     }
+    print(
+        json.dumps(
+            {
+                "event": "production_hardware",
+                **hardware,
+                "model": model_name,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    model, processor = FastLanguageModel.from_pretrained(
+        model_name=model_name,
+        max_seq_length=cfg["max_seq_length"],
+        load_in_4bit=True,
+        load_in_16bit=False,
+        full_finetuning=False,
+    )
+    tokenizer = getattr(processor, "tokenizer", processor)
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=16,
+        target_modules=[
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
+        lora_alpha=32,
+        lora_dropout=0.05,
+        bias="none",
+        use_gradient_checkpointing="unsloth",
+        random_state=cfg["seed"],
+        max_seq_length=cfg["max_seq_length"],
+    )
+    if hasattr(model, "config"):
+        model.config.use_cache = False
+
+    dataset, evaluation, data_paths = load_training_dataset(manifest)
+    formatted = format_dataset(dataset, tokenizer)
+    formatted_eval = format_dataset(evaluation, tokenizer)
+
+    trainer = SFTTrainer(
+        model=model,
+        processing_class=tokenizer,
+        train_dataset=formatted,
+        eval_dataset=formatted_eval,
+        dataset_text_field="text",
+        args=SFTConfig(
+            output_dir=str(out),
+            max_length=cfg["max_seq_length"],
+            per_device_train_batch_size=cfg["per_device_train_batch_size"],
+            per_device_eval_batch_size=cfg["per_device_train_batch_size"],
+            gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
+            learning_rate=cfg["learning_rate"],
+            num_train_epochs=cfg["num_train_epochs"],
+            warmup_ratio=0.05,
+            max_grad_norm=0.3,
+            logging_steps=cfg["logging_steps"],
+            save_steps=cfg["save_steps"],
+            save_strategy="steps",
+            save_total_limit=3,
+            eval_steps=cfg["eval_steps"],
+            eval_strategy="steps",
+            optim="adamw_8bit",
+            dataset_num_proc=1,
+            report_to="none",
+            seed=cfg["seed"],
+            remove_unused_columns=False,
+        ),
+    )
+
+    print(
+        json.dumps(
+            {
+                "event": "training_start",
+                "train_records": len(formatted),
+                "eval_records": len(formatted_eval),
+                "epochs": cfg["num_train_epochs"],
+                "effective_batch_size": (
+                    cfg["per_device_train_batch_size"] * cfg["gradient_accumulation_steps"]
+                ),
+                "save_steps": cfg["save_steps"],
+                "eval_steps": cfg["eval_steps"],
+                "output": str(out),
+                "resume_from": checkpoint,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    result = trainer.train(resume_from_checkpoint=checkpoint)
+    training_result = {
+        "global_step": int(result.global_step),
+        "training_loss": float(result.training_loss),
+        "train_runtime": float(result.metrics.get("train_runtime", 0.0)),
+        "train_samples_per_second": float(result.metrics.get("train_samples_per_second", 0.0)),
+        "train_steps_per_second": float(result.metrics.get("train_steps_per_second", 0.0)),
+    }
+    (out / "training_result.json").write_text(
+        json.dumps(training_result, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(json.dumps({"event": "training_complete", **training_result}, ensure_ascii=False))
+
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(adapter_dir)
+    tokenizer.save_pretrained(adapter_dir)
+    print(json.dumps({"event": "export_complete", "path": str(adapter_dir)}, ensure_ascii=False))
+
     evidence_path = out / "training_evidence.json"
     evidence = write_evidence(
         evidence_path,
         root=REPO_ROOT,
-        adapter_dir=out,
-        dataset_paths=data_paths,
+        adapter_dir=adapter_dir,
+        dataset_paths=[REPO_ROOT / p for p in data_paths],
         config=cfg,
         hardware=hardware,
         model=model_name,
     )
-    return {"output": str(out), "evidence": evidence}
+    print(
+        json.dumps(
+            {
+                "event": "evidence_complete",
+                "path": str(evidence_path),
+                "adapter_sha256": evidence["adapter_sha256"],
+                "dataset_sha256": evidence["dataset_sha256"],
+            },
+            ensure_ascii=False,
+        )
+    )
+    return {
+        "output": str(out),
+        "adapter": str(adapter_dir),
+        "evidence": str(evidence_path),
+        "training_result": training_result,
+    }
 
 
 if __name__ == "__main__":
