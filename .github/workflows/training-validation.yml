@@ -79,7 +79,7 @@ jobs:
           grep -q '^torch==' training/environment/requirements-colab-gpu.txt
           grep -q '^transformers==' training/environment/requirements-colab-gpu.txt
           grep -q '^unsloth==' training/environment/requirements-colab-gpu.txt
-          grep -q '^trl==0.28.0$' training/environment/requirements-colab-gpu.txt
+          grep -q '^trl==0.24.0$' training/environment/requirements-colab-gpu.txt
           grep -q '^pillow==' training/environment/requirements-colab-gpu.txt
           grep -q '^transformers==5.5.0$' training/environment/requirements-colab-gpu.txt
           echo 'PINNED_ENVIRONMENT_SPEC=PASS'
