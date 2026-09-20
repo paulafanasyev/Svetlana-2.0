@@ -21,7 +21,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 REQUIREMENTS = Path('training/environment/requirements-colab-gpu.txt')
-required_names = ('transformers', 'trl', 'unsloth', 'datasets', 'accelerate', 'peft')
+required_names = ('transformers', 'trl', 'unsloth', 'unsloth-zoo', 'datasets', 'accelerate', 'peft')
 pins = {}
 for line in REQUIREMENTS.read_text(encoding='utf-8').splitlines():
     match = re.fullmatch(r'([A-Za-z0-9_.-]+)==([^\s]+)', line.strip())
@@ -32,7 +32,7 @@ missing_pins = [name for name, expected in EXPECTED.items() if not expected]
 if missing_pins:
     raise SystemExit(f'PACKAGE_PIN_SPEC_FAIL: missing exact pins for {missing_pins}')
 for name in EXPECTED:
-    importlib.import_module(name)
+    importlib.import_module('unsloth_zoo' if name == 'unsloth-zoo' else name)
 for name, expected in EXPECTED.items():
     actual = version(name)
     # CUDA wheels can expose a local suffix such as +cu126.
