@@ -52,6 +52,7 @@ def test_adapter_artifact_must_be_non_empty():
 def test_environment_gate_uses_the_single_pinned_requirements_file():
     assert "requirements-colab-gpu.txt" in SCRIPT
     assert "PACKAGE_PIN_FAIL" in SCRIPT
+    assert "unsloth-zoo" in SCRIPT
     assert "0.28.0" not in SCRIPT
 
 def test_production_can_reuse_completed_training_for_evidence_recovery():
