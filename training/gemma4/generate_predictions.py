@@ -34,8 +34,10 @@ def main() -> None:
     if args.max_new_tokens <= 0:
         parser.error("--max-new-tokens must be positive")
 
-    from unsloth import FastLanguageModel
+    # Import Unsloth before its submodules so runtime patches are initialized first.
+    import unsloth
     import torch
+    from unsloth import FastLanguageModel
 
     if not torch.cuda.is_available():
         raise RuntimeError(
