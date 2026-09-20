@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,13 +36,18 @@ class TrainingEvidenceTests(unittest.TestCase):
             adapter = root / "outputs" / "adapter"
             adapter.mkdir(parents=True)
             (adapter / "README.md").write_text("adapter", encoding="utf-8")
-            evidence = build_evidence(
-                root=root,
-                adapter_dir=Path("outputs/adapter") if Path.cwd() == root else adapter,
-                dataset_paths=[],
-                config={},
-                hardware={},
-            )
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(root)
+                evidence = build_evidence(
+                    root=root,
+                    adapter_dir=Path("outputs/adapter"),
+                    dataset_paths=[],
+                    config={},
+                    hardware={},
+                )
+            finally:
+                os.chdir(previous_cwd)
             self.assertEqual(evidence["adapter_files"], ["outputs/adapter/README.md"])
 
     def test_hash_is_stable_for_equivalent_repository_relative_paths(self):
