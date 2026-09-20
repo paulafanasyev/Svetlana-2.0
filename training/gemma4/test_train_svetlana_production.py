@@ -124,3 +124,17 @@ def test_production_uses_completion_only_sft_loss():
     assert 'dataset_text_field="text"' not in source
     assert '"prompt": messages[:-1]' in source
     assert '"completion": [messages[-1]]' in source
+
+
+def test_production_uses_full_linear_lora_and_zero_dropout():
+    source = Path(__file__).with_name("train_svetlana_production.py").read_text(encoding="utf-8")
+    assert 'target_modules="all-linear"' in source
+    assert "lora_dropout=0.0" in source
+    assert 'target_modules=[' not in source
+
+
+def test_training_objective_runtime_gate_is_present():
+    source = Path(__file__).with_name("train_svetlana_production.py").read_text(encoding="utf-8")
+    assert '"event": "training_objective_gate_pass"' in source
+    assert "supervised_tokens <= 0" in source
+    assert "supervised_tokens >= total_tokens" in source
