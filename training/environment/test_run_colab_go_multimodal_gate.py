@@ -47,3 +47,9 @@ def test_baseline_is_measurement_only():
 def test_adapter_artifact_must_be_non_empty():
     assert 'test -d "$ADAPTER"' in SCRIPT
     assert 'test -n "$(find "$ADAPTER" -type f -print -quit)"' in SCRIPT
+
+
+def test_environment_gate_uses_the_single_pinned_requirements_file():
+    assert "requirements-colab-gpu.txt" in SCRIPT
+    assert "PACKAGE_PIN_FAIL" in SCRIPT
+    assert "0.28.0" not in SCRIPT
