@@ -203,6 +203,11 @@ def run(args: argparse.Namespace) -> dict:
             gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
             learning_rate=cfg["learning_rate"],
             num_train_epochs=cfg["num_train_epochs"],
+            # Tesla T4 does not support native BF16. Gemma 4/Unsloth also
+            # reports that FP16 is not supported for this model, so force FP32
+            # to prevent TRL/Transformers from implicitly enabling BF16.
+            bf16=False,
+            fp16=False,
             warmup_ratio=0.05,
             max_grad_norm=0.3,
             logging_steps=cfg["logging_steps"],
