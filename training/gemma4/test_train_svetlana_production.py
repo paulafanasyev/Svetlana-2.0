@@ -71,7 +71,7 @@ def test_production_supports_evidence_only_recovery():
     assert 'training_result_path = out / "training_result.json"' in source
     assert "global_step" in source
 
-def test_format_dataset_is_non_batched_and_returns_one_text_per_example():
+def test_format_dataset_is_non_batched_and_splits_final_assistant_completion():
     class FakeDataset:
         column_names = ["messages", "id"]
 
@@ -79,19 +79,48 @@ def test_format_dataset_is_non_batched_and_returns_one_text_per_example():
             assert kwargs["batched"] is False
             assert kwargs["remove_columns"] == self.column_names
             rows = [
-                {"messages": [{"role": "user", "content": "Привет"}], "id": "1"},
-                {"messages": [{"role": "user", "content": "Проверка"}], "id": "2"},
+                {
+                    "messages": [
+                        {"role": "system", "content": "Система"},
+                        {"role": "user", "content": "Привет"},
+                        {"role": "assistant", "content": "Ответ"},
+                    ],
+                    "id": "1",
+                },
+                {
+                    "messages": [
+                        {"role": "user", "content": "Проверка"},
+                        {"role": "assistant", "content": "Готово"},
+                    ],
+                    "id": "2",
+                },
             ]
             converted = [fn(row) for row in rows]
-            assert all(isinstance(row["text"], str) and row["text"].strip() for row in converted)
+            assert all(isinstance(row["prompt"], list) for row in converted)
+            assert all(isinstance(row["completion"], list) for row in converted)
+            assert all(row["completion"][0]["role"] == "assistant" for row in converted)
             return converted
 
-    class FakeTokenizer:
-        def apply_chat_template(self, messages, tokenize, add_generation_prompt):
-            assert tokenize is False
-            assert add_generation_prompt is False
-            return messages[0]["content"] + " <eos>"
-
-    result = format_dataset(FakeDataset(), FakeTokenizer())
+    result = format_dataset(FakeDataset())
     assert len(result) == 2
-    assert result[0]["text"] == "Привет <eos>"
+    assert result[0]["prompt"][-1]["role"] == "user"
+    assert result[0]["completion"][0]["content"] == "Ответ"
+
+
+def test_format_dataset_rejects_examples_without_final_assistant():
+    class FakeDataset:
+        column_names = ["messages"]
+
+        def map(self, fn, **kwargs):
+            return fn({"messages": [{"role": "user", "content": "Нет ответа"}]})
+
+    with pytest.raises(ValueError, match="end with an assistant message"):
+        format_dataset(FakeDataset())
+
+
+def test_production_uses_completion_only_sft_loss():
+    source = Path(__file__).with_name("train_svetlana_production.py").read_text(encoding="utf-8")
+    assert "completion_only_loss=True" in source
+    assert 'dataset_text_field="text"' not in source
+    assert '"prompt": messages[:-1]' in source
+    assert '"completion": [messages[-1]]' in source
