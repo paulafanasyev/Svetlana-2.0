@@ -27,6 +27,7 @@ def test_production_config_is_deterministic_by_default(monkeypatch):
     assert cfg["num_train_epochs"] == 3
     assert cfg["max_seq_length"] == 2048
     assert cfg["per_device_train_batch_size"] == 1
+    assert cfg["gradient_accumulation_steps"] == 4
     assert cfg["save_steps"] == 25
     assert cfg["eval_steps"] == 25
     assert cfg["logging_steps"] == 5
