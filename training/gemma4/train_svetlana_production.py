@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
 from pathlib import Path
@@ -261,6 +262,16 @@ def run(args: argparse.Namespace) -> dict:
     formatted = format_dataset(dataset)
     formatted_eval = format_dataset(evaluation)
 
+    updates_per_epoch = math.ceil(
+        len(formatted)
+        / (
+            cfg["per_device_train_batch_size"]
+            * cfg["gradient_accumulation_steps"]
+        )
+    )
+    total_steps = updates_per_epoch * cfg["num_train_epochs"]
+    warmup_steps = max(1, round(total_steps * 0.05))
+
     trainer = SFTTrainer(
         model=model,
         processing_class=tokenizer,
@@ -280,7 +291,7 @@ def run(args: argparse.Namespace) -> dict:
             bf16=False,
             fp16=False,
             completion_only_loss=True,
-            warmup_ratio=0.05,
+            warmup_steps=warmup_steps,
             max_grad_norm=0.3,
             logging_steps=cfg["logging_steps"],
             save_steps=cfg["save_steps"],
