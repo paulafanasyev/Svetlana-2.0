@@ -57,6 +57,7 @@ def main() -> None:
                     "id": row["id"],
                     "category": row.get("category"),
                     "failed_checks": [name for name, value in row["checks"].items() if not value],
+                    "generated": row.get("generated", ""),
                 }
             )
     report = {
