@@ -16,7 +16,7 @@ def load_config() -> dict:
     return {
         "max_seq_length": int(os.getenv("SVETLANA_MAX_SEQ_LENGTH", "2048")),
         "per_device_train_batch_size": int(os.getenv("SVETLANA_BATCH_SIZE", "1")),
-        "gradient_accumulation_steps": int(os.getenv("SVETLANA_GRAD_ACCUM", "8")),
+        "gradient_accumulation_steps": int(os.getenv("SVETLANA_GRAD_ACCUM", "4")),
         "learning_rate": float(os.getenv("SVETLANA_LEARNING_RATE", "2e-5")),
         "num_train_epochs": int(os.getenv("SVETLANA_EPOCHS", "3")),
         "seed": int(os.getenv("SVETLANA_SEED", "3407")),
