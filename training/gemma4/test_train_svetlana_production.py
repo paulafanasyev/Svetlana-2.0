@@ -113,7 +113,12 @@ def test_format_dataset_rejects_examples_without_final_assistant():
         column_names = ["messages"]
 
         def map(self, fn, **kwargs):
-            return fn({"messages": [{"role": "user", "content": "Нет ответа"}]})
+            return fn({
+                "messages": [
+                    {"role": "user", "content": "Запрос"},
+                    {"role": "user", "content": "Нет ответа"},
+                ]
+            })
 
     with pytest.raises(ValueError, match="end with an assistant message"):
         format_dataset(FakeDataset())
@@ -131,6 +136,18 @@ def test_production_uses_explicit_warmup_steps():
     source = Path(__file__).with_name("train_svetlana_production.py").read_text(encoding="utf-8")
     assert "warmup_steps=warmup_steps" in source
     assert "warmup_ratio=0.05" not in source
+
+def test_production_requires_final_configured_optimizer_step():
+    source = Path(__file__).with_name("train_svetlana_production.py").read_text(encoding="utf-8")
+    assert "if int(result.global_step) != total_steps:" in source
+    assert '"expected_global_step": total_steps' in source
+
+
+def test_evidence_recovery_requires_completed_training_steps():
+    source = Path(__file__).with_name("train_svetlana_production.py").read_text(encoding="utf-8")
+    assert "expected_global_steps" in source
+    assert "global_step != expected_global_steps" in source
+
 
 def test_production_uses_full_linear_lora_and_zero_dropout():
     source = Path(__file__).with_name("train_svetlana_production.py").read_text(encoding="utf-8")
