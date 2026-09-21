@@ -132,8 +132,27 @@ def write_existing_evidence(args: argparse.Namespace) -> dict:
         training_result = json.loads(training_result_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid training result JSON: {training_result_path}") from exc
-    if int(training_result.get("global_step", 0)) <= 0:
-        raise ValueError("Training result does not prove any optimizer steps were completed")
+
+    cfg = load_config()
+    train_dataset, _, _ = load_training_dataset(manifest)
+    formatted_train = format_dataset(train_dataset)
+    updates_per_epoch = math.ceil(
+        len(formatted_train)
+        / (cfg["per_device_train_batch_size"] * cfg["gradient_accumulation_steps"])
+    )
+    expected_global_steps = updates_per_epoch * cfg["num_train_epochs"]
+    global_step = int(training_result.get("global_step", 0))
+    recorded_expected = int(training_result.get("expected_global_step", expected_global_steps))
+    if recorded_expected != expected_global_steps:
+        raise ValueError(
+            f"Training result expected_global_step does not match current config: "
+            f"{recorded_expected}/{expected_global_steps}"
+        )
+    if global_step != expected_global_steps:
+        raise ValueError(
+            f"Training result does not prove completion: global_step={global_step}, "
+            f"expected={expected_global_steps}"
+        )
 
     adapter_dir = (out / "adapter").resolve()
     if not adapter_dir.is_dir():
@@ -236,6 +255,10 @@ def run(args: argparse.Namespace) -> dict:
         )
     )
 
+    dataset, evaluation, data_paths = load_training_dataset(manifest)
+    formatted = format_dataset(dataset)
+    formatted_eval = format_dataset(evaluation)
+
     model, processor = FastLanguageModel.from_pretrained(
         model_name=model_name,
         max_seq_length=cfg["max_seq_length"],
@@ -257,10 +280,6 @@ def run(args: argparse.Namespace) -> dict:
     )
     if hasattr(model, "config"):
         model.config.use_cache = False
-
-    dataset, evaluation, data_paths = load_training_dataset(manifest)
-    formatted = format_dataset(dataset)
-    formatted_eval = format_dataset(evaluation)
 
     updates_per_epoch = math.ceil(
         len(formatted)
@@ -349,8 +368,14 @@ def run(args: argparse.Namespace) -> dict:
     )
 
     result = trainer.train(resume_from_checkpoint=checkpoint)
+    if int(result.global_step) != total_steps:
+        raise RuntimeError(
+            f"Training did not reach configured final optimizer step: "
+            f"{result.global_step}/{total_steps}"
+        )
     training_result = {
         "global_step": int(result.global_step),
+        "expected_global_step": total_steps,
         "training_loss": float(result.training_loss),
         "train_runtime": float(result.metrics.get("train_runtime", 0.0)),
         "train_samples_per_second": float(result.metrics.get("train_samples_per_second", 0.0)),
@@ -365,6 +390,9 @@ def run(args: argparse.Namespace) -> dict:
     adapter_dir.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(adapter_dir)
     tokenizer.save_pretrained(adapter_dir)
+    adapter_files = [path for path in adapter_dir.rglob("*") if path.is_file()]
+    if not adapter_files:
+        raise RuntimeError(f"Adapter export produced no files: {adapter_dir}")
     print(json.dumps({"event": "export_complete", "path": str(adapter_dir)}, ensure_ascii=False))
 
     evidence_path = out / "training_evidence.json"
