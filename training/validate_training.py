@@ -14,6 +14,40 @@ from urllib.parse import urlparse
 
 SUPPORTED_TRAINING_MODES = {"text_smoke", "text_production", "multimodal_agent"}
 
+SUPPORTED_MESSAGE_ROLES = {"system", "user", "assistant", "tool"}
+
+
+def _validate_messages(record: dict[str, Any], path: Path, line_no: int) -> None:
+    messages = record.get("messages")
+    context = f"record {record.get('id', '<unknown>')} at {path}:{line_no}"
+    if not isinstance(messages, list) or len(messages) < 2:
+        raise ValueError(f"{context} must contain a prompt and assistant completion")
+    for message_index, message in enumerate(messages, 1):
+        if not isinstance(message, dict):
+            raise ValueError(f"{context} message {message_index} must be an object")
+        role = message.get("role")
+        if role not in SUPPORTED_MESSAGE_ROLES:
+            raise ValueError(f"{context} message {message_index} has unsupported role: {role!r}")
+        if "content" not in message:
+            raise ValueError(f"{context} message {message_index} is missing content")
+        content = message["content"]
+        if isinstance(content, str):
+            if not content.strip():
+                raise ValueError(f"{context} message {message_index} has empty content")
+        elif isinstance(content, list):
+            if not content:
+                raise ValueError(f"{context} message {message_index} has empty content")
+        else:
+            raise ValueError(f"{context} message {message_index} content must be a string or list")
+    if messages[-1].get("role") != "assistant":
+        raise ValueError(f"{context} must end with an assistant message")
+    final_content = messages[-1].get("content")
+    if isinstance(final_content, str) and not final_content.strip():
+        raise ValueError(f"{context} assistant completion must be non-empty")
+    if isinstance(final_content, list) and not final_content:
+        raise ValueError(f"{context} assistant completion must be non-empty")
+
+
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     rows = []
@@ -142,8 +176,8 @@ def _validate_records(rows: list[dict[str, Any]], path: Path, root: Path, requir
     for line_no, row in enumerate(rows, 1):
         if require_messages and "messages" not in row:
             raise ValueError(f"record lacks messages: {path}:{line_no}")
-        if require_messages and not isinstance(row.get("messages"), list):
-            raise ValueError(f"messages must be a list: {path}:{line_no}")
+        if require_messages:
+            _validate_messages(row, path, line_no)
         _check_privacy(row)
         _check_rag_fact(row, path, line_no)
         _check_media(row, root)
