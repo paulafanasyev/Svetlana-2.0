@@ -127,6 +127,11 @@ def test_production_uses_completion_only_sft_loss():
     assert '"completion": [messages[-1]]' in source
 
 
+def test_production_uses_explicit_warmup_steps():
+    source = Path(__file__).with_name("train_svetlana_production.py").read_text(encoding="utf-8")
+    assert "warmup_steps=warmup_steps" in source
+    assert "warmup_ratio=0.05" not in source
+
 def test_production_uses_full_linear_lora_and_zero_dropout():
     source = Path(__file__).with_name("train_svetlana_production.py").read_text(encoding="utf-8")
     assert 'target_modules="all-linear"' in source
