@@ -176,7 +176,7 @@ def _validate_records(rows: list[dict[str, Any]], path: Path, root: Path, requir
     for line_no, row in enumerate(rows, 1):
         if require_messages and "messages" not in row:
             raise ValueError(f"record lacks messages: {path}:{line_no}")
-        if require_messages:
+        if require_messages and row.get("record_type") != "RAG_FACT":
             _validate_messages(row, path, line_no)
         _check_privacy(row)
         _check_rag_fact(row, path, line_no)
