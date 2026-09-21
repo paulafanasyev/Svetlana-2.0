@@ -58,6 +58,37 @@ class TrainingValidationTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg="privacy classification is mandatory"):
                 validate_jsonl_splits([train], [], root)
 
+    def test_jsonl_validator_rejects_example_without_final_assistant(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset = root / "bad.jsonl"
+            dataset.write_text(
+                json.dumps({
+                    "messages": [
+                        {"role": "user", "content": "Запрос"},
+                        {"role": "user", "content": "Нет ответа"},
+                    ],
+                    "privacy_classification": "synthetic_no_personal_data",
+                }) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "end with an assistant message"):
+                validate_jsonl_splits([dataset], [], root)
+
+    def test_jsonl_validator_rejects_too_short_conversation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset = root / "bad.jsonl"
+            dataset.write_text(
+                json.dumps({
+                    "messages": [{"role": "user", "content": "Только запрос"}],
+                    "privacy_classification": "synthetic_no_personal_data",
+                }) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "prompt and assistant completion"):
+                validate_jsonl_splits([dataset], [], root)
+
     def test_reference_knowledge_uses_source_record_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
