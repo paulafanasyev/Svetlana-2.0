@@ -36,8 +36,8 @@ def main() -> None:
 
     # Import Unsloth before its submodules so runtime patches are initialized first.
     import unsloth
-    import torch
     from unsloth import FastLanguageModel
+    import torch
 
     if not torch.cuda.is_available():
         raise RuntimeError(
