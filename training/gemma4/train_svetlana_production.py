@@ -117,7 +117,6 @@ def write_existing_evidence(args: argparse.Namespace) -> dict:
     if not torch.cuda.is_available():
         raise RuntimeError("Evidence recovery requires CUDA so hardware evidence is real")
 
-    cfg = load_config()
     out = Path(
         args.output
         or os.getenv(
@@ -220,8 +219,18 @@ def run(args: argparse.Namespace) -> dict:
         raise RuntimeError("No CUDA GPU detected; production training requires GPU evidence")
 
     cfg = load_config()
-    if cfg["save_steps"] <= 0 or cfg["eval_steps"] <= 0:
-        raise ValueError("save/eval steps must be positive")
+    for key in (
+        "max_seq_length",
+        "per_device_train_batch_size",
+        "gradient_accumulation_steps",
+        "learning_rate",
+        "num_train_epochs",
+        "save_steps",
+        "logging_steps",
+        "eval_steps",
+    ):
+        if cfg[key] <= 0:
+            raise ValueError(f"{key} must be positive")
 
     model_name = os.getenv("SVETLANA_BASE_MODEL", manifest.get("base_model", DEFAULT_MODEL))
     out = Path(
@@ -290,6 +299,13 @@ def run(args: argparse.Namespace) -> dict:
     )
     total_steps = updates_per_epoch * cfg["num_train_epochs"]
     warmup_steps = max(1, round(total_steps * 0.05))
+    if total_steps <= 0:
+        raise RuntimeError("Calculated training optimizer steps must be positive")
+    if cfg["save_steps"] > total_steps:
+        raise ValueError(
+            f"save_steps={cfg['save_steps']} exceeds total optimizer steps={total_steps}; "
+            "at least one resumable checkpoint is required"
+        )
 
     trainer = SFTTrainer(
         model=model,
