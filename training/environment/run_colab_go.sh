@@ -11,6 +11,9 @@ mkdir -p "$OUT"
 
 python -m pip install --upgrade pip
 python -m pip install -r training/environment/requirements-colab-gpu.txt
+# Text-only Gemma4 training does not use TorchAudio. Remove preinstalled mismatched wheels
+# from hosted Colab images so CUDA 12.8/12.6 warnings cannot mask real failures.
+python -m pip uninstall -y torchaudio >/dev/null 2>&1 || true
 
 python - <<'PY'
 import importlib
