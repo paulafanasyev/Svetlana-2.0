@@ -202,6 +202,9 @@
     "tool_contracts": "training/knowledge/SVETLANA_TOOL_CONTRACTS_V1.json",
     "frozen_benchmark_comparator": "training/evaluation/compare_frozen_benchmark.py",
     "frozen_benchmark_comparator_test": "training/evaluation/test_compare_frozen_benchmark.py",
-    "frozen_benchmark_validator_test": "training/evaluation/test_validate_benchmark_manifest.py"
+    "frozen_benchmark_validator_test": "training/evaluation/test_validate_benchmark_manifest.py",
+    "frozen_benchmark_generation_config": "training/evaluation/FROZEN_BENCHMARK_GENERATION_V1.json",
+    "frozen_benchmark_prediction_runner": "training/evaluation/generate_frozen_benchmark_predictions.py",
+    "frozen_benchmark_prediction_runner_test": "training/evaluation/test_generate_frozen_benchmark_predictions.py"
   }
 }
