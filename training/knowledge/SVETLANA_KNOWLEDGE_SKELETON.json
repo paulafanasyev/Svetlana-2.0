@@ -719,6 +719,44 @@
         "verification",
         "security_notes"
       ]
+    },
+    {
+      "id": "02.agent.recovery",
+      "parent": "02.agent",
+      "title": "Failure recovery and UNKNOWN_STATE",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_recovery",
+      "runtime_dependency": "tool",
+      "status": "NOT_PROVEN",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "02.agent.verification",
+      "parent": "02.agent",
+      "title": "Postcondition and execution verification",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_verification",
+      "runtime_dependency": "mixed",
+      "status": "NOT_PROVEN",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
     }
   ]
 }
