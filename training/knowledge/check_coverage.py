@@ -101,6 +101,38 @@ def main(root: Path) -> int:
         if node_id not in linked_by_skill:
             errors.append(f"skill map: node {node_id} is not assigned to any skill")
 
+    knowledge_pack_paths = (
+        root / "training/knowledge/SVETLANA_KNOWLEDGE_PACK_V1.json",
+        root / "training/knowledge/SVETLANA_KNOWLEDGE_PACK_V2.json",
+        root / "training/knowledge/SVETLANA_DOCUMENT_INTELLIGENCE_PACK_V1.json",
+    )
+    knowledge_sources: dict[str, list[str]] = {}
+    for path in knowledge_pack_paths:
+        if not path.is_file():
+            continue
+        data = load_json(path)
+        seen_in_pack: set[str] = set()
+        for entry in data.get("entries", []):
+            node_id = entry.get("node_id")
+            if not node_id:
+                errors.append(f"knowledge: {path} entry missing node_id")
+                continue
+            if node_id not in node_map:
+                errors.append(f"knowledge: {path} references unknown node {node_id}")
+                continue
+            if node_id in seen_in_pack:
+                errors.append(f"knowledge: duplicate node {node_id} in {path}")
+            seen_in_pack.add(node_id)
+            knowledge_sources.setdefault(node_id, []).append(str(path))
+    missing_knowledge = [node_id for node_id in node_map if node_id not in knowledge_sources]
+    if missing_knowledge:
+        errors.extend(f"knowledge: node {node_id} has no structured knowledge entry" for node_id in missing_knowledge)
+    duplicate_knowledge = [
+        (node_id, sources) for node_id, sources in knowledge_sources.items() if len(sources) > 1
+    ]
+    for node_id, sources in duplicate_knowledge:
+        errors.append(f"knowledge: node {node_id} is duplicated across packs: {sources}")
+
     train_rows: list[dict[str, Any]] = []
     eval_rows: list[dict[str, Any]] = []
     for item in manifest.get("train", []):
@@ -155,16 +187,7 @@ def main(root: Path) -> int:
         direct_eval = eval_counts.get(node_id, 0)
         inherited_train = sum(train_counts.get(child, 0) for child in covered if child != node_id)
         inherited_eval = sum(eval_counts.get(child, 0) for child in covered if child != node_id)
-        knowledge_links = 0
-        for p in (
-            root / "training/knowledge/SVETLANA_KNOWLEDGE_PACK_V1.json",
-            root / "training/knowledge/SVETLANA_KNOWLEDGE_PACK_V2.json",
-            root / "training/knowledge/SVETLANA_DOCUMENT_INTELLIGENCE_PACK_V1.json",
-        ):
-            if p.is_file():
-                data = load_json(p)
-                if any(x.get("node_id") == node_id for x in data.get("entries", [])):
-                    knowledge_links += 1
+        knowledge_links = len(knowledge_sources.get(node_id, []))
 
         runtime_dep = str(node.get("runtime_dependency", "mixed"))
         runtime_status = "NOT_REQUIRED" if runtime_dep == "none" else contract.get("runtime_rules", {}).get(
