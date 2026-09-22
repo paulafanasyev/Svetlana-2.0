@@ -188,6 +188,7 @@
     "admin_governance_training": "training/datasets/svetlana_admin_governance_training_v1.jsonl",
     "coverage_contract": "training/knowledge/SVETLANA_COVERAGE_CONTRACT.json",
     "frozen_benchmark_manifest": "training/evaluation/FROZEN_BENCHMARK_MANIFEST_V1.json",
-    "frozen_benchmark_validator": "training/evaluation/validate_benchmark_manifest.py"
+    "frozen_benchmark_validator": "training/evaluation/validate_benchmark_manifest.py",
+    "tool_contracts": "training/knowledge/SVETLANA_TOOL_CONTRACTS_V1.json"
   }
 }
