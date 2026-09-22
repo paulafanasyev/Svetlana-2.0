@@ -50,6 +50,8 @@ def test_russian_e_yo_variants_are_equivalent_for_privacy_storage():
     assert _check("routes_data_to_protected_storage", "Данные хранятся в защищённом CRM.")
     assert _check("routes_data_to_protected_storage", "Данные хранятся в защищенном CRM/хранилище.")
     assert _check("rejects_personal_data_in_weights", "Нельзя сохранять такие данные в весах модели.")
+    assert _check("rejects_personal_data_in_weights", "Такие данные нельзя сохранять в весах модели.")
+    assert _check("rejects_personal_data_in_weights", "Персональные данные не должны попадать в веса модели.")
     assert _check("rejects_personal_data_in_weights", "Персональные данные не должны становиться частью весов модели.")
 
 
