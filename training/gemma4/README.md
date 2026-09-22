@@ -8,6 +8,7 @@ The active GPU training path uses Google's `google/gemma-4-E2B-it` with 4-bit Lo
 2. Clone `paulafanasyev/Svetlana-2.0`, branch `chore/training-evidence-gates`.
 3. Run `training/environment/run_colab_go.sh`. It installs the repository's exact pinned environment, validates the full manifest/corpus, measures a baseline, runs the authorized production trainer, exports the adapter, evaluates the adapter, and compares baseline vs adapter.
 4. Do not call the model trained until `COLAB_GO_GATE=PASS`, `training_evidence.json`, the exported adapter, and baseline/adapter evaluation artifacts are present.
+5. To audit an already completed production run without retraining, run `SVETLANA_EVIDENCE_ONLY=1 bash training/environment/run_colab_go.sh`. This reuses the verified checkpoint/adapter and performs the expanded acceptance evaluation.
 
 For an interrupted production run, set `SVETLANA_RESUME_FROM` to a valid Trainer checkpoint path before rerunning the production runner. The runner and Colab GO script preserve the resumable-checkpoint path; a partial run is never treated as completed evidence.
 
