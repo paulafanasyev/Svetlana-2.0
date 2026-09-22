@@ -12,6 +12,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  validate-runtime-code:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install Node dependencies
+        run: npm ci
+      - name: Typecheck runtime code
+        run: npm run typecheck
+      - name: Run ToolRegistry security unit tests
+        run: npm test -- --run src/services/ToolRegistry.test.ts
+
   validate-training-assets:
     runs-on: ubuntu-latest
     steps:
