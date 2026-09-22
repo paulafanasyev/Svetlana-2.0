@@ -1,0 +1,764 @@
+{
+  "schema_version": "1.0",
+  "purpose": "Canonical machine-readable knowledge map for Svetlana 2.0.",
+  "status_vocabulary": [
+    "VERIFIED",
+    "NOT_PROVEN",
+    "PENDING"
+  ],
+  "node_schema": {
+    "required": [
+      "id",
+      "parent",
+      "title",
+      "type",
+      "stability",
+      "training_target",
+      "eval_target",
+      "runtime_dependency",
+      "status"
+    ],
+    "stability": [
+      "stable",
+      "refreshable",
+      "private",
+      "policy"
+    ],
+    "types": [
+      "concept",
+      "skill",
+      "workflow",
+      "tool",
+      "policy",
+      "domain",
+      "governance"
+    ],
+    "training_target": "Behavior and durable procedures only; not mutable/private facts.",
+    "eval_target": "Held-out behavioral tests independent from training examples.",
+    "runtime_dependency": "pipe-separated union of none|retrieval|tool|device|account|mixed; use | when multiple dependencies apply."
+  },
+  "nodes": [
+    {
+      "id": "00.core",
+      "parent": null,
+      "title": "Knowledge Core",
+      "type": "domain",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_core",
+      "runtime_dependency": "mixed",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "00.core.reasoning",
+      "parent": "00.core",
+      "title": "Reasoning and structured problem solving",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_reasoning",
+      "runtime_dependency": "none",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "00.core.uncertainty",
+      "parent": "00.core",
+      "title": "Uncertainty, evidence boundaries, confidence",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_reliability",
+      "runtime_dependency": "mixed",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "00.core.verification",
+      "parent": "00.core",
+      "title": "Verification and state reporting",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_verification",
+      "runtime_dependency": "mixed",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "00.core.recovery",
+      "parent": "00.core",
+      "title": "Failure recovery and UNKNOWN_STATE",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_recovery",
+      "runtime_dependency": "tool",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "00.core.privacy",
+      "parent": "00.core",
+      "title": "Privacy, minimization, secret handling",
+      "type": "policy",
+      "stability": "policy",
+      "training_target": "behavior",
+      "eval_target": "heldout_privacy",
+      "runtime_dependency": "mixed",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "01.communication",
+      "parent": null,
+      "title": "Communication and multimodality",
+      "type": "domain",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_multimodal",
+      "runtime_dependency": "mixed",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "02.agent",
+      "parent": null,
+      "title": "Agent planning and execution",
+      "type": "domain",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_agent",
+      "runtime_dependency": "tool",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "02.agent.registry",
+      "parent": "02.agent",
+      "title": "Provider-neutral tool registry",
+      "type": "tool",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_tool_schema",
+      "runtime_dependency": "tool",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "02.agent.confirmation",
+      "parent": "02.agent",
+      "title": "Human confirmation gates",
+      "type": "policy",
+      "stability": "policy",
+      "training_target": "behavior",
+      "eval_target": "heldout_confirmation",
+      "runtime_dependency": "account|tool",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "03.knowledge",
+      "parent": null,
+      "title": "Retrieval and research",
+      "type": "domain",
+      "stability": "refreshable",
+      "training_target": "behavior",
+      "eval_target": "heldout_research",
+      "runtime_dependency": "retrieval",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "03.knowledge.sources",
+      "parent": "03.knowledge",
+      "title": "Source authority/provenance/freshness",
+      "type": "policy",
+      "stability": "refreshable",
+      "training_target": "behavior",
+      "eval_target": "heldout_sources",
+      "runtime_dependency": "retrieval",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "04.self_employed",
+      "parent": null,
+      "title": "Self-employed domain",
+      "type": "domain",
+      "stability": "refreshable",
+      "training_target": "behavior",
+      "eval_target": "heldout_self_employed",
+      "runtime_dependency": "mixed",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "04.self_employed.crm",
+      "parent": "04.self_employed",
+      "title": "CRM/client lifecycle",
+      "type": "skill",
+      "stability": "refreshable",
+      "training_target": "behavior",
+      "eval_target": "heldout_crm",
+      "runtime_dependency": "account|tool",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "04.self_employed.tax",
+      "parent": "04.self_employed",
+      "title": "NPD/tax workflows",
+      "type": "skill",
+      "stability": "refreshable",
+      "training_target": "behavior",
+      "eval_target": "heldout_tax",
+      "runtime_dependency": "retrieval",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "04.self_employed.documents",
+      "parent": "04.self_employed",
+      "title": "Business documents/contracts/invoices",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_documents",
+      "runtime_dependency": "tool",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "05.marketplace",
+      "parent": null,
+      "title": "Marketplace domain",
+      "type": "domain",
+      "stability": "refreshable",
+      "training_target": "behavior",
+      "eval_target": "heldout_marketplace",
+      "runtime_dependency": "mixed",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "05.marketplace.catalog",
+      "parent": "05.marketplace",
+      "title": "Catalog/product cards/attributes",
+      "type": "skill",
+      "stability": "refreshable",
+      "training_target": "behavior",
+      "eval_target": "heldout_catalog",
+      "runtime_dependency": "tool",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "05.marketplace.seo",
+      "parent": "05.marketplace",
+      "title": "SEO/keywords/site audit",
+      "type": "skill",
+      "stability": "refreshable",
+      "training_target": "behavior",
+      "eval_target": "heldout_seo",
+      "runtime_dependency": "tool|retrieval",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "05.marketplace.competitors",
+      "parent": "05.marketplace",
+      "title": "Competitor/market intelligence",
+      "type": "skill",
+      "stability": "refreshable",
+      "training_target": "behavior",
+      "eval_target": "heldout_market_intel",
+      "runtime_dependency": "retrieval",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "05.marketplace.media",
+      "parent": "05.marketplace",
+      "title": "Image/video/presentation workflows",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_media",
+      "runtime_dependency": "tool",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "06.ya_zaryadka",
+      "parent": null,
+      "title": "Я‑Зарядка domain",
+      "type": "policy",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_child_safe",
+      "runtime_dependency": "mixed",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "06.ya_zaryadka.education",
+      "parent": "06.ya_zaryadka",
+      "title": "Education/game interaction",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_education",
+      "runtime_dependency": "none|tool",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "06.ya_zaryadka.voice",
+      "parent": "06.ya_zaryadka",
+      "title": "Voice/TTS/avatar behavior",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_voice_avatar",
+      "runtime_dependency": "tool",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ],
+      "status": "PENDING"
+    },
+    {
+      "id": "07.admin",
+      "parent": null,
+      "title": "Admin/governance",
+      "type": "domain",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_admin",
+      "runtime_dependency": "account|tool",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "07.admin.identity",
+      "parent": "07.admin",
+      "title": "Account/project/tenant authorization",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "heldout_identity",
+      "eval_target": "account",
+      "runtime_dependency": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ],
+      "status": "PENDING"
+    },
+    {
+      "id": "07.admin.models",
+      "parent": "07.admin",
+      "title": "Model/provider lifecycle",
+      "type": "skill",
+      "stability": "refreshable",
+      "training_target": "behavior",
+      "eval_target": "heldout_model_ops",
+      "runtime_dependency": "tool",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "07.admin.datasets",
+      "parent": "07.admin",
+      "title": "Dataset provenance and quality",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_dataset_governance",
+      "runtime_dependency": "tool",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "07.admin.evaluation",
+      "parent": "07.admin",
+      "title": "Evaluation and regression",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_eval_governance",
+      "runtime_dependency": "tool",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "08.discovery",
+      "parent": null,
+      "title": "Continuous technology/open-source discovery",
+      "type": "domain",
+      "stability": "refreshable",
+      "training_target": "behavior",
+      "eval_target": "heldout_discovery",
+      "runtime_dependency": "retrieval",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "08.discovery.code",
+      "parent": "08.discovery",
+      "title": "Code/license/maturity assessment",
+      "type": "skill",
+      "stability": "refreshable",
+      "training_target": "behavior",
+      "eval_target": "heldout_oss_review",
+      "runtime_dependency": "retrieval",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "08.discovery.security",
+      "parent": "08.discovery",
+      "title": "Security/privacy assessment of external projects",
+      "type": "skill",
+      "stability": "refreshable",
+      "training_target": "behavior",
+      "eval_target": "heldout_oss_security",
+      "runtime_dependency": "retrieval",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "09.runtime",
+      "parent": null,
+      "title": "Runtime/product integration",
+      "type": "domain",
+      "stability": "stable",
+      "training_target": "workflow",
+      "eval_target": "heldout_runtime",
+      "runtime_dependency": "device|tool",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "09.runtime.android",
+      "parent": "09.runtime",
+      "title": "Android/device execution and verification",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_android",
+      "runtime_dependency": "device",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "09.runtime.web",
+      "parent": "09.runtime",
+      "title": "Browser/computer-use workflows",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_browser",
+      "runtime_dependency": "device|tool",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "10.continuous_learning",
+      "parent": null,
+      "title": "Error-driven corpus expansion",
+      "type": "governance",
+      "stability": "stable",
+      "training_target": "workflow",
+      "eval_target": "heldout_continuous",
+      "runtime_dependency": "mixed",
+      "status": "PENDING",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "02.agent.recovery",
+      "parent": "02.agent",
+      "title": "Failure recovery and UNKNOWN_STATE",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_recovery",
+      "runtime_dependency": "tool",
+      "status": "NOT_PROVEN",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    },
+    {
+      "id": "02.agent.verification",
+      "parent": "02.agent",
+      "title": "Postcondition and execution verification",
+      "type": "skill",
+      "stability": "stable",
+      "training_target": "behavior",
+      "eval_target": "heldout_verification",
+      "runtime_dependency": "mixed",
+      "status": "NOT_PROVEN",
+      "fields": [
+        "definition",
+        "boundaries",
+        "examples",
+        "failure_modes",
+        "verification",
+        "security_notes"
+      ]
+    }
+  ]
+}

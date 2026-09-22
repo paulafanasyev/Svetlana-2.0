@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "benchmark_id": "SVETLANA_FROZEN_BENCHMARK",
+  "benchmark_version": "1.0",
+  "generation": {
+    "max_seq_length": 1024,
+    "max_new_tokens": 160,
+    "do_sample": false,
+    "use_cache": true,
+    "load_in_4bit": true
+  },
+  "runtime": {
+    "cuda_required": true
+  },
+  "rules": {
+    "baseline_and_candidate_must_use_identical_config": true,
+    "training_loss_is_not_capability_evidence": true
+  }
+}

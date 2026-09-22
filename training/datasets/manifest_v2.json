@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.7",
+  "schema_version": "2.2",
   "purpose": "Single source of truth for the next Svetlana training pipeline.",
   "base_model": "google/gemma-4-E2B-it",
   "runtime_target": "LiteRT-LM",
@@ -58,6 +58,51 @@
       "path": "training/datasets/svetlana_acceptance_hardening_v1.jsonl",
       "format": "messages",
       "role": "acceptance_gate_hardening_v1"
+    },
+    {
+      "path": "training/datasets/svetlana_knowledge_skeleton_expansion_v1.jsonl",
+      "format": "messages",
+      "role": "knowledge_skeleton_gap_expansion_v1"
+    },
+    {
+      "path": "training/datasets/svetlana_knowledge_skeleton_expansion_v2.jsonl",
+      "format": "messages",
+      "role": "knowledge_skeleton_gap_expansion_v2"
+    },
+    {
+      "path": "training/datasets/svetlana_tool_registry_training_v3.jsonl",
+      "format": "messages",
+      "role": "tool_registry_contract_training_v3"
+    },
+    {
+      "path": "training/datasets/svetlana_document_intelligence_training_v1.jsonl",
+      "format": "messages",
+      "role": "document_intelligence_training_v1"
+    },
+    {
+      "path": "training/datasets/svetlana_marketplace_training_v1.jsonl",
+      "format": "messages",
+      "role": "marketplace_workflow_training_v1"
+    },
+    {
+      "path": "training/datasets/svetlana_self_employed_training_v1.jsonl",
+      "format": "messages",
+      "role": "self_employed_workflow_training_v1"
+    },
+    {
+      "path": "training/datasets/svetlana_ya_zaryadka_training_v1.jsonl",
+      "format": "messages",
+      "role": "ya_zaryadka_safety_training_v1"
+    },
+    {
+      "path": "training/datasets/svetlana_admin_governance_training_v1.jsonl",
+      "format": "messages",
+      "role": "admin_governance_training_v1"
+    },
+    {
+      "path": "training/datasets/svetlana_knowledge_skeleton_expansion_v3.jsonl",
+      "format": "messages",
+      "role": "knowledge_skeleton_leaf_gap_expansion_v3"
     }
   ],
   "reference_knowledge": [
@@ -78,6 +123,51 @@
     {
       "path": "training/datasets/svetlana_eval.jsonl",
       "format": "messages"
+    },
+    {
+      "path": "training/evaluation/svetlana_knowledge_skeleton_eval_v1.jsonl",
+      "format": "messages",
+      "role": "knowledge_skeleton_heldout_v1"
+    },
+    {
+      "path": "training/evaluation/svetlana_knowledge_skeleton_eval_v2.jsonl",
+      "format": "messages",
+      "role": "knowledge_skeleton_heldout_v2"
+    },
+    {
+      "path": "training/evaluation/svetlana_tool_registry_eval_v3.jsonl",
+      "format": "messages",
+      "role": "tool_registry_heldout_v3"
+    },
+    {
+      "path": "training/evaluation/svetlana_document_intelligence_eval_v1.jsonl",
+      "format": "messages",
+      "role": "document_intelligence_heldout_v1"
+    },
+    {
+      "path": "training/evaluation/svetlana_marketplace_eval_v1.jsonl",
+      "format": "messages",
+      "role": "marketplace_heldout_v1"
+    },
+    {
+      "path": "training/evaluation/svetlana_self_employed_eval_v1.jsonl",
+      "format": "messages",
+      "role": "self_employed_heldout_v1"
+    },
+    {
+      "path": "training/evaluation/svetlana_ya_zaryadka_eval_v1.jsonl",
+      "format": "messages",
+      "role": "ya_zaryadka_safety_heldout_v1"
+    },
+    {
+      "path": "training/evaluation/svetlana_admin_governance_eval_v1.jsonl",
+      "format": "messages",
+      "role": "admin_governance_heldout_v1"
+    },
+    {
+      "path": "training/evaluation/svetlana_knowledge_skeleton_eval_v3.jsonl",
+      "format": "messages",
+      "role": "knowledge_skeleton_leaf_heldout_v3"
     }
   ],
   "rules": {
@@ -91,5 +181,31 @@
     "multimodal_records_must_be_native_or_explicitly_adapted": true,
     "do_not_start_training_until_multimodal_trainer_is_ready": true,
     "do_not_start_multimodal_training_until_real_media_assets_are_present": true
+  },
+  "metadata": {
+    "knowledge_skeleton": "training/knowledge/SVETLANA_KNOWLEDGE_SKELETON.json",
+    "knowledge_coverage": "training/knowledge/SVETLANA_KNOWLEDGE_COVERAGE.md",
+    "architecture_contract": "docs/SVETLANA_ARCHITECTURE_CONTRACT.md",
+    "curriculum": "training/datasets/SVETLANA_TRAINING_CURRICULUM.md",
+    "knowledge_pack": "training/knowledge/SVETLANA_KNOWLEDGE_PACK_V1.json",
+    "open_source_discovery_log": "training/knowledge/OPEN_SOURCE_DISCOVERY_LOG_2026-09.md",
+    "tool_registry_audit": "docs/TOOL_REGISTRY_STATIC_AUDIT_2026-09.md",
+    "skill_manifests": "training/knowledge/SVETLANA_SKILL_MANIFESTS_V1.json",
+    "document_intelligence_pack": "training/knowledge/SVETLANA_DOCUMENT_INTELLIGENCE_PACK_V1.json",
+    "marketplace_training": "training/datasets/svetlana_marketplace_training_v1.jsonl",
+    "self_employed_training": "training/datasets/svetlana_self_employed_training_v1.jsonl",
+    "ya_zaryadka_training": "training/datasets/svetlana_ya_zaryadka_training_v1.jsonl",
+    "admin_governance_training": "training/datasets/svetlana_admin_governance_training_v1.jsonl",
+    "coverage_contract": "training/knowledge/SVETLANA_COVERAGE_CONTRACT.json",
+    "frozen_benchmark_manifest": "training/evaluation/FROZEN_BENCHMARK_MANIFEST_V1.json",
+    "frozen_benchmark_validator": "training/evaluation/validate_benchmark_manifest.py",
+    "tool_contracts": "training/knowledge/SVETLANA_TOOL_CONTRACTS_V1.json",
+    "frozen_benchmark_comparator": "training/evaluation/compare_frozen_benchmark.py",
+    "frozen_benchmark_comparator_test": "training/evaluation/test_compare_frozen_benchmark.py",
+    "frozen_benchmark_validator_test": "training/evaluation/test_validate_benchmark_manifest.py",
+    "frozen_benchmark_generation_config": "training/evaluation/FROZEN_BENCHMARK_GENERATION_V1.json",
+    "frozen_benchmark_prediction_runner": "training/evaluation/generate_frozen_benchmark_predictions.py",
+    "frozen_benchmark_prediction_runner_test": "training/evaluation/test_generate_frozen_benchmark_predictions.py",
+    "knowledge_pack_v2": "training/knowledge/SVETLANA_KNOWLEDGE_PACK_V2.json"
   }
 }

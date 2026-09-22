@@ -5,7 +5,7 @@
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 export interface ToolInputSchema { type:'object'; properties:Record<string,{type:string;description:string;required?:boolean;enum?:string[]}>; required?:string[]; }
 export interface ToolResult { success:boolean; data?:any; error?:string; requiresConfirmation?:boolean; confirmationMessage?:string; observation?:any; verification?:{status:'PASS'|'FAIL'|'PENDING';confidence:number;details?:string}; requestId?:string; timestamp?:number; }
-export interface Tool { id:string; name:string; description:string; inputSchema:ToolInputSchema; riskLevel:RiskLevel; category:'navigation'|'interaction'|'data'|'system'|'communication'; execute(params:Record<string,any>):Promise<ToolResult>; verify?(params:Record<string,any>,result:ToolResult):Promise<boolean>; isAvailable():Promise<boolean>; }
+export interface Tool { id:string; name:string; description:string; inputSchema:ToolInputSchema; riskLevel:RiskLevel; category:'navigation'|'interaction'|'data'|'system'|'communication'; requiredPermissions?:string[]; execute(params:Record<string,any>):Promise<ToolResult>; verify?(params:Record<string,any>,result:ToolResult):Promise<boolean>; isAvailable():Promise<boolean>; }
 export interface ToolExecutionContext { platform:'android'|'ios'|'windows'|'macos'|'web'; permissions:string[]; environment:Record<string,any>; }
 export interface StructuredToolCall { tool:string; arguments:Record<string,any>; requestId:string; timestamp:number; }
 
@@ -26,6 +26,8 @@ class ToolRegistry {
     // Validate first so malformed requests are deterministic and do not require a device connection.
     const validation=this.validateInput(tool,params);
     if(!validation.valid)return this.record(requestId,id,params,{success:false,error:validation.error,requestId,timestamp:Date.now()});
+    const permissionCheck=this.checkPermissions(tool);
+    if(!permissionCheck.allowed)return this.record(requestId,id,params,{success:false,error:'Missing required permissions for '+tool.id+': '+permissionCheck.missing.join(', '),requestId,timestamp:Date.now()});
     const available=await tool.isAvailable();
     if(!available)return this.record(requestId,id,params,{success:false,error:`Tool ${id} is not available. Ensure Android device is connected via Android Connection page.`,requestId,timestamp:Date.now()});
     if(tool.riskLevel==='critical'||tool.riskLevel==='high'){
@@ -47,15 +49,41 @@ class ToolRegistry {
     if(!tool)return this.record(requestId,id,params,{success:false,error:`Tool ${id} not found`,requestId,timestamp:Date.now()});
     const validation=this.validateInput(tool,params);
     if(!validation.valid)return this.record(requestId,id,params,{success:false,error:validation.error,requestId,timestamp:Date.now()});
+    const permissionCheck=this.checkPermissions(tool);
+    if(!permissionCheck.allowed)return this.record(requestId,id,params,{success:false,error:'Missing required permissions for '+tool.id+': '+permissionCheck.missing.join(', '),requestId,timestamp:Date.now()});
     if(tool.riskLevel!=='high'&&tool.riskLevel!=='critical')return this.executeValidated(tool,id,params,requestId);
     if(!(await tool.isAvailable()))return this.record(requestId,id,params,{success:false,error:`Tool ${id} not available`,requestId,timestamp:Date.now()});
     return this.executeValidated(tool,id,params,requestId);
   }
 
-  private getConfirmationMessage(tool:Tool,params:Record<string,any>):string{const riskLabels:Record<RiskLevel,string>={low:'Low risk',medium:'Medium risk',high:'⚡ HIGH RISK',critical:'⚠️ CRITICAL'};return `${riskLabels[tool.riskLevel]}: ${tool.name}\n\nThis action will be performed on your Android device.\nParameters: ${JSON.stringify(params,null,2)}\n\nDo you confirm?`;}
+  private getConfirmationMessage(tool:Tool,params:Record<string,any>):string{
+    const riskLabels:Record<RiskLevel,string>={low:'Low risk',medium:'Medium risk',high:'⚡ HIGH RISK',critical:'⚠️ CRITICAL'};
+    return riskLabels[tool.riskLevel]+': '+tool.name+'\n\nThis action will be performed on your Android device.\nParameters: '+JSON.stringify(this.sanitizeForLog(params),null,2)+'\n\nDo you confirm?';
+  }
+  private checkPermissions(tool:Tool):{allowed:boolean;missing:string[]}{
+    const required=tool.requiredPermissions||[];
+    const granted=new Set(this.context.permissions);
+    const missing=required.filter(permission=>!granted.has(permission));
+    return{allowed:missing.length===0,missing};
+  }
   private validateInput(tool:Tool,params:Record<string,any>):{valid:boolean;error?:string}{const schema=tool.inputSchema;if(schema.required){for(const field of schema.required){if(!(field in params)||params[field]===undefined||params[field]===null)return{valid:false,error:`Missing required parameter: ${field}`};}}for(const[key,prop]of Object.entries(schema.properties)){if(key in params&&params[key]!==undefined&&params[key]!==null){const value=params[key];if(prop.type==='string'&&typeof value!=='string')return{valid:false,error:`Parameter ${key} must be a string`};if(prop.type==='number'&&typeof value!=='number')return{valid:false,error:`Parameter ${key} must be a number`};if(prop.type==='boolean'&&typeof value!=='boolean')return{valid:false,error:`Parameter ${key} must be a boolean`};if(prop.enum&&!prop.enum.includes(value))return{valid:false,error:`Parameter ${key} must be one of: ${prop.enum.join(', ')}`};}}return{valid:true};}
   private record(requestId:string,toolId:string,params:any,result:ToolResult){this.logExecution(requestId,toolId,params,result);return result;}
-  private logExecution(requestId:string,toolId:string,params:any,result:ToolResult){this.executionLog.push({requestId,toolId,params,result,timestamp:Date.now()});if(this.executionLog.length>1000)this.executionLog.shift();}
+  private sanitizeForLog(value:any,key?:string):any{
+    if(value===null||value===undefined)return value;
+    if(key&&/(password|passwd|secret|token|api[_-]?key|authorization|cookie|refresh[_-]?token)/i.test(key))return '[REDACTED]';
+    if(typeof value==='string')return value.length>4000?value.slice(0,4000)+'...[TRUNCATED]':value;
+    if(Array.isArray(value))return value.map(item=>this.sanitizeForLog(item));
+    if(typeof value==='object'){
+      const out:Record<string,any>={};
+      for(const [childKey,childValue] of Object.entries(value))out[childKey]=this.sanitizeForLog(childValue,childKey);
+      return out;
+    }
+    return value;
+  }
+  private logExecution(requestId:string,toolId:string,params:any,result:ToolResult){
+    this.executionLog.push({requestId,toolId,params:this.sanitizeForLog(params),result:this.sanitizeForLog(result),timestamp:Date.now()});
+    if(this.executionLog.length>1000)this.executionLog.shift();
+  }
   setContext(context:Partial<ToolExecutionContext>){this.context={...this.context,...context}}
   getContext(){return{...this.context}}
   getExecutionLog(limit:number=50){return this.executionLog.slice(-limit)}

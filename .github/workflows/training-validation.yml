@@ -3,11 +3,31 @@ name: Training Validation
 on:
   workflow_dispatch:
   push:
-    branches: ['gpu-training-auto-run', 'chore/training-evidence-gates']
+    branches: ['gpu-training-auto-run', 'chore/training-evidence-gates', 'svetlana-knowledge-architecture-*']
   pull_request:
     branches: [main, develop]
 
+concurrency:
+  group: training-validation-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  validate-runtime-code:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install Node dependencies
+        run: npm ci
+      - name: Typecheck runtime code
+        run: npm run typecheck
+      - name: Run ToolRegistry security unit tests
+        run: npm test -- --run src/services/ToolRegistry.test.ts
+
   validate-training-assets:
     runs-on: ubuntu-latest
     steps:
@@ -20,6 +40,23 @@ jobs:
 
       - name: Install test runner and image dependency
         run: python -m pip install --disable-pip-version-check pytest 'pillow==12.3.0'
+
+      - name: Validate canonical knowledge coverage graph
+        run: python training/knowledge/check_coverage.py --root .
+
+      - name: Validate frozen benchmark manifest
+        run: python training/evaluation/validate_benchmark_manifest.py --root .
+
+      - name: Upload coverage diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: svetlana-coverage-diagnostic
+          path: |
+            training/knowledge/SVETLANA_COVERAGE_REPORT.json
+            training/knowledge/SVETLANA_COVERAGE_REPORT.md
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Validate manifest and all referenced dataset paths
         run: |
@@ -66,8 +103,8 @@ jobs:
       - name: Validate exact train/eval separation
         run: python training/validate_training.py --root .
 
-      - name: Compile training entrypoints
-        run: python -m py_compile training/gemma4/train_svetlana_smoke.py training/gemma4/train_svetlana_production.py training/gemma4/generate_predictions.py training/gemma4/multimodal_preflight.py training/gemma4/train_svetlana_multimodal.py training/evaluation/run_structured_eval.py training/datasets/multimodal/generate_synthetic_images.py training/datasets/multimodal/validate_image_corpus.py
+      - name: Compile training and evaluation entrypoints
+        run: python -m py_compile training/gemma4/train_svetlana_smoke.py training/gemma4/train_svetlana_production.py training/gemma4/generate_predictions.py training/gemma4/multimodal_preflight.py training/gemma4/train_svetlana_multimodal.py training/evaluation/run_structured_eval.py training/evaluation/validate_benchmark_manifest.py training/evaluation/compare_frozen_benchmark.py training/evaluation/generate_frozen_benchmark_predictions.py training/datasets/multimodal/generate_synthetic_images.py training/datasets/multimodal/validate_image_corpus.py
 
       - name: Run deterministic training validator
         run: python training/validate_training.py --root .
@@ -89,7 +126,7 @@ jobs:
         run: PYTHONPATH=training python -m unittest discover -s training/tests -p 'test_*.py'
 
       - name: Run structured evaluation regression tests
-        run: PYTHONPATH=. python -m pytest -q training/evaluation/test_run_structured_eval.py
+        run: PYTHONPATH=. python -m pytest -q training/evaluation/test_run_structured_eval.py training/evaluation/test_compare_frozen_benchmark.py training/evaluation/test_validate_benchmark_manifest.py training/evaluation/test_generate_frozen_benchmark_predictions.py
 
       - name: Run production trainer contract tests
         run: PYTHONPATH=. python -m pytest -q training/gemma4/test_train_svetlana_production.py

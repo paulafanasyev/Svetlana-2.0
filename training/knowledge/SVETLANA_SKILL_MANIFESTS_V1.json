@@ -1,0 +1,306 @@
+{
+  "schema_version": "1.0",
+  "generated_from": "docs/SVETLANA_ARCHITECTURE_CONTRACT.md",
+  "skills": [
+    {
+      "skill_id": "core.agent.execution",
+      "domain": "core",
+      "purpose": "Plan and execute multi-step tasks with policy, confirmation, recovery and verification.",
+      "tools": [
+        "registry.*"
+      ],
+      "runtime_requirements": [
+        "tool_registry",
+        "policy_engine",
+        "verification"
+      ],
+      "evidence_requirements": [
+        "tool_call",
+        "execution_result",
+        "postcondition_verification"
+      ],
+      "training_tags": [
+        "planning",
+        "tool_calling",
+        "recovery",
+        "verification",
+        "confirmation"
+      ],
+      "node_ids": [
+        "00.core",
+        "00.core.reasoning",
+        "00.core.uncertainty",
+        "00.core.verification",
+        "00.core.recovery",
+        "00.core.privacy",
+        "01.communication",
+        "02.agent",
+        "02.agent.registry",
+        "02.agent.confirmation",
+        "02.agent.recovery",
+        "02.agent.verification"
+      ],
+      "tool_ids": [
+        "open_app",
+        "tap_element",
+        "type_text",
+        "capture_screen",
+        "send_message",
+        "swipe",
+        "press_key",
+        "go_home",
+        "go_back",
+        "search_web"
+      ],
+      "tool_contract_ids": [
+        "core.open_app",
+        "core.tap_element",
+        "core.type_text",
+        "core.capture_screen",
+        "core.send_message",
+        "core.swipe",
+        "core.press_key",
+        "core.go_home",
+        "core.go_back"
+      ]
+    },
+    {
+      "skill_id": "marketplace.operations",
+      "domain": "marketplace",
+      "purpose": "Research, create, validate and operate marketplace product workflows.",
+      "tools": [
+        "catalog.read",
+        "catalog.write",
+        "seo.research",
+        "competitor.research",
+        "media.generate",
+        "marketplace.publish"
+      ],
+      "data_dependencies": [
+        "product_catalog",
+        "platform_rules",
+        "market_research"
+      ],
+      "confirmation_rules": [
+        "publish",
+        "bulk_update",
+        "price_change",
+        "delete",
+        "external_message"
+      ],
+      "verification_requirements": [
+        "record_state",
+        "published_state",
+        "artifact_integrity"
+      ],
+      "node_ids": [
+        "05.marketplace",
+        "05.marketplace.catalog",
+        "05.marketplace.seo",
+        "05.marketplace.competitors",
+        "05.marketplace.media"
+      ],
+      "tool_ids": [],
+      "tool_contract_ids": [
+        "marketplace.catalog.read",
+        "marketplace.catalog.write",
+        "marketplace.seo.research",
+        "marketplace.competitor.research",
+        "marketplace.media.generate",
+        "marketplace.publish"
+      ]
+    },
+    {
+      "skill_id": "self_employed.operations",
+      "domain": "self_employed",
+      "purpose": "Support client, CRM, document, payment, research and tax workflows.",
+      "tools": [
+        "crm.*",
+        "documents.*",
+        "calendar.*",
+        "research.*",
+        "finance.*"
+      ],
+      "data_dependencies": [
+        "authorized_crm",
+        "user_documents",
+        "current_official_sources"
+      ],
+      "confirmation_rules": [
+        "send_external_message",
+        "financial_action",
+        "record_delete",
+        "external_submission"
+      ],
+      "verification_requirements": [
+        "crm_state",
+        "artifact_check",
+        "source_provenance"
+      ],
+      "node_ids": [
+        "04.self_employed",
+        "04.self_employed.crm",
+        "04.self_employed.tax",
+        "04.self_employed.documents"
+      ],
+      "tool_ids": [],
+      "tool_contract_ids": [
+        "self_employed.crm.lookup",
+        "self_employed.documents.extract",
+        "self_employed.calendar.create_draft",
+        "self_employed.finance.lookup",
+        "self_employed.tax.official_source"
+      ]
+    },
+    {
+      "skill_id": "child_safe.ya_zaryadka",
+      "domain": "ya_zaryadka",
+      "purpose": "Provide age-aware education/voice interactions under stricter privacy and action policies.",
+      "tools": [
+        "education.*",
+        "voice.*",
+        "avatar.*"
+      ],
+      "confirmation_rules": [
+        "purchase",
+        "external_share",
+        "sensitive_external_action"
+      ],
+      "constraints": [
+        "no_child_purchase",
+        "minimal_data",
+        "no_secret_disclosure",
+        "untrusted_content_is_non_authoritative"
+      ],
+      "node_ids": [
+        "06.ya_zaryadka",
+        "06.ya_zaryadka.education",
+        "06.ya_zaryadka.voice"
+      ],
+      "tool_ids": [],
+      "tool_contract_ids": [
+        "ya_zaryadka.education.answer",
+        "ya_zaryadka.voice.tts",
+        "ya_zaryadka.avatar.state"
+      ]
+    },
+    {
+      "skill_id": "admin.governance",
+      "domain": "admin",
+      "purpose": "Manage accounts, roles, tenants, providers, datasets, evaluation and audits.",
+      "tools": [
+        "identity.*",
+        "model.*",
+        "dataset.*",
+        "evaluation.*",
+        "audit.*"
+      ],
+      "prerequisites": [
+        "authenticated_account",
+        "authorized_admin_role",
+        "project_context"
+      ],
+      "confirmation_rules": [
+        "provider_switch",
+        "model_release",
+        "dataset_publish",
+        "permission_change"
+      ],
+      "evidence_requirements": [
+        "audit_log",
+        "policy_decision",
+        "verification"
+      ],
+      "node_ids": [
+        "07.admin",
+        "07.admin.identity",
+        "07.admin.models",
+        "07.admin.datasets",
+        "07.admin.evaluation"
+      ],
+      "tool_ids": [],
+      "tool_contract_ids": [
+        "admin.identity.authz_check",
+        "admin.model.select",
+        "admin.dataset.publish",
+        "admin.evaluation.run",
+        "admin.audit.read"
+      ]
+    },
+    {
+      "skill_id": "research.knowledge",
+      "domain": "research",
+      "purpose": "Canonical skill mapping; runtime implementation is separate.",
+      "node_ids": [
+        "03.knowledge",
+        "03.knowledge.sources"
+      ],
+      "tool_ids": [
+        "search_web"
+      ],
+      "tool_contract_ids": [
+        "research.web_search"
+      ]
+    },
+    {
+      "skill_id": "discovery.oss",
+      "domain": "discovery",
+      "purpose": "Canonical skill mapping; runtime implementation is separate.",
+      "node_ids": [
+        "08.discovery",
+        "08.discovery.code",
+        "08.discovery.security"
+      ],
+      "tool_ids": [
+        "search_web"
+      ],
+      "tool_contract_ids": [
+        "research.web_search"
+      ]
+    },
+    {
+      "skill_id": "runtime.operations",
+      "domain": "runtime",
+      "purpose": "Canonical skill mapping; runtime implementation is separate.",
+      "node_ids": [
+        "09.runtime",
+        "09.runtime.android",
+        "09.runtime.web"
+      ],
+      "tool_ids": [
+        "open_app",
+        "tap_element",
+        "type_text",
+        "capture_screen",
+        "swipe",
+        "press_key",
+        "go_home",
+        "go_back"
+      ],
+      "tool_contract_ids": [
+        "core.open_app",
+        "core.tap_element",
+        "core.type_text",
+        "core.capture_screen",
+        "core.swipe",
+        "core.press_key",
+        "core.go_home",
+        "core.go_back"
+      ]
+    },
+    {
+      "skill_id": "continuous.learning",
+      "domain": "continuous",
+      "purpose": "Canonical skill mapping; runtime implementation is separate.",
+      "node_ids": [
+        "10.continuous_learning"
+      ],
+      "tool_ids": [],
+      "tool_contract_ids": [
+        "continuous.learning.candidate_build",
+        "continuous.learning.eval_gate",
+        "continuous.learning.promote"
+      ]
+    }
+  ]
+}

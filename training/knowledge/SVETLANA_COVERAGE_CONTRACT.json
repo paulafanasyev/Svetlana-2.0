@@ -1,0 +1,153 @@
+{
+  "schema_version": "1.0",
+  "source_of_truth": {
+    "skeleton": "training/knowledge/SVETLANA_KNOWLEDGE_SKELETON.json",
+    "skills": "training/knowledge/SVETLANA_SKILL_MANIFESTS_V1.json",
+    "training_manifest": "training/datasets/manifest_v2.json",
+    "tool_registry": "src/services/ToolRegistry.ts",
+    "real_tools": "src/services/RealTools.ts",
+    "policy_engine": "src/services/PolicyEngine.ts",
+    "verification": "src/services/Verification.ts",
+    "tool_contracts": "training/knowledge/SVETLANA_TOOL_CONTRACTS_V1.json",
+    "knowledge_pack_v1": "training/knowledge/SVETLANA_KNOWLEDGE_PACK_V1.json",
+    "knowledge_pack_v2": "training/knowledge/SVETLANA_KNOWLEDGE_PACK_V2.json",
+    "frozen_benchmark": "training/evaluation/FROZEN_BENCHMARK_MANIFEST_V1.json",
+    "frozen_generation_config": "training/evaluation/FROZEN_BENCHMARK_GENERATION_V1.json",
+    "benchmark_validator": "training/evaluation/validate_benchmark_manifest.py",
+    "benchmark_comparator": "training/evaluation/compare_frozen_benchmark.py",
+    "prediction_runner": "training/evaluation/generate_frozen_benchmark_predictions.py"
+  },
+  "links": {
+    "node_to_skill": {
+      "00.core": [
+        "core.agent.execution"
+      ],
+      "00.core.reasoning": [
+        "core.agent.execution"
+      ],
+      "00.core.uncertainty": [
+        "core.agent.execution"
+      ],
+      "00.core.verification": [
+        "core.agent.execution"
+      ],
+      "00.core.recovery": [
+        "core.agent.execution"
+      ],
+      "00.core.privacy": [
+        "core.agent.execution"
+      ],
+      "01.communication": [
+        "core.agent.execution"
+      ],
+      "02.agent": [
+        "core.agent.execution"
+      ],
+      "02.agent.registry": [
+        "core.agent.execution"
+      ],
+      "02.agent.confirmation": [
+        "core.agent.execution"
+      ],
+      "02.agent.recovery": [
+        "core.agent.execution"
+      ],
+      "02.agent.verification": [
+        "core.agent.execution"
+      ],
+      "03.knowledge": [
+        "research.knowledge"
+      ],
+      "03.knowledge.sources": [
+        "research.knowledge"
+      ],
+      "04.self_employed": [
+        "self_employed.operations"
+      ],
+      "04.self_employed.crm": [
+        "self_employed.operations"
+      ],
+      "04.self_employed.tax": [
+        "self_employed.operations"
+      ],
+      "04.self_employed.documents": [
+        "self_employed.operations"
+      ],
+      "05.marketplace": [
+        "marketplace.operations"
+      ],
+      "05.marketplace.catalog": [
+        "marketplace.operations"
+      ],
+      "05.marketplace.seo": [
+        "marketplace.operations"
+      ],
+      "05.marketplace.competitors": [
+        "marketplace.operations"
+      ],
+      "05.marketplace.media": [
+        "marketplace.operations"
+      ],
+      "06.ya_zaryadka": [
+        "child_safe.ya_zaryadka"
+      ],
+      "06.ya_zaryadka.education": [
+        "child_safe.ya_zaryadka"
+      ],
+      "06.ya_zaryadka.voice": [
+        "child_safe.ya_zaryadka"
+      ],
+      "07.admin": [
+        "admin.governance"
+      ],
+      "07.admin.identity": [
+        "admin.governance"
+      ],
+      "07.admin.models": [
+        "admin.governance"
+      ],
+      "07.admin.datasets": [
+        "admin.governance"
+      ],
+      "07.admin.evaluation": [
+        "admin.governance"
+      ],
+      "08.discovery": [
+        "discovery.oss"
+      ],
+      "08.discovery.code": [
+        "discovery.oss"
+      ],
+      "08.discovery.security": [
+        "discovery.oss"
+      ],
+      "09.runtime": [
+        "runtime.operations"
+      ],
+      "09.runtime.android": [
+        "runtime.operations"
+      ],
+      "09.runtime.web": [
+        "runtime.operations"
+      ],
+      "10.continuous_learning": [
+        "continuous.learning"
+      ]
+    }
+  },
+  "runtime_rules": {
+    "none": "NOT_REQUIRED",
+    "retrieval": "NOT_PROVEN",
+    "tool": "NOT_PROVEN",
+    "device": "NOT_PROVEN",
+    "account": "NOT_PROVEN",
+    "mixed": "NOT_PROVEN"
+  },
+  "completion_rule": "A node reaches VERIFIED only when knowledge coverage, training coverage, held-out evaluation coverage and required runtime evidence are all satisfied. Static files alone cannot produce runtime VERIFIED.",
+  "rules": {
+    "every_skill_requires_tool_contract_links": true,
+    "every_runtime_tool_requires_a_contract": true,
+    "knowledge_packs_must_cover_all_skeleton_nodes": true,
+    "frozen_benchmark_requires_immutable_eval_and_generation_config": true
+  }
+}

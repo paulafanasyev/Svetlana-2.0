@@ -1,0 +1,126 @@
+{
+  "schema_version": "1.0",
+  "purpose": "Frozen benchmark registry for baseline-vs-candidate evaluation.",
+  "rules": {
+    "eval_sets_are_never_training_inputs": true,
+    "benchmark_version_must_be_immutable_for_comparison": true,
+    "baseline_and_candidate_must_use_same_eval_set": true,
+    "training_loss_is_not_capability_evidence": true,
+    "runtime_dependent_capabilities_require_runtime_evidence": true
+  },
+  "suites": [
+    {
+      "suite_id": "core_knowledge_skeleton_v1",
+      "eval_path": "training/evaluation/svetlana_knowledge_skeleton_eval_v1.jsonl",
+      "evaluator": "custom_behavior",
+      "status": "READY_FOR_EVAL",
+      "node_prefixes": [
+        "00.",
+        "01.",
+        "02.",
+        "03.",
+        "04.",
+        "05.",
+        "06.",
+        "07.",
+        "08.",
+        "09.",
+        "10."
+      ],
+      "eval_git_blob_sha": "8a9f890b9af2af5c91bc5ceae635aaad62b3b574"
+    },
+    {
+      "suite_id": "core_knowledge_skeleton_v2",
+      "eval_path": "training/evaluation/svetlana_knowledge_skeleton_eval_v2.jsonl",
+      "evaluator": "custom_behavior",
+      "status": "READY_FOR_EVAL",
+      "node_prefixes": [
+        "00.",
+        "01.",
+        "02.",
+        "03.",
+        "04.",
+        "05.",
+        "06.",
+        "07.",
+        "08.",
+        "09.",
+        "10."
+      ],
+      "eval_git_blob_sha": "ede909839503b55eceaa816d21d01d4d3057eb94"
+    },
+    {
+      "suite_id": "tool_registry_v3",
+      "node_prefix": "02.agent.registry",
+      "eval_path": "training/evaluation/svetlana_tool_registry_eval_v3.jsonl",
+      "evaluator": "custom_behavior",
+      "status": "READY_FOR_EVAL",
+      "eval_git_blob_sha": "540cbe79585fd3a5f748bf63908070edd77c5d9a"
+    },
+    {
+      "suite_id": "document_intelligence_v1",
+      "node_prefix": "01.communication",
+      "eval_path": "training/evaluation/svetlana_document_intelligence_eval_v1.jsonl",
+      "evaluator": "custom_behavior",
+      "status": "READY_FOR_EVAL",
+      "eval_git_blob_sha": "c6cceaf79ea822407cae43785ffca4fc35d4e560"
+    },
+    {
+      "suite_id": "marketplace_v1",
+      "node_prefix": "05.marketplace",
+      "eval_path": "training/evaluation/svetlana_marketplace_eval_v1.jsonl",
+      "evaluator": "custom_behavior",
+      "status": "READY_FOR_EVAL",
+      "eval_git_blob_sha": "d2372454e5763befb90e2155924beced52de45e6"
+    },
+    {
+      "suite_id": "self_employed_v1",
+      "node_prefix": "04.self_employed",
+      "eval_path": "training/evaluation/svetlana_self_employed_eval_v1.jsonl",
+      "evaluator": "custom_behavior",
+      "status": "READY_FOR_EVAL",
+      "eval_git_blob_sha": "985cb8516062257293bbf570ac603f2c9157c039"
+    },
+    {
+      "suite_id": "ya_zaryadka_v1",
+      "node_prefix": "06.ya_zaryadka",
+      "eval_path": "training/evaluation/svetlana_ya_zaryadka_eval_v1.jsonl",
+      "evaluator": "custom_behavior",
+      "status": "READY_FOR_EVAL",
+      "eval_git_blob_sha": "60a27c76f1ba83c0cf4c82912cec9496e5d6f23a"
+    },
+    {
+      "suite_id": "admin_governance_v1",
+      "node_prefix": "07.admin",
+      "eval_path": "training/evaluation/svetlana_admin_governance_eval_v1.jsonl",
+      "evaluator": "custom_behavior",
+      "status": "READY_FOR_EVAL",
+      "eval_git_blob_sha": "0b0bbc84e7060023888f0b4360249c7c7f106166"
+    }
+  ],
+  "comparison_record": {
+    "required": [
+      "benchmark_version",
+      "baseline_model",
+      "candidate_model",
+      "generation_config",
+      "eval_commit",
+      "prediction_artifacts",
+      "scores",
+      "regressions",
+      "human_review",
+      "runtime_evidence"
+    ],
+    "status_vocabulary": [
+      "VERIFIED",
+      "NOT_PROVEN",
+      "PENDING"
+    ]
+  },
+  "benchmark_id": "SVETLANA_FROZEN_BENCHMARK",
+  "benchmark_version": "1.0",
+  "evaluator_version": "structured-v2.2",
+  "freeze_rule": "Each suite eval_git_blob_sha must match the checked-out Git blob object for the exact eval_path. A mismatch requires a new benchmark version.",
+  "generation_config_path": "training/evaluation/FROZEN_BENCHMARK_GENERATION_V1.json",
+  "generation_config_git_blob_sha": "f6a75181fd3eb0d3681cf965d5ba0d8dd5c6c5f3"
+}
