@@ -109,6 +109,11 @@ def main(root: Path) -> int:
 
     tool_registry = read_tool_ids(root / "src/services/ToolRegistry.ts")
     real_tools = read_tool_ids(root / "src/services/RealTools.ts")
+    real_tool_set = set(real_tools)
+    for skill_id, skill in skill_map.items():
+        for tool_id in skill.get("tool_ids", []):
+            if tool_id not in real_tool_set:
+                errors.append(f"skill {skill_id}: concrete tool {tool_id} is not present in RealTools.ts")
     required_runtime_sources = {
         "tool_registry": (root / contract["source_of_truth"]["tool_registry"]).is_file(),
         "real_tools": (root / contract["source_of_truth"]["real_tools"]).is_file(),
@@ -138,12 +143,14 @@ def main(root: Path) -> int:
             runtime_dep.split("|")[0], "NOT_PROVEN"
         )
         skill_links = contract.get("links", {}).get("node_to_skill", {}).get(node_id, [])
+        tool_links = sorted({tool_id for skill_id in skill_links for tool_id in skill_map.get(skill_id, {}).get("tool_ids", [])})
         training_total = direct_train + inherited_train
         eval_total = direct_eval + inherited_eval
         report.append({
             "node_id": node_id,
             "title": node.get("title"),
             "skills": skill_links,
+            "tools": tool_links,
             "knowledge_artifacts": knowledge_links,
             "training_examples": training_total,
             "heldout_examples": eval_total,
@@ -191,12 +198,12 @@ def main(root: Path) -> int:
         "## Runtime rule",
         "Runtime-dependent nodes remain **NOT PROVEN** until real execution evidence exists.",
         "",
-        "| Node | Skills | Knowledge | Train | Held-out | Runtime | Status |",
-        "|---|---|---:|---:|---:|---|---|",
+        "| Node | Skills | Tools | Knowledge | Train | Held-out | Runtime | Status |",
+        "|---|---|---|---:|---:|---:|---|---|",
     ]
     for x in report:
         md.append(
-            f"| {x['node_id']} | {', '.join(x['skills']) or '-'} | "
+            f"| {x['node_id']} | {', '.join(x['skills']) or '-'} | {', '.join(x['tools']) or '-'} | "
             f"{x['knowledge_artifacts']} | {x['training_examples']} | {x['heldout_examples']} | "
             f"{x['runtime_status']} | {x['coverage_status']} |"
         )
