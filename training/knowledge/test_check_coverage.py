@@ -53,6 +53,7 @@ class CoverageCheckerContractTest(unittest.TestCase):
                 "runtime_tool_id": "open_app"
             }]
         }
+        knowledge_pack_v2 = {"schema_version": "2.0", "entries": [{"node_id": "00.core"}]}
         contract = {
             "schema_version": "1.0",
             "source_of_truth": {
@@ -75,6 +76,7 @@ class CoverageCheckerContractTest(unittest.TestCase):
             ("training/knowledge/SVETLANA_KNOWLEDGE_SKELETON.json", skeleton),
             ("training/knowledge/SVETLANA_SKILL_MANIFESTS_V1.json", skills),
             ("training/knowledge/SVETLANA_COVERAGE_CONTRACT.json", contract),
+            ("training/knowledge/SVETLANA_KNOWLEDGE_PACK_V2.json", knowledge_pack_v2),
             ("training/knowledge/SVETLANA_TOOL_CONTRACTS_V1.json", tool_contracts),
             ("training/datasets/manifest_v2.json", manifest),
         ]:
