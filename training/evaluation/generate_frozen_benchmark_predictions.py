@@ -6,6 +6,7 @@ runtime and never turns generated predictions into an acceptance verdict by itse
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import platform
 from pathlib import Path
@@ -14,6 +15,10 @@ try:
     from training.evaluation.validate_benchmark_manifest import git_blob_sha, main as validate_manifest
 except ModuleNotFoundError:
     from validate_benchmark_manifest import git_blob_sha, main as validate_manifest
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _load_eval_cases(path: Path) -> list[dict]:
@@ -153,6 +158,7 @@ def main() -> int:
             "eval_path": suite["eval_path"],
             "eval_git_blob_sha": expected_sha,
             "prediction_path": str(out_path),
+            "prediction_sha256": _sha256(out_path),
             "case_count": len(predictions),
         })
         total_cases += len(predictions)
