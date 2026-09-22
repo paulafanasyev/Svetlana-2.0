@@ -70,6 +70,9 @@ These additions explicitly teach the separation between trusted identity/policy 
 
 ## Expansion v6 — executable evidence contracts
 
+- VERIFIED static: `ToolRegistry` now supports optional `Tool.requiredPermissions` enforcement and recursive sensitive-field redaction in execution logs and confirmation text; live RealTools permission bindings remain NOT PROVEN.
+- NOT PROVEN: direct callers outside the Orchestrator can still bypass the separate `PolicyEngine`; context binding must be designed before making ToolRegistry the single policy enforcement point.
+
 - VERIFIED static: combined V1 + V2 knowledge packs cover all 38/38 skeleton nodes with no duplicate node entries across the packs.
 
 - Added `SVETLANA_KNOWLEDGE_PACK_V2.json` with 18 structured entries for the remaining previously uncovered skeleton nodes; coverage checker now scans V1, V2 and the document-intelligence pack.
