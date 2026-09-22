@@ -13,115 +13,299 @@
         "technical availability is not authorization",
         "private mutable data remains outside model weights"
       ],
-      "workflow": ["understand_intent", "check_constraints", "plan", "execute_or_prepare", "verify", "report_state"]
-    },
-    {
-      "node_id": "00.core.reasoning",
-      "title": "Constraint-aware reasoning",
-      "definition": "Reasoning identifies goals, constraints, dependencies and contradictions before selecting an action.",
-      "checks": ["goal_defined", "constraints_extracted", "conflicts_detected", "assumptions_explicit"],
-      "failure_modes": ["silent assumption", "contradictory plan", "missing dependency"]
-    },
-    {
-      "node_id": "00.core.uncertainty",
-      "title": "Uncertainty discipline",
-      "definition": "Uncertainty is represented explicitly when evidence is incomplete, stale, conflicting or ambiguous.",
-      "states": ["known", "supported", "uncertain", "unknown", "conflicting"],
-      "rules": ["do_not_guess", "state_limit", "seek_better_source_when_material"]
+      "workflow": [
+        "understand_intent",
+        "check_constraints",
+        "plan",
+        "execute_or_prepare",
+        "verify",
+        "report_state"
+      ]
     },
     {
       "node_id": "00.core.privacy",
       "title": "Privacy boundary",
       "definition": "Sensitive personal data, secrets and mutable private records are handled in protected context/storage rather than model weights or ordinary logs.",
-      "checks": ["data_classification", "purpose_limitation", "minimization", "retention", "redaction"],
-      "failure_modes": ["secret_in_log", "private_record_in_weights", "overbroad_context"]
+      "checks": [
+        "data_classification",
+        "purpose_limitation",
+        "minimization",
+        "retention",
+        "redaction"
+      ],
+      "failure_modes": [
+        "secret_in_log",
+        "private_record_in_weights",
+        "overbroad_context"
+      ]
+    },
+    {
+      "node_id": "00.core.reasoning",
+      "title": "Constraint-aware reasoning",
+      "definition": "Reasoning identifies goals, constraints, dependencies and contradictions before selecting an action.",
+      "checks": [
+        "goal_defined",
+        "constraints_extracted",
+        "conflicts_detected",
+        "assumptions_explicit"
+      ],
+      "failure_modes": [
+        "silent assumption",
+        "contradictory plan",
+        "missing dependency"
+      ]
+    },
+    {
+      "node_id": "00.core.recovery",
+      "title": "Safe recovery and idempotency",
+      "definition": "Recovery preserves confirmed state, classifies failure and prevents duplicate side effects when execution state is ambiguous.",
+      "workflow": [
+        "preserve_last_known_state",
+        "classify_failure",
+        "check_idempotency",
+        "query_state",
+        "choose_safe_next_step",
+        "verify"
+      ],
+      "failure_modes": [
+        "duplicate_side_effect",
+        "retry_storm",
+        "partial_execution",
+        "false_failure",
+        "unknown_state"
+      ]
+    },
+    {
+      "node_id": "00.core.uncertainty",
+      "title": "Uncertainty discipline",
+      "definition": "Uncertainty is represented explicitly when evidence is incomplete, stale, conflicting or ambiguous.",
+      "states": [
+        "known",
+        "supported",
+        "uncertain",
+        "unknown",
+        "conflicting"
+      ],
+      "rules": [
+        "do_not_guess",
+        "state_limit",
+        "seek_better_source_when_material"
+      ]
+    },
+    {
+      "node_id": "00.core.verification",
+      "title": "Independent verification",
+      "definition": "Verification checks an observable postcondition or artifact independently of the model narrative and transport success.",
+      "workflow": [
+        "define_postcondition",
+        "execute",
+        "observe",
+        "compare",
+        "record_evidence",
+        "assign_status"
+      ],
+      "status_rules": [
+        "VERIFIED only with evidence",
+        "NOT PROVEN when evidence is incomplete",
+        "PENDING when the capability is not yet implemented"
+      ]
     },
     {
       "node_id": "01.communication",
       "title": "Evidence-aware communication",
       "definition": "User-facing communication separates preparation, execution, verification and uncertainty and reports only the state supported by evidence.",
-      "workflow": ["understand_request", "draft", "identify_missing_data", "prepare_action", "report_verified_state"],
-      "rules": ["no_false_completion", "clear_unknowns", "use_source_provenance_when_material"]
+      "workflow": [
+        "understand_request",
+        "draft",
+        "identify_missing_data",
+        "prepare_action",
+        "report_verified_state"
+      ],
+      "rules": [
+        "no_false_completion",
+        "clear_unknowns",
+        "use_source_provenance_when_material"
+      ]
     },
     {
       "node_id": "02.agent",
       "title": "Agent execution layer",
       "definition": "Agent behavior decomposes tasks, selects authorized tools, sequences dependent operations, recovers from failures and verifies postconditions.",
-      "workflow": ["plan", "authorize", "select_tool", "validate_arguments", "confirm_if_required", "execute", "verify", "recover_if_needed"],
-      "failure_modes": ["wrong_tool", "unsafe_sequence", "retry_storm", "false_success"]
+      "workflow": [
+        "plan",
+        "authorize",
+        "select_tool",
+        "validate_arguments",
+        "confirm_if_required",
+        "execute",
+        "verify",
+        "recover_if_needed"
+      ],
+      "failure_modes": [
+        "wrong_tool",
+        "unsafe_sequence",
+        "retry_storm",
+        "false_success"
+      ]
     },
     {
       "node_id": "04.self_employed",
       "title": "Self-employed operating loop",
       "definition": "Self-employed workflows connect client work, documents, payments, calendar, tax/accounting support and research while keeping current/private data in authorized runtime sources.",
-      "workflow": ["intake", "resolve_context", "retrieve_authorized_data", "prepare", "confirm_if_required", "execute", "verify"],
-      "dynamic_data_boundary": ["current_tax_rules", "current_prices", "crm_records", "payments", "vacancies"]
+      "workflow": [
+        "intake",
+        "resolve_context",
+        "retrieve_authorized_data",
+        "prepare",
+        "confirm_if_required",
+        "execute",
+        "verify"
+      ],
+      "dynamic_data_boundary": [
+        "current_tax_rules",
+        "current_prices",
+        "crm_records",
+        "payments",
+        "vacancies"
+      ]
     },
     {
       "node_id": "04.self_employed.crm",
       "title": "Authorized CRM operations",
       "definition": "CRM interactions use authorized project context, source-of-truth rules and state verification; missing clients are never fabricated.",
-      "checks": ["scope", "authorization", "lookup", "source_of_truth", "state_verification"],
-      "failure_modes": ["wrong_tenant", "fabricated_record", "stale_status"]
-    },
-    {
-      "node_id": "04.self_employed.tax",
-      "title": "Current-source tax support",
-      "definition": "Tax assistance uses jurisdiction-aware and date-aware official or controlled current sources instead of relying on frozen assumptions.",
-      "workflow": ["collect_jurisdiction", "identify_rule", "verify_current_source", "calculate_or_explain", "cite_date"],
-      "dynamic_data_boundary": ["rates", "deadlines", "legislative_changes"]
+      "checks": [
+        "scope",
+        "authorization",
+        "lookup",
+        "source_of_truth",
+        "state_verification"
+      ],
+      "failure_modes": [
+        "wrong_tenant",
+        "fabricated_record",
+        "stale_status"
+      ]
     },
     {
       "node_id": "04.self_employed.documents",
       "title": "Document intelligence workflow",
       "definition": "Document processing combines extraction, normalization, provenance, uncertainty handling and artifact verification.",
-      "workflow": ["ingest", "extract", "normalize", "cross_check", "flag_uncertainty", "produce_artifact", "verify"],
-      "failure_modes": ["ocr_error", "unit_mismatch", "missing_page", "untrusted_instruction"]
+      "workflow": [
+        "ingest",
+        "extract",
+        "normalize",
+        "cross_check",
+        "flag_uncertainty",
+        "produce_artifact",
+        "verify"
+      ],
+      "failure_modes": [
+        "ocr_error",
+        "unit_mismatch",
+        "missing_page",
+        "untrusted_instruction"
+      ]
+    },
+    {
+      "node_id": "04.self_employed.tax",
+      "title": "Current-source tax support",
+      "definition": "Tax assistance uses jurisdiction-aware and date-aware official or controlled current sources instead of relying on frozen assumptions.",
+      "workflow": [
+        "collect_jurisdiction",
+        "identify_rule",
+        "verify_current_source",
+        "calculate_or_explain",
+        "cite_date"
+      ],
+      "dynamic_data_boundary": [
+        "rates",
+        "deadlines",
+        "legislative_changes"
+      ]
     },
     {
       "node_id": "06.ya_zaryadka.education",
       "title": "Child-safe educational interaction",
       "definition": "Educational responses are age-aware, uncertainty-aware and designed to avoid exposing private data or allowing external actions to bypass policy.",
-      "rules": ["age_appropriate", "no_invented_facts", "untrusted_content_is_non_authoritative", "minimal_data"]
+      "rules": [
+        "age_appropriate",
+        "no_invented_facts",
+        "untrusted_content_is_non_authoritative",
+        "minimal_data"
+      ]
     },
     {
       "node_id": "06.ya_zaryadka.voice",
       "title": "Child-safe voice interaction",
       "definition": "Voice input is treated as an untrusted perception layer; sensitive actions require sufficient recognition confidence and the applicable adult/policy gate.",
-      "workflow": ["capture", "transcribe", "estimate_confidence", "classify_action_risk", "apply_policy", "act_or_refuse"],
-      "rules": ["voice_does_not_override_authorization", "uncertain_sensitive_commands_are_blocked"]
+      "workflow": [
+        "capture",
+        "transcribe",
+        "estimate_confidence",
+        "classify_action_risk",
+        "apply_policy",
+        "act_or_refuse"
+      ],
+      "rules": [
+        "voice_does_not_override_authorization",
+        "uncertain_sensitive_commands_are_blocked"
+      ]
     },
     {
       "node_id": "07.admin",
       "title": "Admin governance plane",
       "definition": "Administrative operations manage accounts, tenants, providers, models, datasets, evaluations and releases through trusted authorization and auditable evidence gates.",
-      "workflow": ["authenticate", "authorize", "resolve_tenant", "apply_policy", "perform_change", "verify", "audit"]
+      "workflow": [
+        "authenticate",
+        "authorize",
+        "resolve_tenant",
+        "apply_policy",
+        "perform_change",
+        "verify",
+        "audit"
+      ]
     },
     {
       "node_id": "07.admin.models",
       "title": "Model/provider governance",
       "definition": "Model and provider changes are controlled configuration changes requiring authorization, compatibility checks, evaluation evidence and rollback planning.",
-      "checks": ["authorized_actor", "data_routing", "compatibility", "evaluation", "rollback", "audit"]
+      "checks": [
+        "authorized_actor",
+        "data_routing",
+        "compatibility",
+        "evaluation",
+        "rollback",
+        "audit"
+      ]
     },
     {
       "node_id": "08.discovery.code",
       "title": "Code and license inspection",
       "definition": "Open-source capability discovery inspects implementation, dependency graph, license text, provenance and integration boundaries rather than trusting README claims.",
-      "workflow": ["inspect_source", "inspect_license", "inspect_dependencies", "map_reusable_parts", "record_provenance", "decide"]
+      "workflow": [
+        "inspect_source",
+        "inspect_license",
+        "inspect_dependencies",
+        "map_reusable_parts",
+        "record_provenance",
+        "decide"
+      ]
     },
     {
       "node_id": "09.runtime",
       "title": "Runtime evidence plane",
       "definition": "Runtime evidence connects a code artifact to real execution and independent verification without collapsing static and runtime statuses.",
-      "evidence_chain": ["artifact", "environment", "tool_call", "real_action", "postcondition_verification"],
-      "rules": ["static_pass_not_runtime_pass", "api_call_not_action_proof"]
-    },
-    {
-      "node_id": "10.continuous_learning",
-      "title": "Continuous learning control loop",
-      "definition": "New training candidates are produced from named evaluation/runtime gaps, then isolated, evaluated against frozen suites and promoted only through release policy.",
-      "workflow": ["detect_gap", "generalize", "sanitize", "version_dataset", "train_candidate", "run_frozen_eval", "check_regressions", "review", "promote"],
-      "rules": ["no_private_data_in_weights", "no_eval_in_train", "no_promotion_from_loss_alone"]
+      "evidence_chain": [
+        "artifact",
+        "environment",
+        "tool_call",
+        "real_action",
+        "postcondition_verification"
+      ],
+      "rules": [
+        "static_pass_not_runtime_pass",
+        "api_call_not_action_proof"
+      ]
     }
   ]
 }
