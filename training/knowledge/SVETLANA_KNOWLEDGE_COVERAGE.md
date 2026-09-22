@@ -66,3 +66,16 @@ Current capability status remains **NOT PROVEN** until the held-out evaluator is
 - Manifest schema is 2.2.
 
 These additions explicitly teach the separation between trusted identity/policy and model inference. They do not prove enforcement in runtime code.
+
+
+## Expansion v6 — executable evidence contracts
+
+- Added `SVETLANA_TOOL_CONTRACTS_V1.json`: 32 machine-readable contracts covering the current core/runtime tools plus planned domain integrations.
+- Added explicit `tool_contract_ids` to all 9 skill manifests.
+- Coverage checker now validates skill → tool contract → runtime tool consistency and fails on an uncontracted `RealTools.ts` ID.
+- Added frozen benchmark identity (`SVETLANA_FROZEN_BENCHMARK`, version 1.0), structural validator and baseline/candidate comparison artifact builder.
+- Frozen benchmark cases now carry explicit `evaluation.required_behaviors`; the annotation is based on user/assistant case content, not system instructions.
+- Automated comparison records keep `automated_comparison_status`, `capability_status`, `human_review` and `runtime_evidence` separate.
+- VERIFIED static: 139 frozen held-out records have non-empty recognized structured behavior requirements and valid privacy classification.
+- VERIFIED static: 9 skills ↔ 32 tool contracts ↔ 10 current `RealTools` IDs are fully linked.
+- NOT PROVEN: model quality improvement, real GPU SFT, baseline/candidate runtime inference, device execution, human review and LiteRT-LM conversion.
