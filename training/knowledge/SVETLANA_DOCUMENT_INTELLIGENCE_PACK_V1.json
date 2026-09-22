@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "scope": "document_intelligence",
+  "source_patterns": [
+    "opendatalab/MinerU",
+    "PaddlePaddle/PaddleOCR"
+  ],
+  "stable_skills": [
+    "ingest",
+    "OCR",
+    "table extraction",
+    "document comparison",
+    "structured field extraction",
+    "document-to-RAG",
+    "artifact verification"
+  ],
+  "boundaries": [
+    "no guessing unreadable fields",
+    "preserve provenance",
+    "authorization before indexing private docs",
+    "verify generated artifacts separately"
+  ],
+  "current_facts_policy": "Parser capabilities may change; use runtime/tool metadata rather than frozen model claims."
+}
