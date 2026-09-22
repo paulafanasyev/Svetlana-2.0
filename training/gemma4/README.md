@@ -5,7 +5,7 @@ The active GPU training path uses Google's `google/gemma-4-E2B-it` with 4-bit Lo
 ## Run
 
 1. Open Google Colab and attach a GPU runtime.
-2. Clone `paulafanasyev/Svetlana-2.0`, branch `chore/training-evidence-gates`.
+2. Clone `paulafanasyev/Svetlana-2.0`, branch `chore/training-acceptance-hardening-v2`.
 3. Run `training/environment/run_colab_go.sh`. It installs the repository's exact pinned environment, validates the full manifest/corpus, measures a baseline, runs the authorized production trainer, exports the adapter, evaluates the adapter, and compares baseline vs adapter.
 4. Do not call the model trained until `COLAB_GO_GATE=PASS`, `training_evidence.json`, the exported adapter, and baseline/adapter evaluation artifacts are present.
 
