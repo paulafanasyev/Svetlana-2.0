@@ -257,3 +257,26 @@ Before changing code:
 7. Update this roadmap when architecture, scope or status changes.
 
 Strategic target: one Svetlana-2.0 core, three domain environments, explicit client/admin/system isolation, device-independent identity, provider-neutral tools, continuous capability discovery, and evidence-gated training/integration.
+
+
+## 14. Canonical knowledge architecture artifacts
+
+The knowledge architecture introduced by the September 2026 expansion is maintained in:
+- `docs/SVETLANA_ARCHITECTURE_CONTRACT.md` — runtime architecture and separation of core/context/policy/tools/verification.
+- `training/knowledge/SVETLANA_KNOWLEDGE_SKELETON.json` — machine-readable knowledge tree.
+- `training/knowledge/SVETLANA_KNOWLEDGE_PACK_V1.json` — operational definitions and workflows for priority nodes.
+- `training/knowledge/SVETLANA_KNOWLEDGE_COVERAGE.md` — skeleton-to-evidence coverage.
+- `training/knowledge/OPEN_SOURCE_DISCOVERY_LOG_2026-09.md` — inspected external capability candidates.
+- `training/datasets/SVETLANA_TRAINING_CURRICULUM.md` — curriculum v3.
+- `training/datasets/svetlana_knowledge_skeleton_expansion_v1.jsonl` and `v2.jsonl` — synthetic behavior expansion.
+- `training/evaluation/svetlana_knowledge_skeleton_eval_v1.jsonl` and `v2.jsonl` — held-out evaluation sets.
+
+### Current static evidence
+- VERIFIED: 38 knowledge nodes are defined.
+- VERIFIED: 37 v1 + 67 v2 synthetic training examples were created and registered.
+- VERIFIED: 18 v1 + 24 v2 held-out cases were created and kept outside the train list.
+- VERIFIED: no ID overlap was found within the new v1/v2 train and eval groups; every new train example references a skeleton node.
+- NOT PROVEN: model capability improvement, GPU SFT quality, runtime tool/device behavior, or LiteRT-LM readiness.
+
+### Expansion operating rule
+Do not expand the corpus by volume alone. Each wave must start from a named skeleton gap or evaluation failure and add diverse positive, negative, ambiguous, failure, recovery, confirmation and verification cases. Mutable/current facts remain external knowledge.
