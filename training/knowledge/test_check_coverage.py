@@ -50,7 +50,9 @@ class CoverageCheckerContractTest(unittest.TestCase):
                 "input_schema": {"package": "string"},
                 "confirmation": "policy_required",
                 "verification": "screen_observed",
-                "runtime_tool_id": "open_app"
+                "runtime_tool_id": "open_app",
+                "required_permissions": ["device.navigation"],
+                "authorization_binding": "runtime_tool_field_not_yet_bound"
             }]
         }
         knowledge_pack_v2 = {"schema_version": "2.0", "entries": [{"node_id": "00.core"}]}
