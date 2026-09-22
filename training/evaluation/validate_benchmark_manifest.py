@@ -9,7 +9,10 @@ import argparse
 import json
 from pathlib import Path
 
-from training.evaluation.run_structured_eval import PATTERNS
+try:
+    from training.evaluation.run_structured_eval import PATTERNS
+except ModuleNotFoundError:
+    from run_structured_eval import PATTERNS
 
 
 REQUIRED_SUITE_KEYS = ("suite_id", "node_prefix", "eval_path", "evaluator", "status")
