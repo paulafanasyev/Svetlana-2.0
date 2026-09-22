@@ -70,6 +70,9 @@ These additions explicitly teach the separation between trusted identity/policy 
 
 ## Expansion v6 — executable evidence contracts
 
+- Skeleton leaf-gap expansion v3: 54 new training examples + 54 new held-out cases, one targeted pair per underrepresented leaf node.
+- Cumulative new expansion on this branch is now 416 training records + 193 held-out records (excluding legacy files not tagged with the new expansion families).
+
 - Added `SVETLANA_TOOL_CONTRACTS_V1.json`: 32 machine-readable contracts covering the current core/runtime tools plus planned domain integrations.
 - Added explicit `tool_contract_ids` to all 9 skill manifests.
 - Coverage checker now validates skill → tool contract → runtime tool consistency and fails on an uncontracted `RealTools.ts` ID.
