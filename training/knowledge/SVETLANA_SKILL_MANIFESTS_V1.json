@@ -1,0 +1,138 @@
+{
+  "schema_version": "1.0",
+  "generated_from": "docs/SVETLANA_ARCHITECTURE_CONTRACT.md",
+  "skills": [
+    {
+      "skill_id": "core.agent.execution",
+      "domain": "core",
+      "purpose": "Plan and execute multi-step tasks with policy, confirmation, recovery and verification.",
+      "tools": [
+        "registry.*"
+      ],
+      "runtime_requirements": [
+        "tool_registry",
+        "policy_engine",
+        "verification"
+      ],
+      "evidence_requirements": [
+        "tool_call",
+        "execution_result",
+        "postcondition_verification"
+      ],
+      "training_tags": [
+        "planning",
+        "tool_calling",
+        "recovery",
+        "verification",
+        "confirmation"
+      ]
+    },
+    {
+      "skill_id": "marketplace.operations",
+      "domain": "marketplace",
+      "purpose": "Research, create, validate and operate marketplace product workflows.",
+      "tools": [
+        "catalog.read",
+        "catalog.write",
+        "seo.research",
+        "competitor.research",
+        "media.generate",
+        "marketplace.publish"
+      ],
+      "data_dependencies": [
+        "product_catalog",
+        "platform_rules",
+        "market_research"
+      ],
+      "confirmation_rules": [
+        "publish",
+        "bulk_update",
+        "price_change",
+        "delete",
+        "external_message"
+      ],
+      "verification_requirements": [
+        "record_state",
+        "published_state",
+        "artifact_integrity"
+      ]
+    },
+    {
+      "skill_id": "self_employed.operations",
+      "domain": "self_employed",
+      "purpose": "Support client, CRM, document, payment, research and tax workflows.",
+      "tools": [
+        "crm.*",
+        "documents.*",
+        "calendar.*",
+        "research.*",
+        "finance.*"
+      ],
+      "data_dependencies": [
+        "authorized_crm",
+        "user_documents",
+        "current_official_sources"
+      ],
+      "confirmation_rules": [
+        "send_external_message",
+        "financial_action",
+        "record_delete",
+        "external_submission"
+      ],
+      "verification_requirements": [
+        "crm_state",
+        "artifact_check",
+        "source_provenance"
+      ]
+    },
+    {
+      "skill_id": "child_safe.ya_zaryadka",
+      "domain": "ya_zaryadka",
+      "purpose": "Provide age-aware education/voice interactions under stricter privacy and action policies.",
+      "tools": [
+        "education.*",
+        "voice.*",
+        "avatar.*"
+      ],
+      "confirmation_rules": [
+        "purchase",
+        "external_share",
+        "sensitive_external_action"
+      ],
+      "constraints": [
+        "no_child_purchase",
+        "minimal_data",
+        "no_secret_disclosure",
+        "untrusted_content_is_non_authoritative"
+      ]
+    },
+    {
+      "skill_id": "admin.governance",
+      "domain": "admin",
+      "purpose": "Manage accounts, roles, tenants, providers, datasets, evaluation and audits.",
+      "tools": [
+        "identity.*",
+        "model.*",
+        "dataset.*",
+        "evaluation.*",
+        "audit.*"
+      ],
+      "prerequisites": [
+        "authenticated_account",
+        "authorized_admin_role",
+        "project_context"
+      ],
+      "confirmation_rules": [
+        "provider_switch",
+        "model_release",
+        "dataset_publish",
+        "permission_change"
+      ],
+      "evidence_requirements": [
+        "audit_log",
+        "policy_decision",
+        "verification"
+      ]
+    }
+  ]
+}
