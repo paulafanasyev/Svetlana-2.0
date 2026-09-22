@@ -48,12 +48,10 @@
         "core.agent.execution"
       ],
       "03.knowledge": [
-        "self_employed.operations",
-        "marketplace.operations"
+        "research.knowledge"
       ],
       "03.knowledge.sources": [
-        "self_employed.operations",
-        "marketplace.operations"
+        "research.knowledge"
       ],
       "04.self_employed": [
         "self_employed.operations"
@@ -107,26 +105,25 @@
         "admin.governance"
       ],
       "08.discovery": [
-        "admin.governance"
+        "discovery.oss"
       ],
       "08.discovery.code": [
-        "admin.governance"
+        "discovery.oss"
       ],
       "08.discovery.security": [
-        "admin.governance"
+        "discovery.oss"
       ],
       "09.runtime": [
-        "core.agent.execution"
+        "runtime.operations"
       ],
       "09.runtime.android": [
-        "core.agent.execution"
+        "runtime.operations"
       ],
       "09.runtime.web": [
-        "core.agent.execution"
+        "runtime.operations"
       ],
       "10.continuous_learning": [
-        "admin.governance",
-        "core.agent.execution"
+        "continuous.learning"
       ]
     }
   },
