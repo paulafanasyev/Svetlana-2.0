@@ -32,3 +32,18 @@ Added operational knowledge pack v1 plus 67 additional training examples and 24 
 The discovery log records six additional reference projects reviewed at source level, including Chinese-origin Qwen-Agent, UI-TARS Desktop, MinerU, PaddleOCR and OpenManus, plus Browser Use.
 
 Current capability result remains **NOT PROVEN** until held-out execution and, where applicable, real runtime evidence exist.
+
+
+## Expansion v3 — implementation-grounded skills
+
+- Added `SVETLANA_SKILL_MANIFESTS_V1.json` to map core, Marketplace, Self-employed, Я‑Зарядка and Admin skills to tools, policy and evidence requirements.
+- Added a static audit of the current `ToolRegistry.ts`. The audit records concrete gaps instead of teaching the model that those controls already exist.
+- Added 50 ToolRegistry training examples and 21 held-out cases.
+- Added 47 document-intelligence training examples and 16 held-out cases, grounded in document/OCR/RAG/artifact workflows.
+- Manifest is now schema 2.0.
+
+### Static evidence after v3
+- VERIFIED: new training/eval files are structurally parseable by the repository data contract.
+- VERIFIED: new skill and knowledge manifests are registered in the training manifest.
+- VERIFIED: no claim is made that these additions improve model quality before held-out execution.
+- NOT PROVEN: model capability improvement, GPU SFT, device/runtime execution and LiteRT-LM validation.
