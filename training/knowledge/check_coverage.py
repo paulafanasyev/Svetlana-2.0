@@ -68,7 +68,7 @@ def main(root: Path) -> int:
     if len(tool_contract_map) != len(tool_contracts.get("contracts", [])):
         errors.append("tool contracts: duplicate contract_id")
     for contract_id, tc in tool_contract_map.items():
-        for required_key in ("skill_ids", "action", "risk_level", "input_schema", "confirmation", "verification"):
+        for required_key in ("skill_ids", "action", "risk_level", "input_schema", "confirmation", "verification", "required_permissions", "authorization_binding"):
             if required_key not in tc:
                 errors.append(f"tool contract {contract_id}: missing {required_key}")
     for skill_id, skill in skill_map.items():
