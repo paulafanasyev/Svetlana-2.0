@@ -25,6 +25,13 @@
         "recovery",
         "verification",
         "confirmation"
+      ],
+      "node_ids": [
+        "02.agent",
+        "02.agent.registry",
+        "02.agent.confirmation",
+        "02.agent.recovery",
+        "02.agent.verification"
       ]
     },
     {
@@ -55,6 +62,13 @@
         "record_state",
         "published_state",
         "artifact_integrity"
+      ],
+      "node_ids": [
+        "05.marketplace",
+        "05.marketplace.catalog",
+        "05.marketplace.seo",
+        "05.marketplace.competitors",
+        "05.marketplace.media"
       ]
     },
     {
@@ -83,6 +97,12 @@
         "crm_state",
         "artifact_check",
         "source_provenance"
+      ],
+      "node_ids": [
+        "04.self_employed",
+        "04.self_employed.crm",
+        "04.self_employed.tax",
+        "04.self_employed.documents"
       ]
     },
     {
@@ -104,6 +124,11 @@
         "minimal_data",
         "no_secret_disclosure",
         "untrusted_content_is_non_authoritative"
+      ],
+      "node_ids": [
+        "06.ya_zaryadka",
+        "06.ya_zaryadka.education",
+        "06.ya_zaryadka.voice"
       ]
     },
     {
@@ -132,6 +157,13 @@
         "audit_log",
         "policy_decision",
         "verification"
+      ],
+      "node_ids": [
+        "07.admin",
+        "07.admin.identity",
+        "07.admin.models",
+        "07.admin.datasets",
+        "07.admin.evaluation"
       ]
     }
   ]
