@@ -269,14 +269,24 @@ The knowledge architecture introduced by the September 2026 expansion is maintai
 - `training/knowledge/OPEN_SOURCE_DISCOVERY_LOG_2026-09.md` — inspected external capability candidates.
 - `training/datasets/SVETLANA_TRAINING_CURRICULUM.md` — curriculum v3.
 - `training/datasets/svetlana_knowledge_skeleton_expansion_v1.jsonl` and `v2.jsonl` — synthetic behavior expansion.
-- `training/evaluation/svetlana_knowledge_skeleton_eval_v1.jsonl` and `v2.jsonl` — held-out evaluation sets.
+- `training/evaluation/svetlana_knowledge_skeleton_eval_v1.jsonl`, `v2.jsonl` and `v3.jsonl` — held-out evaluation sets.
+- `training/knowledge/SVETLANA_SKILL_MANIFESTS_V1.json` — machine-readable skills and their tool contracts.
+- `training/knowledge/SVETLANA_TOOL_CONTRACTS_V1.json` — machine-readable runtime/domain tool contracts.
+- `training/evaluation/FROZEN_BENCHMARK_MANIFEST_V1.json` — immutable benchmark suites with Git blob identities.
+- `training/evaluation/FROZEN_BENCHMARK_GENERATION_V1.json` — frozen baseline/candidate generation configuration.
+- `training/evaluation/validate_benchmark_manifest.py` — frozen benchmark structural/immutability validator.
+- `training/evaluation/generate_frozen_benchmark_predictions.py` — single-load GPU prediction runner for all frozen suites.
+- `training/evaluation/compare_frozen_benchmark.py` — baseline/candidate comparison artifact builder.
 
 ### Current static evidence
 - VERIFIED: 38 knowledge nodes are defined.
 - VERIFIED: 37 v1 + 67 v2 synthetic training examples were created and registered.
 - VERIFIED: 18 v1 + 24 v2 held-out cases were created and kept outside the train list.
-- VERIFIED: no ID overlap was found within the new v1/v2 train and eval groups; every new train example references a skeleton node.
-- NOT PROVEN: model capability improvement, GPU SFT quality, runtime tool/device behavior, or LiteRT-LM readiness.
+- VERIFIED: no ID overlap was found within the new v1/v2/v3 train and eval groups; every new train example references a skeleton node.
+- VERIFIED: current runtime tool IDs are fully linked to machine-readable tool contracts; contract count and concrete RealTools linkage are checked structurally.
+- VERIFIED: frozen benchmark suites and generation config carry immutable Git blob identities checked by the validator.
+- VERIFIED: v3 adds 54 targeted training cases + 54 distinct held-out cases for underrepresented skeleton leaf nodes.
+- NOT PROVEN: model capability improvement, GPU SFT quality, runtime tool/device behavior, human review, or LiteRT-LM readiness.
 
 ### Expansion operating rule
 Do not expand the corpus by volume alone. Each wave must start from a named skeleton gap or evaluation failure and add diverse positive, negative, ambiguous, failure, recovery, confirmation and verification cases. Mutable/current facts remain external knowledge.
