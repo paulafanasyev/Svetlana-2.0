@@ -10,7 +10,10 @@ import hashlib
 import json
 from pathlib import Path
 
-from training.evaluation.run_structured_eval import evaluate
+try:
+    from training.evaluation.run_structured_eval import evaluate
+except ModuleNotFoundError:
+    from run_structured_eval import evaluate
 
 
 def sha256(path: Path) -> str:
