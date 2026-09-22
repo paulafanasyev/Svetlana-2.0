@@ -51,6 +51,13 @@
         "go_home",
         "go_back",
         "search_web"
+      ],
+      "tool_contract_ids": [
+        "core.open_app",
+        "core.tap_element",
+        "core.type_text",
+        "core.capture_screen",
+        "core.send_message"
       ]
     },
     {
@@ -89,7 +96,15 @@
         "05.marketplace.competitors",
         "05.marketplace.media"
       ],
-      "tool_ids": []
+      "tool_ids": [],
+      "tool_contract_ids": [
+        "marketplace.catalog.read",
+        "marketplace.catalog.write",
+        "marketplace.seo.research",
+        "marketplace.competitor.research",
+        "marketplace.media.generate",
+        "marketplace.publish"
+      ]
     },
     {
       "skill_id": "self_employed.operations",
@@ -124,7 +139,14 @@
         "04.self_employed.tax",
         "04.self_employed.documents"
       ],
-      "tool_ids": []
+      "tool_ids": [],
+      "tool_contract_ids": [
+        "self_employed.crm.lookup",
+        "self_employed.documents.extract",
+        "self_employed.calendar.create_draft",
+        "self_employed.finance.lookup",
+        "self_employed.tax.official_source"
+      ]
     },
     {
       "skill_id": "child_safe.ya_zaryadka",
@@ -151,7 +173,12 @@
         "06.ya_zaryadka.education",
         "06.ya_zaryadka.voice"
       ],
-      "tool_ids": []
+      "tool_ids": [],
+      "tool_contract_ids": [
+        "ya_zaryadka.education.answer",
+        "ya_zaryadka.voice.tts",
+        "ya_zaryadka.avatar.state"
+      ]
     },
     {
       "skill_id": "admin.governance",
@@ -187,7 +214,14 @@
         "07.admin.datasets",
         "07.admin.evaluation"
       ],
-      "tool_ids": []
+      "tool_ids": [],
+      "tool_contract_ids": [
+        "admin.identity.authz_check",
+        "admin.model.select",
+        "admin.dataset.publish",
+        "admin.evaluation.run",
+        "admin.audit.read"
+      ]
     },
     {
       "skill_id": "research.knowledge",
@@ -199,6 +233,9 @@
       ],
       "tool_ids": [
         "search_web"
+      ],
+      "tool_contract_ids": [
+        "research.web_search"
       ]
     },
     {
@@ -212,6 +249,9 @@
       ],
       "tool_ids": [
         "search_web"
+      ],
+      "tool_contract_ids": [
+        "research.web_search"
       ]
     },
     {
@@ -232,6 +272,12 @@
         "press_key",
         "go_home",
         "go_back"
+      ],
+      "tool_contract_ids": [
+        "core.open_app",
+        "core.tap_element",
+        "core.type_text",
+        "core.capture_screen"
       ]
     },
     {
@@ -241,7 +287,12 @@
       "node_ids": [
         "10.continuous_learning"
       ],
-      "tool_ids": []
+      "tool_ids": [],
+      "tool_contract_ids": [
+        "continuous.learning.candidate_build",
+        "continuous.learning.eval_gate",
+        "continuous.learning.promote"
+      ]
     }
   ]
 }
