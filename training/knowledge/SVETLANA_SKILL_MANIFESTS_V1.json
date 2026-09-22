@@ -57,7 +57,11 @@
         "core.tap_element",
         "core.type_text",
         "core.capture_screen",
-        "core.send_message"
+        "core.send_message",
+        "core.swipe",
+        "core.press_key",
+        "core.go_home",
+        "core.go_back"
       ]
     },
     {
@@ -277,7 +281,11 @@
         "core.open_app",
         "core.tap_element",
         "core.type_text",
-        "core.capture_screen"
+        "core.capture_screen",
+        "core.swipe",
+        "core.press_key",
+        "core.go_home",
+        "core.go_back"
       ]
     },
     {
