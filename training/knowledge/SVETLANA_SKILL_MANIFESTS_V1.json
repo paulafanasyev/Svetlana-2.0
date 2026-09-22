@@ -39,6 +39,18 @@
         "02.agent.confirmation",
         "02.agent.recovery",
         "02.agent.verification"
+      ],
+      "tool_ids": [
+        "open_app",
+        "tap_element",
+        "type_text",
+        "capture_screen",
+        "send_message",
+        "swipe",
+        "press_key",
+        "go_home",
+        "go_back",
+        "search_web"
       ]
     },
     {
@@ -76,7 +88,8 @@
         "05.marketplace.seo",
         "05.marketplace.competitors",
         "05.marketplace.media"
-      ]
+      ],
+      "tool_ids": []
     },
     {
       "skill_id": "self_employed.operations",
@@ -110,7 +123,8 @@
         "04.self_employed.crm",
         "04.self_employed.tax",
         "04.self_employed.documents"
-      ]
+      ],
+      "tool_ids": []
     },
     {
       "skill_id": "child_safe.ya_zaryadka",
@@ -136,7 +150,8 @@
         "06.ya_zaryadka",
         "06.ya_zaryadka.education",
         "06.ya_zaryadka.voice"
-      ]
+      ],
+      "tool_ids": []
     },
     {
       "skill_id": "admin.governance",
@@ -171,7 +186,8 @@
         "07.admin.models",
         "07.admin.datasets",
         "07.admin.evaluation"
-      ]
+      ],
+      "tool_ids": []
     },
     {
       "skill_id": "research.knowledge",
@@ -180,6 +196,9 @@
       "node_ids": [
         "03.knowledge",
         "03.knowledge.sources"
+      ],
+      "tool_ids": [
+        "search_web"
       ]
     },
     {
@@ -190,6 +209,9 @@
         "08.discovery",
         "08.discovery.code",
         "08.discovery.security"
+      ],
+      "tool_ids": [
+        "search_web"
       ]
     },
     {
@@ -200,6 +222,16 @@
         "09.runtime",
         "09.runtime.android",
         "09.runtime.web"
+      ],
+      "tool_ids": [
+        "open_app",
+        "tap_element",
+        "type_text",
+        "capture_screen",
+        "swipe",
+        "press_key",
+        "go_home",
+        "go_back"
       ]
     },
     {
@@ -208,7 +240,8 @@
       "purpose": "Canonical skill mapping; runtime implementation is separate.",
       "node_ids": [
         "10.continuous_learning"
-      ]
+      ],
+      "tool_ids": []
     }
   ]
 }
