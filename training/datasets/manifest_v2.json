@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.8",
+  "schema_version": "1.9",
   "purpose": "Single source of truth for the next Svetlana training pipeline.",
   "base_model": "google/gemma-4-E2B-it",
   "runtime_target": "LiteRT-LM",
@@ -63,6 +63,11 @@
       "path": "training/datasets/svetlana_knowledge_skeleton_expansion_v1.jsonl",
       "format": "messages",
       "role": "knowledge_skeleton_gap_expansion_v1"
+    },
+    {
+      "path": "training/datasets/svetlana_knowledge_skeleton_expansion_v2.jsonl",
+      "format": "messages",
+      "role": "knowledge_skeleton_gap_expansion_v2"
     }
   ],
   "reference_knowledge": [
@@ -88,6 +93,11 @@
       "path": "training/evaluation/svetlana_knowledge_skeleton_eval_v1.jsonl",
       "format": "messages",
       "role": "knowledge_skeleton_heldout_v1"
+    },
+    {
+      "path": "training/evaluation/svetlana_knowledge_skeleton_eval_v2.jsonl",
+      "format": "messages",
+      "role": "knowledge_skeleton_heldout_v2"
     }
   ],
   "rules": {
@@ -106,6 +116,8 @@
     "knowledge_skeleton": "training/knowledge/SVETLANA_KNOWLEDGE_SKELETON.json",
     "knowledge_coverage": "training/knowledge/SVETLANA_KNOWLEDGE_COVERAGE.md",
     "architecture_contract": "docs/SVETLANA_ARCHITECTURE_CONTRACT.md",
-    "curriculum": "training/datasets/SVETLANA_TRAINING_CURRICULUM.md"
+    "curriculum": "training/datasets/SVETLANA_TRAINING_CURRICULUM.md",
+    "knowledge_pack": "training/knowledge/SVETLANA_KNOWLEDGE_PACK_V1.json",
+    "open_source_discovery_log": "training/knowledge/OPEN_SOURCE_DISCOVERY_LOG_2026-09.md"
   }
 }
