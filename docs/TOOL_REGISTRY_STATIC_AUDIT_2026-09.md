@@ -11,16 +11,22 @@
 - Successful execution with a `verify` callback can receive a PASS/FAIL verification result.
 - An execution log is maintained.
 
-## NOT IMPLEMENTED / GAP
-1. The current `executeTool` path does not enforce `ToolExecutionContext.permissions`. The field exists, but authorization is not visibly checked in this class.
-2. `executionLog` stores `params` and `result` directly. There is no redaction/minimization step in this class before logging. Sensitive values therefore require an upstream/downstream privacy control before being passed here.
-3. The registry's risk confirmation logic is local to the registry. A separate account/role/project authorization layer is still required by the architecture contract.
-4. Verification is optional per tool. Critical irreversible tools need an independent verification path; optional `verify` alone should not be treated as a universal guarantee.
+## VERIFIED static after security patch
+1. `Tool.requiredPermissions` is now an optional contract field.
+2. `executeTool` and `executeWithConfirmation` reject calls when a tool declares required permissions that are absent from the current `ToolExecutionContext.permissions`.
+3. Execution logs recursively redact sensitive key names (password/token/secret/api-key/authorization/cookie) and truncate very long strings.
+4. High/critical confirmation messages use the same redaction path and do not interpolate raw sensitive fields.
+
+## NOT PROVEN / REMAINING GAP
+1. Existing `RealTools.ts` definitions do not currently declare concrete `requiredPermissions`, so permission enforcement is structurally available but not yet bound to the live tools.
+2. The registry's risk confirmation logic is local to the registry. Separate account/role/project authorization is still required by the architecture contract.
+3. Verification remains optional per tool. Critical irreversible capabilities still require independent runtime evidence.
+4. The existing `PolicyEngine` is not yet the single authorization path for registry execution.
 
 ## Training implication
 Svetlana must learn that:
 - technical availability != authorization;
-- a risk flag != identity/permission proof;
+- a configured permission gate is necessary but does not establish account/role authorization;
 - a tool result != verified external state;
 - logs must not become a secondary data-exfiltration path;
 - UNKNOWN_STATE is required after ambiguous post-error execution.
