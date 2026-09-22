@@ -65,7 +65,9 @@ def main(root: Path) -> int:
             continue
 
         seen: set[str] = set()
-        node_prefix = suite.get("node_prefix", "")
+        node_prefixes = suite.get("node_prefixes")
+        if not isinstance(node_prefixes, list) or not node_prefixes:
+            node_prefixes = [suite.get("node_prefix", "")]
         for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
             if not line.strip():
                 continue
@@ -92,8 +94,8 @@ def main(root: Path) -> int:
             node_id = row.get("node_id")
             if not isinstance(node_id, str) or not node_id:
                 errors.append(f"{p}:{n}: missing node_id")
-            elif not isinstance(node_prefix, str) or not node_id.startswith(node_prefix):
-                errors.append(f"{p}:{n}: node_id {node_id!r} does not match suite prefix {node_prefix!r}")
+            elif not any(isinstance(prefix, str) and node_id.startswith(prefix) for prefix in node_prefixes):
+                errors.append(f"{p}:{n}: node_id {node_id!r} does not match suite prefixes {node_prefixes!r}")
 
             required_behaviors = row.get("evaluation", {}).get("required_behaviors")
             if not isinstance(required_behaviors, list) or not required_behaviors:
