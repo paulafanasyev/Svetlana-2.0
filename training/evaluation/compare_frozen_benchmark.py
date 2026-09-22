@@ -12,8 +12,10 @@ from pathlib import Path
 
 try:
     from training.evaluation.run_structured_eval import evaluate, load as load_eval
+    from training.evaluation.validate_benchmark_manifest import git_blob_sha
 except ModuleNotFoundError:
     from run_structured_eval import evaluate, load as load_eval
+    from validate_benchmark_manifest import git_blob_sha
 
 
 def sha256(path: Path) -> str:
@@ -62,6 +64,15 @@ def main() -> int:
 
     generation_config = json.loads(args.generation_config.read_text(encoding="utf-8"))
     repo_root = args.manifest.resolve().parents[2]
+    frozen_config_path = repo_root / manifest.get("generation_config_path", "")
+    if args.generation_config.resolve() != frozen_config_path.resolve():
+        raise ValueError("generation config path does not match frozen benchmark manifest")
+    expected_config_sha = manifest.get("generation_config_git_blob_sha")
+    actual_config_sha = git_blob_sha(args.generation_config)
+    if not isinstance(expected_config_sha, str) or actual_config_sha != expected_config_sha:
+        raise ValueError(
+            f"generation config is not frozen benchmark config: expected {expected_config_sha}, got {actual_config_sha}"
+        )
     suite_results = []
     regressions = []
 
@@ -118,6 +129,7 @@ def main() -> int:
         "baseline_model": args.baseline_model,
         "candidate_model": args.candidate_model,
         "generation_config": generation_config,
+        "generation_config_git_blob_sha": actual_config_sha,
         "eval_commit": args.eval_commit,
         "prediction_artifacts": {
             "baseline_dir": str(args.baseline_dir),
