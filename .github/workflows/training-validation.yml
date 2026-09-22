@@ -28,6 +28,9 @@ jobs:
       - name: Validate canonical knowledge coverage graph
         run: python training/knowledge/check_coverage.py --root .
 
+      - name: Validate frozen benchmark manifest
+        run: python training/evaluation/validate_benchmark_manifest.py --root .
+
       - name: Upload coverage diagnostic
         if: always()
         uses: actions/upload-artifact@v4
