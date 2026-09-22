@@ -57,3 +57,12 @@ Current capability result remains **NOT PROVEN** until held-out execution and, w
 - The corpora emphasize missing data, source-of-truth conflicts, bulk operations, financial/external-action confirmation and post-action verification.
 
 Current capability status remains **NOT PROVEN** until the held-out evaluator is actually run against a baseline/candidate model.
+
+
+## Expansion v5 — safety and governance
+
+- Я‑Зарядка: 30 training + 12 held-out cases covering child safety, privacy, voice ambiguity, education and external-action gates.
+- Admin: 48 training + 16 held-out cases covering device-independent identity, tenant authorization, model/provider governance, dataset hygiene, audit logging, release gates and runtime evidence.
+- Manifest schema is 2.2.
+
+These additions explicitly teach the separation between trusted identity/policy and model inference. They do not prove enforcement in runtime code.
