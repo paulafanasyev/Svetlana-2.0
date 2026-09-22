@@ -11,37 +11,55 @@
   "contracts": [
     {
       "contract_id": "core.open_app",
-      "skill_ids": ["core.agent.execution", "runtime.operations"],
+      "skill_ids": [
+        "core.agent.execution",
+        "runtime.operations"
+      ],
       "action": "open_app",
       "risk_level": "medium",
-      "input_schema": {"package": "string"},
+      "input_schema": {
+        "package": "string"
+      },
       "confirmation": "policy_required_for_sensitive_target",
       "verification": "app_visible_or_expected_screen_observed",
       "runtime_tool_id": "open_app"
     },
     {
       "contract_id": "core.tap_element",
-      "skill_ids": ["core.agent.execution", "runtime.operations"],
+      "skill_ids": [
+        "core.agent.execution",
+        "runtime.operations"
+      ],
       "action": "tap_element",
       "risk_level": "medium",
-      "input_schema": {"selector": "string"},
+      "input_schema": {
+        "selector": "string"
+      },
       "confirmation": "policy_required_for_sensitive_target",
       "verification": "expected_ui_state_changed",
       "runtime_tool_id": "tap_element"
     },
     {
       "contract_id": "core.type_text",
-      "skill_ids": ["core.agent.execution", "runtime.operations"],
+      "skill_ids": [
+        "core.agent.execution",
+        "runtime.operations"
+      ],
       "action": "type_text",
       "risk_level": "medium",
-      "input_schema": {"text": "string"},
+      "input_schema": {
+        "text": "string"
+      },
       "confirmation": "policy_required_when_target_is_sensitive",
       "verification": "target_field_contains_expected_text",
       "runtime_tool_id": "type_text"
     },
     {
       "contract_id": "core.capture_screen",
-      "skill_ids": ["core.agent.execution", "runtime.operations"],
+      "skill_ids": [
+        "core.agent.execution",
+        "runtime.operations"
+      ],
       "action": "capture_screen",
       "risk_level": "low",
       "input_schema": {},
@@ -51,243 +69,418 @@
     },
     {
       "contract_id": "core.send_message",
-      "skill_ids": ["core.agent.execution"],
+      "skill_ids": [
+        "core.agent.execution"
+      ],
       "action": "send_message",
       "risk_level": "high",
-      "input_schema": {"recipient": "string", "message": "string"},
+      "input_schema": {
+        "recipient": "string",
+        "message": "string"
+      },
       "confirmation": "required_before_external_send",
       "verification": "delivery_or_sent_state_confirmed",
       "runtime_tool_id": "send_message"
     },
     {
       "contract_id": "research.web_search",
-      "skill_ids": ["research.knowledge", "discovery.oss"],
+      "skill_ids": [
+        "research.knowledge",
+        "discovery.oss"
+      ],
       "action": "search_web",
       "risk_level": "low",
-      "input_schema": {"query": "string", "source_constraints": "object?"},
+      "input_schema": {
+        "query": "string",
+        "source_constraints": "object?"
+      },
       "confirmation": "none",
       "verification": "source_results_returned_with_provenance",
       "runtime_tool_id": "search_web"
     },
     {
       "contract_id": "marketplace.catalog.read",
-      "skill_ids": ["marketplace.operations"],
+      "skill_ids": [
+        "marketplace.operations"
+      ],
       "action": "read_catalog",
       "risk_level": "low",
-      "input_schema": {"query": "string", "filters": "object?"},
+      "input_schema": {
+        "query": "string",
+        "filters": "object?"
+      },
       "confirmation": "none",
       "verification": "catalog_state_returned",
       "runtime_tool_id": null
     },
     {
       "contract_id": "marketplace.catalog.write",
-      "skill_ids": ["marketplace.operations"],
+      "skill_ids": [
+        "marketplace.operations"
+      ],
       "action": "update_catalog",
       "risk_level": "high",
-      "input_schema": {"item_id": "string", "changes": "object"},
+      "input_schema": {
+        "item_id": "string",
+        "changes": "object"
+      },
       "confirmation": "required_for_publish_or_material_change",
       "verification": "record_state_reloaded_and_matches_intent",
       "runtime_tool_id": null
     },
     {
       "contract_id": "marketplace.seo.research",
-      "skill_ids": ["marketplace.operations"],
+      "skill_ids": [
+        "marketplace.operations"
+      ],
       "action": "research_marketplace_seo",
       "risk_level": "low",
-      "input_schema": {"product": "object", "market": "string"},
+      "input_schema": {
+        "product": "object",
+        "market": "string"
+      },
       "confirmation": "none",
       "verification": "source_provenance_present",
       "runtime_tool_id": null
     },
     {
       "contract_id": "marketplace.competitor.research",
-      "skill_ids": ["marketplace.operations"],
+      "skill_ids": [
+        "marketplace.operations"
+      ],
       "action": "research_competitors",
       "risk_level": "low",
-      "input_schema": {"target": "object", "market": "string"},
+      "input_schema": {
+        "target": "object",
+        "market": "string"
+      },
       "confirmation": "none",
       "verification": "source_provenance_present",
       "runtime_tool_id": null
     },
     {
       "contract_id": "marketplace.media.generate",
-      "skill_ids": ["marketplace.operations"],
+      "skill_ids": [
+        "marketplace.operations"
+      ],
       "action": "generate_media",
       "risk_level": "medium",
-      "input_schema": {"brief": "object"},
+      "input_schema": {
+        "brief": "object"
+      },
       "confirmation": "required_before_external_publish",
       "verification": "artifact_integrity_and_expected_format",
       "runtime_tool_id": null
     },
     {
       "contract_id": "marketplace.publish",
-      "skill_ids": ["marketplace.operations"],
+      "skill_ids": [
+        "marketplace.operations"
+      ],
       "action": "publish_listing",
       "risk_level": "critical",
-      "input_schema": {"listing_id": "string"},
+      "input_schema": {
+        "listing_id": "string"
+      },
       "confirmation": "required",
       "verification": "published_state_verified",
       "runtime_tool_id": null
     },
     {
       "contract_id": "self_employed.crm.lookup",
-      "skill_ids": ["self_employed.operations"],
+      "skill_ids": [
+        "self_employed.operations"
+      ],
       "action": "lookup_crm",
       "risk_level": "medium",
-      "input_schema": {"query": "string"},
+      "input_schema": {
+        "query": "string"
+      },
       "confirmation": "authorized_project_context_required",
       "verification": "source_record_and_scope_verified",
       "runtime_tool_id": null
     },
     {
       "contract_id": "self_employed.documents.extract",
-      "skill_ids": ["self_employed.operations"],
+      "skill_ids": [
+        "self_employed.operations"
+      ],
       "action": "extract_document",
       "risk_level": "medium",
-      "input_schema": {"document_ref": "string"},
+      "input_schema": {
+        "document_ref": "string"
+      },
       "confirmation": "none_for_local_processing",
       "verification": "extracted_fields_and_source_reference",
       "runtime_tool_id": null
     },
     {
       "contract_id": "self_employed.calendar.create_draft",
-      "skill_ids": ["self_employed.operations"],
+      "skill_ids": [
+        "self_employed.operations"
+      ],
       "action": "create_calendar_draft",
       "risk_level": "high",
-      "input_schema": {"title": "string", "start": "datetime", "end": "datetime"},
+      "input_schema": {
+        "title": "string",
+        "start": "datetime",
+        "end": "datetime"
+      },
       "confirmation": "required_before_external_invitation",
       "verification": "draft_state_or_event_state_verified",
       "runtime_tool_id": null
     },
     {
       "contract_id": "self_employed.finance.lookup",
-      "skill_ids": ["self_employed.operations"],
+      "skill_ids": [
+        "self_employed.operations"
+      ],
       "action": "lookup_finance",
       "risk_level": "high",
-      "input_schema": {"account_scope": "string", "query": "string"},
+      "input_schema": {
+        "account_scope": "string",
+        "query": "string"
+      },
       "confirmation": "authorized_account_context_required",
       "verification": "account_scope_and_returned_state_verified",
       "runtime_tool_id": null
     },
     {
       "contract_id": "self_employed.tax.official_source",
-      "skill_ids": ["self_employed.operations", "research.knowledge"],
+      "skill_ids": [
+        "self_employed.operations",
+        "research.knowledge"
+      ],
       "action": "retrieve_tax_information",
       "risk_level": "low",
-      "input_schema": {"question": "string", "jurisdiction": "string"},
+      "input_schema": {
+        "question": "string",
+        "jurisdiction": "string"
+      },
       "confirmation": "none",
       "verification": "official_source_and_check_date_present",
       "runtime_tool_id": null
     },
     {
       "contract_id": "ya_zaryadka.education.answer",
-      "skill_ids": ["child_safe.ya_zaryadka"],
+      "skill_ids": [
+        "child_safe.ya_zaryadka"
+      ],
       "action": "answer_educational_question",
       "risk_level": "low",
-      "input_schema": {"question": "string", "age_band": "string"},
+      "input_schema": {
+        "question": "string",
+        "age_band": "string"
+      },
       "confirmation": "none",
       "verification": "age_policy_and_source_policy_applied",
       "runtime_tool_id": null
     },
     {
       "contract_id": "ya_zaryadka.voice.tts",
-      "skill_ids": ["child_safe.ya_zaryadka"],
+      "skill_ids": [
+        "child_safe.ya_zaryadka"
+      ],
       "action": "synthesize_voice",
       "risk_level": "low",
-      "input_schema": {"text": "string", "voice_id": "string?"},
+      "input_schema": {
+        "text": "string",
+        "voice_id": "string?"
+      },
       "confirmation": "none",
       "verification": "audio_artifact_returned",
       "runtime_tool_id": null
     },
     {
       "contract_id": "ya_zaryadka.avatar.state",
-      "skill_ids": ["child_safe.ya_zaryadka"],
+      "skill_ids": [
+        "child_safe.ya_zaryadka"
+      ],
       "action": "set_avatar_state",
       "risk_level": "low",
-      "input_schema": {"state": "string"},
+      "input_schema": {
+        "state": "string"
+      },
       "confirmation": "none",
       "verification": "expected_avatar_state_observed",
       "runtime_tool_id": null
     },
     {
       "contract_id": "admin.identity.authz_check",
-      "skill_ids": ["admin.governance"],
+      "skill_ids": [
+        "admin.governance"
+      ],
       "action": "check_authorization",
       "risk_level": "critical",
-      "input_schema": {"account_id": "string", "role": "string", "project_id": "string", "action": "string"},
+      "input_schema": {
+        "account_id": "string",
+        "role": "string",
+        "project_id": "string",
+        "action": "string"
+      },
       "confirmation": "authorized_admin_role_required",
       "verification": "policy_decision_and_audit_record",
       "runtime_tool_id": null
     },
     {
       "contract_id": "admin.model.select",
-      "skill_ids": ["admin.governance"],
+      "skill_ids": [
+        "admin.governance"
+      ],
       "action": "select_model_provider",
       "risk_level": "high",
-      "input_schema": {"model_id": "string", "provider_id": "string"},
+      "input_schema": {
+        "model_id": "string",
+        "provider_id": "string"
+      },
       "confirmation": "required",
       "verification": "active_provider_and_audit_record",
       "runtime_tool_id": null
     },
     {
       "contract_id": "admin.dataset.publish",
-      "skill_ids": ["admin.governance"],
+      "skill_ids": [
+        "admin.governance"
+      ],
       "action": "publish_dataset",
       "risk_level": "critical",
-      "input_schema": {"dataset_ref": "string", "version": "string"},
+      "input_schema": {
+        "dataset_ref": "string",
+        "version": "string"
+      },
       "confirmation": "required",
       "verification": "immutable_version_and_audit_record",
       "runtime_tool_id": null
     },
     {
       "contract_id": "admin.evaluation.run",
-      "skill_ids": ["admin.governance"],
+      "skill_ids": [
+        "admin.governance"
+      ],
       "action": "run_evaluation",
       "risk_level": "medium",
-      "input_schema": {"benchmark_version": "string", "candidate": "string"},
+      "input_schema": {
+        "benchmark_version": "string",
+        "candidate": "string"
+      },
       "confirmation": "authorized_admin_role_required",
       "verification": "prediction_artifacts_and_score_record",
       "runtime_tool_id": null
     },
     {
       "contract_id": "admin.audit.read",
-      "skill_ids": ["admin.governance"],
+      "skill_ids": [
+        "admin.governance"
+      ],
       "action": "read_audit_log",
       "risk_level": "medium",
-      "input_schema": {"scope": "object"},
+      "input_schema": {
+        "scope": "object"
+      },
       "confirmation": "authorized_admin_role_required",
       "verification": "audit_scope_verified",
       "runtime_tool_id": null
     },
     {
       "contract_id": "continuous.learning.candidate_build",
-      "skill_ids": ["continuous.learning"],
+      "skill_ids": [
+        "continuous.learning"
+      ],
       "action": "build_training_candidate",
       "risk_level": "high",
-      "input_schema": {"dataset_version": "string", "base_model": "string"},
+      "input_schema": {
+        "dataset_version": "string",
+        "base_model": "string"
+      },
       "confirmation": "authorized_release_context_required",
       "verification": "immutable_candidate_id_and_manifest",
       "runtime_tool_id": null
     },
     {
       "contract_id": "continuous.learning.eval_gate",
-      "skill_ids": ["continuous.learning"],
+      "skill_ids": [
+        "continuous.learning"
+      ],
       "action": "evaluate_candidate",
       "risk_level": "high",
-      "input_schema": {"candidate_id": "string", "benchmark_version": "string"},
+      "input_schema": {
+        "candidate_id": "string",
+        "benchmark_version": "string"
+      },
       "confirmation": "authorized_release_context_required",
       "verification": "frozen_eval_identity_and_regression_record",
       "runtime_tool_id": null
     },
     {
       "contract_id": "continuous.learning.promote",
-      "skill_ids": ["continuous.learning"],
+      "skill_ids": [
+        "continuous.learning"
+      ],
       "action": "promote_candidate",
       "risk_level": "critical",
-      "input_schema": {"candidate_id": "string"},
+      "input_schema": {
+        "candidate_id": "string"
+      },
       "confirmation": "required",
       "verification": "release_state_and_audit_record",
       "runtime_tool_id": null
+    },
+    {
+      "contract_id": "core.swipe",
+      "skill_ids": [
+        "core.agent.execution",
+        "runtime.operations"
+      ],
+      "action": "swipe",
+      "risk_level": "medium",
+      "input_schema": {
+        "direction": "string",
+        "distance": "number?"
+      },
+      "confirmation": "policy_required_for_sensitive_target",
+      "verification": "expected_ui_state_changed",
+      "runtime_tool_id": "swipe"
+    },
+    {
+      "contract_id": "core.press_key",
+      "skill_ids": [
+        "core.agent.execution",
+        "runtime.operations"
+      ],
+      "action": "press_key",
+      "risk_level": "medium",
+      "input_schema": {
+        "key": "string"
+      },
+      "confirmation": "policy_required_for_sensitive_key",
+      "verification": "expected_ui_state_changed",
+      "runtime_tool_id": "press_key"
+    },
+    {
+      "contract_id": "core.go_home",
+      "skill_ids": [
+        "core.agent.execution",
+        "runtime.operations"
+      ],
+      "action": "go_home",
+      "risk_level": "medium",
+      "input_schema": {},
+      "confirmation": "none",
+      "verification": "home_screen_or_expected_transition_observed",
+      "runtime_tool_id": "go_home"
+    },
+    {
+      "contract_id": "core.go_back",
+      "skill_ids": [
+        "core.agent.execution",
+        "runtime.operations"
+      ],
+      "action": "go_back",
+      "risk_level": "medium",
+      "input_schema": {},
+      "confirmation": "none",
+      "verification": "previous_screen_or_expected_transition_observed",
+      "runtime_tool_id": "go_back"
     }
   ]
 }
