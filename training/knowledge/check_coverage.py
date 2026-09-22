@@ -158,6 +158,7 @@ def main(root: Path) -> int:
         knowledge_links = 0
         for p in (
             root / "training/knowledge/SVETLANA_KNOWLEDGE_PACK_V1.json",
+            root / "training/knowledge/SVETLANA_KNOWLEDGE_PACK_V2.json",
             root / "training/knowledge/SVETLANA_DOCUMENT_INTELLIGENCE_PACK_V1.json",
         ):
             if p.is_file():
