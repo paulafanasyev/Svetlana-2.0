@@ -25,3 +25,10 @@ Marketplace → tool registry/agent execution → Я‑Зарядка → identi
 
 ## Acceptance rule
 A node does not become VERIFIED merely because a document or dataset exists. Capability requires held-out behavioral evidence; runtime-dependent nodes require runtime evidence.
+## Expansion v2
+
+Added operational knowledge pack v1 plus 67 additional training examples and 24 new held-out cases. New coverage is concentrated on Marketplace operations, agent/tool contracts, identity/admin governance, document workflows, child safety, runtime evidence and continuous-learning behavior.
+
+The discovery log records six additional reference projects reviewed at source level, including Chinese-origin Qwen-Agent, UI-TARS Desktop, MinerU, PaddleOCR and OpenManus, plus Browser Use.
+
+Current capability result remains **NOT PROVEN** until held-out execution and, where applicable, real runtime evidence exist.
