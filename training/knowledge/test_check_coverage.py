@@ -87,7 +87,9 @@ class CoverageCheckerContractTest(unittest.TestCase):
             encoding="utf-8")
         (root / "src/services/ToolRegistry.ts").write_text(
             "export const x={id:'open_app'}\n", encoding="utf-8")
-        for name in ("RealTools.ts", "PolicyEngine.ts", "Verification.ts"):
+        (root / "src/services" / "RealTools.ts").write_text(
+            "export const x={id:'open_app'}\n", encoding="utf-8")
+        for name in ("PolicyEngine.ts", "Verification.ts"):
             (root / "src/services" / name).write_text("export const x={};\n", encoding="utf-8")
 
 
