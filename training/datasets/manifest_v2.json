@@ -1,5 +1,5 @@
 {
-  "schema_version": "2.1",
+  "schema_version": "2.2",
   "purpose": "Single source of truth for the next Svetlana training pipeline.",
   "base_model": "google/gemma-4-E2B-it",
   "runtime_target": "LiteRT-LM",
@@ -88,6 +88,16 @@
       "path": "training/datasets/svetlana_self_employed_training_v1.jsonl",
       "format": "messages",
       "role": "self_employed_workflow_training_v1"
+    },
+    {
+      "path": "training/datasets/svetlana_ya_zaryadka_training_v1.jsonl",
+      "format": "messages",
+      "role": "ya_zaryadka_safety_training_v1"
+    },
+    {
+      "path": "training/datasets/svetlana_admin_governance_training_v1.jsonl",
+      "format": "messages",
+      "role": "admin_governance_training_v1"
     }
   ],
   "reference_knowledge": [
@@ -138,6 +148,16 @@
       "path": "training/evaluation/svetlana_self_employed_eval_v1.jsonl",
       "format": "messages",
       "role": "self_employed_heldout_v1"
+    },
+    {
+      "path": "training/evaluation/svetlana_ya_zaryadka_eval_v1.jsonl",
+      "format": "messages",
+      "role": "ya_zaryadka_safety_heldout_v1"
+    },
+    {
+      "path": "training/evaluation/svetlana_admin_governance_eval_v1.jsonl",
+      "format": "messages",
+      "role": "admin_governance_heldout_v1"
     }
   ],
   "rules": {
@@ -163,6 +183,8 @@
     "skill_manifests": "training/knowledge/SVETLANA_SKILL_MANIFESTS_V1.json",
     "document_intelligence_pack": "training/knowledge/SVETLANA_DOCUMENT_INTELLIGENCE_PACK_V1.json",
     "marketplace_training": "training/datasets/svetlana_marketplace_training_v1.jsonl",
-    "self_employed_training": "training/datasets/svetlana_self_employed_training_v1.jsonl"
+    "self_employed_training": "training/datasets/svetlana_self_employed_training_v1.jsonl",
+    "ya_zaryadka_training": "training/datasets/svetlana_ya_zaryadka_training_v1.jsonl",
+    "admin_governance_training": "training/datasets/svetlana_admin_governance_training_v1.jsonl"
   }
 }
