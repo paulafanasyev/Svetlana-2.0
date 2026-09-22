@@ -265,6 +265,7 @@ The knowledge architecture introduced by the September 2026 expansion is maintai
 - `docs/SVETLANA_ARCHITECTURE_CONTRACT.md` — runtime architecture and separation of core/context/policy/tools/verification.
 - `training/knowledge/SVETLANA_KNOWLEDGE_SKELETON.json` — machine-readable knowledge tree.
 - `training/knowledge/SVETLANA_KNOWLEDGE_PACK_V1.json` — operational definitions and workflows for priority nodes.
+- `training/knowledge/SVETLANA_KNOWLEDGE_PACK_V2.json` — second structured knowledge pack covering the remaining skeleton leaf nodes.
 - `training/knowledge/SVETLANA_KNOWLEDGE_COVERAGE.md` — skeleton-to-evidence coverage.
 - `training/knowledge/OPEN_SOURCE_DISCOVERY_LOG_2026-09.md` — inspected external capability candidates.
 - `training/datasets/SVETLANA_TRAINING_CURRICULUM.md` — curriculum v3.
