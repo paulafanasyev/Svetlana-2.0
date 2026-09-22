@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "policy": "For Russia-facing factual knowledge, prefer primary Russian official sources. Secondary material may be used only when explicitly marked as secondary and never treated as primary authority.",
+  "primary_sources": [
+    {"name": "Президент России", "domain": "kremlin.ru", "scope": ["presidential acts", "official speeches", "historical state documents published by the President's administration"]},
+    {"name": "Правительство России", "domain": "government.ru", "scope": ["government decisions", "official policy", "current regulations and explanations"]},
+    {"name": "Официальный интернет-портал правовой информации", "domain": "pravo.gov.ru", "scope": ["laws", "decrees", "legal acts", "official publication status"]},
+    {"name": "Портал опубликования правовых актов", "domain": "publication.pravo.gov.ru", "scope": ["official legal publication"]},
+    {"name": "Российская государственная историческая библиотека", "domain": "shpl.ru", "scope": ["historical bibliography and digitized historical materials"]},
+    {"name": "Президентская библиотека имени Б.Н. Ельцина", "domain": "prlib.ru", "scope": ["digitized primary sources", "historical collections", "Russian state and regional history"]},
+    {"name": "Росархив", "domain": "archives.gov.ru", "scope": ["archival records", "archival descriptions", "documentary history"]},
+    {"name": "Министерство культуры России", "domain": "culture.gov.ru", "scope": ["state cultural heritage", "museums", "monuments", "official cultural policy"]},
+    {"name": "Государственный Эрмитаж", "domain": "hermitagemuseum.org", "scope": ["museum collections and scholarly catalogues"]},
+    {"name": "Государственный исторический музей", "domain": "shm.ru", "scope": ["Russian history museum collections and scholarly materials"]}
+  ],
+  "historical_method": {
+    "primary_source_first": true,
+    "separate_fact_from_interpretation": true,
+    "store_date_and_period": true,
+    "store_source_url": true,
+    "store_source_type": true,
+    "store_jurisdiction": "Russian Federation",
+    "conflicting_sources": "present both claims, identify source and date, do not silently merge them",
+    "uncertain_or_disputed_history": "mark as disputed/uncertain rather than fabricate certainty",
+    "current_law": "must be checked live against official legal publication before being presented as current"
+  },
+  "knowledge_domains_to_expand": [
+    "Russian history from ancient Rus to present",
+    "history of peoples and regions of Russia",
+    "Russian state institutions and constitutional structure",
+    "federal and regional law relevant to self-employed people",
+    "NPD/self-employed taxation",
+    "labor and civil law basics",
+    "consumer protection",
+    "personal data and information security law",
+    "business registration and reporting",
+    "accounting and financial literacy",
+    "banking and payment safety",
+    "Russian geography and administrative structure",
+    "culture, literature, science and education of Russia",
+    "major Russian museums, archives and libraries",
+    "digital government services",
+    "emergency and public-safety procedures",
+    "official terminology and government service workflows"
+  ]
+}

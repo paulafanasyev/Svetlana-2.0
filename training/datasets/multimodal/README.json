@@ -1,0 +1,1 @@
+{"schema":"multimodal_v1","modalities":["image","audio","document","video","mixed"],"status":"curriculum_definition","next_step":"native_gemma_multimodal_trainer","policy":"media inputs must remain distinct from text instructions and must carry provenance"}

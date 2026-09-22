@@ -1,0 +1,73 @@
+name: LiteRT-LM Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - gpu-training-auto-run
+  pull_request:
+    branches:
+      - gpu-training-auto-run
+
+jobs:
+  validate-manifest-and-training:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate LiteRT-LM manifest
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('training/litertlm/model_manifest.json').read_text())
+          assert data['runtime']['name'] == 'LiteRT-LM'
+          assert data['training']['base_model'] == 'google/gemma-4-E2B-it'
+          assert data['training']['method'] == 'SFT+LoRA+4bit'
+          assert data['training']['adapter_export'] == 'pending'
+          candidates = data['edge_candidates']
+          assert len(candidates) == 2
+          assert all(c['model_id'] == 'litert-community/gemma-4-E2B-it-litert-lm' for c in candidates)
+          assert {c['variant'] for c in candidates} == {'official_litert_lm', 'official_gpu'}
+          print('LITERT_LM_MANIFEST=PASS')
+          print('GOOGLE_GEMMA_TARGET=PASS')
+          print('EDGE_CANDIDATES=2')
+          print('ADAPTER_CONVERSION=NOT_PROVEN')
+          PY
+
+      - name: Validate training datasets and separation
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          train = Path('training/datasets/svetlana_seed.jsonl')
+          official = Path('training/datasets/self_employed_official.jsonl')
+          eval_file = Path('training/datasets/svetlana_eval.jsonl')
+          for p in (train, official, eval_file):
+              assert p.exists(), f'missing {p}'
+          train_rows = [json.loads(x) for x in train.read_text().splitlines() if x.strip()]
+          eval_rows = [json.loads(x) for x in eval_file.read_text().splitlines() if x.strip()]
+          official_rows = [json.loads(x) for x in official.read_text().splitlines() if x.strip()]
+          assert len(train_rows) >= 10
+          assert len(eval_rows) >= 8
+          assert len(official_rows) >= 6
+          assert all(isinstance(x.get('messages'), list) for x in train_rows + eval_rows)
+          train_text = {json.dumps(x, ensure_ascii=False, sort_keys=True) for x in train_rows}
+          eval_text = {json.dumps(x, ensure_ascii=False, sort_keys=True) for x in eval_rows}
+          assert not train_text & eval_text, 'train/eval overlap detected'
+          print(f'TRAIN_ROWS={len(train_rows)}')
+          print(f'EVAL_ROWS={len(eval_rows)}')
+          print(f'OFFICIAL_ROWS={len(official_rows)}')
+          print('TRAIN_EVAL_SEPARATION=PASS')
+          PY
+
+      - name: Compile Gemma GPU training script
+        run: python -m py_compile training/gemma4/train_svetlana_smoke.py
+
+      - name: Verify no trained weights are checked in
+        run: |
+          if find training -type f \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' -o -name '*.pth' \) | grep -q .; then
+            echo 'ERROR: trained model artifact checked into repository'
+            exit 1
+          fi
+          echo 'NO_TRAINED_WEIGHTS_IN_REPO=PASS'

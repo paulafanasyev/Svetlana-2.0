@@ -1,0 +1,135 @@
+name: Training Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['gpu-training-auto-run', 'chore/training-evidence-gates']
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  validate-training-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test runner and image dependency
+        run: python -m pip install --disable-pip-version-check pytest 'pillow==12.3.0'
+
+      - name: Validate manifest and all referenced dataset paths
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          m = json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))
+          assert m['base_model'] == 'google/gemma-4-E2B-it'
+          assert m['runtime_target'] == 'LiteRT-LM'
+          assert m['training_mode'] == 'text_production'
+          assert m['trainer'] == 'training/gemma4/train_svetlana_production.py'
+          groups = ('train', 'reference_knowledge', 'eval')
+          paths = []
+          for group in groups:
+              for item in m.get(group, []):
+                  paths.append(item['path'])
+                  assert Path(item['path']).is_file(), f'missing dataset: {item["path"]}'
+          assert len(paths) == len(set(paths)), 'manifest contains duplicate dataset paths'
+          assert m['rules']['no_eval_in_train'] is True
+          assert m['rules']['no_personal_data_in_weights'] is True
+          print('MANIFEST=PASS')
+          print('DATASET_PATHS=PASS')
+          print(f'DATASET_PATH_COUNT={len(paths)}')
+          print('TRAINING_MODE=text_production')
+          print('MULTIMODAL_TRAINING=NOT_RUN')
+          PY
+
+      - name: Validate JSONL structure from manifest
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          m = json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))
+          for group in ('train', 'reference_knowledge', 'eval'):
+              for item in m.get(group, []):
+                  p = Path(item['path'])
+                  for n, line in enumerate(p.read_text(encoding='utf-8').splitlines(), 1):
+                      if line.strip():
+                          obj = json.loads(line)
+                          assert isinstance(obj, dict), f'{p}:{n}'
+          print('JSONL=PASS')
+          PY
+
+      - name: Validate exact train/eval separation
+        run: python training/validate_training.py --root .
+
+      - name: Compile training entrypoints
+        run: python -m py_compile training/gemma4/train_svetlana_smoke.py training/gemma4/train_svetlana_production.py training/gemma4/generate_predictions.py training/gemma4/multimodal_preflight.py training/gemma4/train_svetlana_multimodal.py training/evaluation/run_structured_eval.py training/datasets/multimodal/generate_synthetic_images.py training/datasets/multimodal/validate_image_corpus.py
+
+      - name: Run deterministic training validator
+        run: python training/validate_training.py --root .
+
+      - name: Validate pinned Colab environment specification
+        run: |
+          test -f training/environment/requirements-colab-gpu.txt
+          test -f training/environment/environment.json
+          grep -q '^torch==' training/environment/requirements-colab-gpu.txt
+          grep -q '^transformers==' training/environment/requirements-colab-gpu.txt
+          grep -q '^transformers==5.5.0$' training/environment/requirements-colab-gpu.txt
+          grep -q '^trl==0.24.0$' training/environment/requirements-colab-gpu.txt
+          grep -q '^unsloth==2026.9.7$' training/environment/requirements-colab-gpu.txt
+          grep -q '^unsloth-zoo==2026.9.6$' training/environment/requirements-colab-gpu.txt
+          grep -q '^pillow==' training/environment/requirements-colab-gpu.txt
+          echo 'PINNED_ENVIRONMENT_SPEC=PASS'
+
+      - name: Run repository validator tests
+        run: PYTHONPATH=training python -m unittest discover -s training/tests -p 'test_*.py'
+
+      - name: Run structured evaluation regression tests
+        run: PYTHONPATH=. python -m pytest -q training/evaluation/test_run_structured_eval.py
+
+      - name: Run production trainer contract tests
+        run: PYTHONPATH=. python -m pytest -q training/gemma4/test_train_svetlana_production.py
+
+      - name: Run multimodal corpus tests
+        run: PYTHONPATH=. python -m pytest -q training/datasets/multimodal/test_generate_synthetic_images.py training/datasets/multimodal/test_validate_image_corpus.py training/gemma4/test_multimodal_entrypoint.py
+
+      - name: Run Colab GO gate static test
+        run: PYTHONPATH=. python -m pytest -q training/environment/test_run_colab_go_multimodal_gate.py
+
+      - name: Generate and validate synthetic multimodal corpus
+        run: |
+          python training/datasets/multimodal/generate_synthetic_images.py
+          python training/datasets/multimodal/validate_image_corpus.py training/datasets/multimodal/image_training_records.jsonl
+
+      - name: Confirm multimodal SFT remains gated
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          m = json.loads(Path('training/datasets/manifest_v2.json').read_text(encoding='utf-8'))
+          assert m['rules']['do_not_start_training_until_multimodal_trainer_is_ready'] is True
+          assert m.get('multimodal', {}).get('sft_ready') is not True
+          print('MULTIMODAL_SFT_GATE=ACTIVE')
+          print('GOOGLE_GPU_TRAINING=NOT_RUN')
+          print('LITERT_LM_CONVERSION=NOT_RUN')
+          PY
+
+      - name: Verify synthetic path portability
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          import tempfile
+          from pathlib import Path
+          import training.datasets.multimodal.generate_synthetic_images as module
+          with tempfile.TemporaryDirectory() as td:
+              root = Path(td)
+              module.ASSET_DIR = root / 'synthetic_images'
+              module.MANIFEST = root / 'records.jsonl'
+              module.main()
+              rows = module.MANIFEST.read_text(encoding='utf-8').splitlines()
+              assert len(rows) == 8
+              print('SYNTHETIC_PATH_PORTABILITY=PASS')
+          PY

@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0",
+  "jurisdiction": "Russian Federation",
+  "source_policy": "Primary official Russian sources first; every historical fact must retain source, date/period and source type.",
+  "periods": [
+    "древнейшие общества и археология на территории России",
+    "Древняя Русь",
+    "удельный период",
+    "образование и развитие Московского государства",
+    "Российское царство",
+    "Российская империя",
+    "Отечественная война 1812 года",
+    "реформы XIX века",
+    "революции 1905 и 1917 годов",
+    "Гражданская война",
+    "СССР: образование и развитие",
+    "Великая Отечественная война",
+    "послевоенный СССР",
+    "перестройка и распад СССР",
+    "Российская Федерация с 1991 года",
+    "современная Россия"
+  ],
+  "cross_cutting_topics": [
+    "история регионов и народов России",
+    "государственные институты и реформы",
+    "военная история",
+    "экономическая история",
+    "наука и техника",
+    "образование",
+    "культура и литература",
+    "религия и общество",
+    "демография и миграции",
+    "география и изменение административных границ",
+    "источниковедение и работа с архивными документами"
+  ],
+  "required_fields": ["question", "answer", "period", "source_title", "source_url", "source_type", "publication_date", "jurisdiction", "confidence"],
+  "source_priority": [
+    "pravo.gov.ru",
+    "publication.pravo.gov.ru",
+    "kremlin.ru",
+    "government.ru",
+    "archives.gov.ru",
+    "prlib.ru",
+    "shpl.ru",
+    "culture.gov.ru",
+    "official state museum and archive domains"
+  ],
+  "quality_rules": {
+    "no_unsourced_historical_claims": true,
+    "no_silent_merging_of_conflicting_accounts": true,
+    "mark_disputed_interpretations": true,
+    "distinguish_primary_document_from_later_commentary": true,
+    "never_convert_current_political_claims_into_historical_facts_without_source": true
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "runtime": {
+    "name": "LiteRT-LM",
+    "minimum_version": "0.17.0",
+    "status": "integration_pending"
+  },
+  "training": {
+    "base_model": "google/gemma-4-E2B-it",
+    "method": "SFT+LoRA+4bit",
+    "adapter_export": "pending",
+    "note": "Training uses Google Gemma 4 E2B. LiteRT-LM is the edge inference/runtime track and does not replace SFT/LoRA."
+  },
+  "edge_candidates": [
+    {
+      "model_id": "litert-community/gemma-4-E2B-it-litert-lm",
+      "file": "gemma-4-E2B-it.litertlm",
+      "variant": "official_litert_lm",
+      "sha256": "181938105e0eefd105961417e8da75903eacda102c4fce9ce90f50b97139a63c",
+      "size_bytes": 2583085056,
+      "context": 32000,
+      "status": "candidate_pending_runtime_validation"
+    },
+    {
+      "model_id": "litert-community/gemma-4-E2B-it-litert-lm",
+      "file": "gemma-4-E2B-it-gpu.litertlm",
+      "variant": "official_gpu",
+      "sha256": "a53a59001894c58e6bdb5b9b227709f91a2e3e556baa7d85acf9c55402ba5cf5",
+      "status": "candidate_pending_runtime_validation"
+    }
+  ],
+  "acceptance_evidence": [
+    "runtime_version",
+    "model_sha256",
+    "backend",
+    "load_success",
+    "first_token_latency_ms",
+    "tokens_per_second",
+    "peak_rss_mb",
+    "three_turn_conversation",
+    "tool_declaration",
+    "tool_denial",
+    "offline_inference",
+    "fallback_to_cloud",
+    "trained_adapter_conversion"
+  ]
+}

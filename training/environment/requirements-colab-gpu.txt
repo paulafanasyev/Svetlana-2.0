@@ -1,0 +1,16 @@
+# Svetlana Gemma 4 E2B text production/Colab GPU environment
+# Unsloth 2026.9.7 supports Gemma 4; its current dependency constraints keep
+# Transformers <=5.5.0 and TRL <=0.24.0. Pin the matching zoo release explicitly.
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.12.1
+torchcodec==0.12.0+cu126
+transformers==5.5.0
+trl==0.24.0
+unsloth==2026.9.7
+unsloth-zoo==2026.9.6
+datasets==4.3.0
+accelerate==1.15.0
+peft==0.21.0
+safetensors==0.8.0
+sentencepiece==0.2.1
+pillow==12.3.0
