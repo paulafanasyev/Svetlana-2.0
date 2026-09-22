@@ -7,6 +7,10 @@ on:
   pull_request:
     branches: [main, develop]
 
+concurrency:
+  group: training-validation-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate-training-assets:
     runs-on: ubuntu-latest
