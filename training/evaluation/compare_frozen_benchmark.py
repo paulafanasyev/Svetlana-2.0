@@ -58,12 +58,13 @@ def main() -> int:
         raise ValueError("benchmark manifest has no suites")
 
     generation_config = json.loads(args.generation_config.read_text(encoding="utf-8"))
+    repo_root = args.manifest.resolve().parents[2]
     suite_results = []
     regressions = []
 
     for suite in suites:
         suite_id = suite["suite_id"]
-        eval_path = Path(__file__).resolve().parents[2] / suite["eval_path"]
+        eval_path = repo_root / suite["eval_path"]
         if not eval_path.is_file():
             raise FileNotFoundError(eval_path)
         baseline_path = args.baseline_dir / f"{suite_id}.jsonl"
