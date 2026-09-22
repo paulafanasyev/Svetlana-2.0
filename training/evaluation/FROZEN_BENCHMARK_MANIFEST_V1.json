@@ -120,5 +120,7 @@
   "benchmark_id": "SVETLANA_FROZEN_BENCHMARK",
   "benchmark_version": "1.0",
   "evaluator_version": "structured-v2.2",
-  "freeze_rule": "Each suite eval_git_blob_sha must match the checked-out Git blob object for the exact eval_path. A mismatch requires a new benchmark version."
+  "freeze_rule": "Each suite eval_git_blob_sha must match the checked-out Git blob object for the exact eval_path. A mismatch requires a new benchmark version.",
+  "generation_config_path": "training/evaluation/FROZEN_BENCHMARK_GENERATION_V1.json",
+  "generation_config_git_blob_sha": "f6a75181fd3eb0d3681cf965d5ba0d8dd5c6c5f3"
 }
