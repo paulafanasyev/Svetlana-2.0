@@ -35,7 +35,22 @@ class CoverageCheckerContractTest(unittest.TestCase):
             "schema_version": "1.0",
             "skills": [{
                 "skill_id": "core.skill",
-                "node_ids": [] if broken else ["00.core"]
+                "node_ids": [] if broken else ["00.core"],
+                "tool_ids": ["open_app"],
+                "tool_contract_ids": [] if broken else ["core.open_app"]
+            }]
+        }
+        tool_contracts = {
+            "schema_version": "1.0",
+            "contracts": [{
+                "contract_id": "core.open_app",
+                "skill_ids": ["core.skill"],
+                "action": "open_app",
+                "risk_level": "medium",
+                "input_schema": {"package": "string"},
+                "confirmation": "policy_required",
+                "verification": "screen_observed",
+                "runtime_tool_id": "open_app"
             }]
         }
         contract = {
@@ -60,6 +75,7 @@ class CoverageCheckerContractTest(unittest.TestCase):
             ("training/knowledge/SVETLANA_KNOWLEDGE_SKELETON.json", skeleton),
             ("training/knowledge/SVETLANA_SKILL_MANIFESTS_V1.json", skills),
             ("training/knowledge/SVETLANA_COVERAGE_CONTRACT.json", contract),
+            ("training/knowledge/SVETLANA_TOOL_CONTRACTS_V1.json", tool_contracts),
             ("training/datasets/manifest_v2.json", manifest),
         ]:
             (root / path).write_text(json.dumps(data), encoding="utf-8")
