@@ -84,5 +84,8 @@
       "NOT_PROVEN",
       "PENDING"
     ]
-  }
+  },
+  "benchmark_id": "SVETLANA_FROZEN_BENCHMARK",
+  "benchmark_version": "1.0",
+  "evaluator_version": "structured-v2.2"
 }
