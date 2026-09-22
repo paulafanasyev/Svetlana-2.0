@@ -47,3 +47,13 @@ Current capability result remains **NOT PROVEN** until held-out execution and, w
 - VERIFIED: new skill and knowledge manifests are registered in the training manifest.
 - VERIFIED: no claim is made that these additions improve model quality before held-out execution.
 - NOT PROVEN: model capability improvement, GPU SFT, device/runtime execution and LiteRT-LM validation.
+
+
+## Expansion v4 — domain workflow corpora
+
+- Marketplace workflow corpus: 45 training records + 16 held-out records.
+- Self-employed workflow corpus: 38 training records + 16 held-out records.
+- Both remain synthetic and contain no private CRM/customer records.
+- The corpora emphasize missing data, source-of-truth conflicts, bulk operations, financial/external-action confirmation and post-action verification.
+
+Current capability status remains **NOT PROVEN** until the held-out evaluator is actually run against a baseline/candidate model.
