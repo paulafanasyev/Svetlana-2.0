@@ -199,6 +199,9 @@
     "coverage_contract": "training/knowledge/SVETLANA_COVERAGE_CONTRACT.json",
     "frozen_benchmark_manifest": "training/evaluation/FROZEN_BENCHMARK_MANIFEST_V1.json",
     "frozen_benchmark_validator": "training/evaluation/validate_benchmark_manifest.py",
-    "tool_contracts": "training/knowledge/SVETLANA_TOOL_CONTRACTS_V1.json"
+    "tool_contracts": "training/knowledge/SVETLANA_TOOL_CONTRACTS_V1.json",
+    "frozen_benchmark_comparator": "training/evaluation/compare_frozen_benchmark.py",
+    "frozen_benchmark_comparator_test": "training/evaluation/test_compare_frozen_benchmark.py",
+    "frozen_benchmark_validator_test": "training/evaluation/test_validate_benchmark_manifest.py"
   }
 }
