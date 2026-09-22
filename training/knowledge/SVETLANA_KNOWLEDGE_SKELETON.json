@@ -529,7 +529,8 @@
         "failure_modes",
         "verification",
         "security_notes"
-      ]
+      ],
+      "status": "PENDING"
     },
     {
       "id": "07.admin.models",
