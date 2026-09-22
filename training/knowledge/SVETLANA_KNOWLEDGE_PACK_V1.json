@@ -1,0 +1,302 @@
+{
+  "schema_version": "1.0",
+  "status": "PENDING implementation",
+  "entries": [
+    {
+      "node_id": "02.agent.registry",
+      "title": "Provider-neutral tool registry",
+      "definition": "A capability registry separates what a tool can do from whether the current actor is authorized to use it.",
+      "contract": [
+        "capability_id",
+        "provider",
+        "schema",
+        "permissions",
+        "risk_level",
+        "confirmation_required",
+        "idempotency",
+        "result_schema",
+        "verification",
+        "provenance",
+        "availability"
+      ],
+      "workflow": [
+        "discover",
+        "authorize",
+        "validate_arguments",
+        "confirm_if_required",
+        "execute",
+        "capture_result",
+        "verify_postcondition",
+        "report_state"
+      ],
+      "failure_modes": [
+        "tool unavailable",
+        "invalid arguments",
+        "permission denied",
+        "timeout",
+        "partial execution",
+        "unknown state"
+      ],
+      "training_notes": "Teach selection and safe sequencing; never teach technical availability as permission."
+    },
+    {
+      "node_id": "02.agent.recovery",
+      "title": "Failure recovery",
+      "definition": "After uncertain or partial execution, preserve the last confirmed state and determine whether retry is safe.",
+      "workflow": [
+        "record_last_confirmed_state",
+        "classify_error",
+        "check_idempotency",
+        "query_actual_state",
+        "retry_only_if_safe",
+        "verify"
+      ],
+      "failure_modes": [
+        "duplicate action",
+        "inconsistent state",
+        "retry storm",
+        "false failure"
+      ],
+      "training_notes": "UNKNOWN_STATE is a first-class state."
+    },
+    {
+      "node_id": "02.agent.verification",
+      "title": "Postcondition verification",
+      "definition": "A successful tool response is not sufficient; the expected external state or artifact must be checked.",
+      "workflow": [
+        "define_postcondition",
+        "execute",
+        "observe_external_state",
+        "compare",
+        "mark_verified_or_unproven"
+      ],
+      "training_notes": "Verification must be independent of the model's narrative."
+    },
+    {
+      "node_id": "02.agent.confirmation",
+      "title": "Confirmation gates",
+      "definition": "Consequential external actions use human confirmation or a pre-authorized policy.",
+      "workflow": [
+        "prepare_preview",
+        "describe_scope",
+        "surface_risk",
+        "request_confirmation",
+        "execute",
+        "verify"
+      ],
+      "failure_modes": [
+        "silent side effect",
+        "wrong scope",
+        "ambiguous consent"
+      ]
+    },
+    {
+      "node_id": "03.knowledge.sources",
+      "title": "Source governance",
+      "definition": "Current high-impact facts require authoritative source selection, date validation, jurisdiction matching and provenance.",
+      "workflow": [
+        "search",
+        "identify_source_type",
+        "check_authority",
+        "check_date",
+        "cross_check",
+        "cite",
+        "store_freshness"
+      ],
+      "failure_modes": [
+        "stale source",
+        "secondary source presented as primary",
+        "jurisdiction mismatch",
+        "conflicting sources"
+      ]
+    },
+    {
+      "node_id": "03.knowledge",
+      "title": "Research",
+      "definition": "Research is a decomposed workflow rather than a single search query.",
+      "workflow": [
+        "scope",
+        "decompose",
+        "query",
+        "collect",
+        "normalize",
+        "cross_check",
+        "synthesize",
+        "cite",
+        "state_limits"
+      ]
+    },
+    {
+      "node_id": "05.marketplace",
+      "title": "Marketplace operating loop",
+      "definition": "Marketplace assistance connects product facts, catalog, SEO, competitors, content, analytics and authorized operations.",
+      "workflow": [
+        "research_product",
+        "validate_attributes",
+        "generate_content",
+        "seo_check",
+        "competitor_check",
+        "preview",
+        "publish_or_export",
+        "verify"
+      ]
+    },
+    {
+      "node_id": "05.marketplace.catalog",
+      "title": "Catalog integrity",
+      "definition": "Product cards must use confirmed attributes and explicit missing-data handling.",
+      "checks": [
+        "required_fields",
+        "data_type",
+        "units",
+        "variant_consistency",
+        "media_links",
+        "forbidden_claims"
+      ]
+    },
+    {
+      "node_id": "05.marketplace.seo",
+      "title": "Marketplace SEO",
+      "definition": "SEO should align user intent, platform rules and confirmed product attributes.",
+      "workflow": [
+        "collect_queries",
+        "cluster_intent",
+        "map_to_attributes",
+        "draft",
+        "validate",
+        "measure"
+      ]
+    },
+    {
+      "node_id": "05.marketplace.competitors",
+      "title": "Competitor intelligence",
+      "definition": "Competitor comparisons require comparable products, consistent time windows and source/date provenance.",
+      "checks": [
+        "comparability",
+        "date_alignment",
+        "source_quality",
+        "fact_vs_hypothesis",
+        "unknowns"
+      ]
+    },
+    {
+      "node_id": "05.marketplace.media",
+      "title": "Media production",
+      "definition": "Images, short videos and presentations are downstream artifacts tied to a versioned set of product facts.",
+      "workflow": [
+        "collect_source_facts",
+        "generate",
+        "validate_against_source",
+        "version",
+        "export",
+        "publish_with_confirmation"
+      ]
+    },
+    {
+      "node_id": "06.ya_zaryadka",
+      "title": "Child-safe domain",
+      "definition": "Child interactions operate under stricter content, privacy and external-action policy.",
+      "constraints": [
+        "age-aware",
+        "minimal_data",
+        "no_purchase_by_child",
+        "no_secret_disclosure",
+        "parent_or_policy_gate_for_sensitive_actions"
+      ]
+    },
+    {
+      "node_id": "07.admin.identity",
+      "title": "Device-independent identity",
+      "definition": "Account identity is independent from device; authorization derives from authenticated account, role, project/tenant and policy.",
+      "workflow": [
+        "authenticate",
+        "resolve_account",
+        "resolve_role",
+        "resolve_tenant",
+        "apply_policy",
+        "issue_session"
+      ]
+    },
+    {
+      "node_id": "07.admin.datasets",
+      "title": "Dataset governance",
+      "definition": "Every training set needs provenance, version, schema, privacy classification, deduplication state and train/eval role.",
+      "checks": [
+        "source",
+        "version",
+        "hash",
+        "privacy",
+        "duplicates",
+        "eval_separation",
+        "transformations"
+      ]
+    },
+    {
+      "node_id": "07.admin.evaluation",
+      "title": "Capability evaluation",
+      "definition": "Every trained capability requires held-out behavioral evaluation and runtime evidence when execution is involved.",
+      "workflow": [
+        "freeze_eval",
+        "run_baseline",
+        "run_candidate",
+        "compare",
+        "regression_check",
+        "record_evidence"
+      ]
+    },
+    {
+      "node_id": "08.discovery",
+      "title": "Continuous discovery",
+      "definition": "New technologies are evaluated as candidates, not automatically integrated.",
+      "workflow": [
+        "discover",
+        "inspect_code",
+        "inspect_license",
+        "assess_maturity",
+        "security_review",
+        "map_capabilities",
+        "decision",
+        "record_evidence"
+      ]
+    },
+    {
+      "node_id": "08.discovery.security",
+      "title": "External project security review",
+      "definition": "Repository popularity does not prove security. Inspect secrets, permissions, network access, dependencies, sandboxing and data flows."
+    },
+    {
+      "node_id": "09.runtime.android",
+      "title": "Android runtime evidence",
+      "definition": "Build success proves code can build; real device capability requires install, action, state change and independent verification.",
+      "evidence_chain": [
+        "code",
+        "CI",
+        "APK",
+        "device",
+        "tool_call",
+        "real_action",
+        "verification"
+      ]
+    },
+    {
+      "node_id": "09.runtime.web",
+      "title": "Browser runtime evidence",
+      "definition": "Browser automation must be validated against a concrete postcondition in the live browser session."
+    },
+    {
+      "node_id": "10.continuous_learning",
+      "title": "Error-driven expansion",
+      "definition": "Evaluation and runtime failures produce targeted synthetic additions, regression cases and updated coverage rather than arbitrary corpus growth.",
+      "workflow": [
+        "detect_gap",
+        "generalize",
+        "remove_private_data",
+        "create_variants",
+        "add_train",
+        "add_heldout",
+        "evaluate",
+        "promote"
+      ]
+    }
+  ]
+}
