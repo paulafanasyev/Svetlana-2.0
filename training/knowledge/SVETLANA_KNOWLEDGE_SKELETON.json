@@ -35,12 +35,12 @@
     ],
     "training_target": "Behavior and durable procedures only; not mutable/private facts.",
     "eval_target": "Held-out behavioral tests independent from training examples.",
-    "runtime_dependency": "none|retrieval|tool|device|account|mixed"
+    "runtime_dependency": "pipe-separated union of none|retrieval|tool|device|account|mixed; use | when multiple dependencies apply."
   },
   "nodes": [
     {
       "id": "00.core",
-      "parent": "00",
+      "parent": null,
       "title": "Knowledge Core",
       "type": "domain",
       "stability": "stable",
@@ -154,7 +154,7 @@
     },
     {
       "id": "01.communication",
-      "parent": "01",
+      "parent": null,
       "title": "Communication and multimodality",
       "type": "domain",
       "stability": "stable",
@@ -173,7 +173,7 @@
     },
     {
       "id": "02.agent",
-      "parent": "02",
+      "parent": null,
       "title": "Agent planning and execution",
       "type": "domain",
       "stability": "stable",
@@ -230,7 +230,7 @@
     },
     {
       "id": "03.knowledge",
-      "parent": "03",
+      "parent": null,
       "title": "Retrieval and research",
       "type": "domain",
       "stability": "refreshable",
@@ -268,7 +268,7 @@
     },
     {
       "id": "04.self_employed",
-      "parent": "04",
+      "parent": null,
       "title": "Self-employed domain",
       "type": "domain",
       "stability": "refreshable",
@@ -344,7 +344,7 @@
     },
     {
       "id": "05.marketplace",
-      "parent": "05",
+      "parent": null,
       "title": "Marketplace domain",
       "type": "domain",
       "stability": "refreshable",
@@ -439,7 +439,7 @@
     },
     {
       "id": "06.ya_zaryadka",
-      "parent": "06",
+      "parent": null,
       "title": "Я‑Зарядка domain",
       "type": "policy",
       "stability": "stable",
@@ -481,9 +481,9 @@
       "title": "Voice/TTS/avatar behavior",
       "type": "skill",
       "stability": "stable",
-      "training_target": "heldout_voice_avatar",
-      "eval_target": "tool",
-      "runtime_dependency": "PENDING",
+      "training_target": "behavior",
+      "eval_target": "heldout_voice_avatar",
+      "runtime_dependency": "tool",
       "fields": [
         "definition",
         "boundaries",
@@ -491,11 +491,12 @@
         "failure_modes",
         "verification",
         "security_notes"
-      ]
+      ],
+      "status": "PENDING"
     },
     {
       "id": "07.admin",
-      "parent": "07",
+      "parent": null,
       "title": "Admin/governance",
       "type": "domain",
       "stability": "stable",
@@ -589,7 +590,7 @@
     },
     {
       "id": "08.discovery",
-      "parent": "08",
+      "parent": null,
       "title": "Continuous technology/open-source discovery",
       "type": "domain",
       "stability": "refreshable",
@@ -646,7 +647,7 @@
     },
     {
       "id": "09.runtime",
-      "parent": "09",
+      "parent": null,
       "title": "Runtime/product integration",
       "type": "domain",
       "stability": "stable",
@@ -703,7 +704,7 @@
     },
     {
       "id": "10.continuous_learning",
-      "parent": "10",
+      "parent": null,
       "title": "Error-driven corpus expansion",
       "type": "governance",
       "stability": "stable",
