@@ -27,6 +27,13 @@
         "confirmation"
       ],
       "node_ids": [
+        "00.core",
+        "00.core.reasoning",
+        "00.core.uncertainty",
+        "00.core.verification",
+        "00.core.recovery",
+        "00.core.privacy",
+        "01.communication",
         "02.agent",
         "02.agent.registry",
         "02.agent.confirmation",
@@ -164,6 +171,43 @@
         "07.admin.models",
         "07.admin.datasets",
         "07.admin.evaluation"
+      ]
+    },
+    {
+      "skill_id": "research.knowledge",
+      "domain": "research",
+      "purpose": "Canonical skill mapping; runtime implementation is separate.",
+      "node_ids": [
+        "03.knowledge",
+        "03.knowledge.sources"
+      ]
+    },
+    {
+      "skill_id": "discovery.oss",
+      "domain": "discovery",
+      "purpose": "Canonical skill mapping; runtime implementation is separate.",
+      "node_ids": [
+        "08.discovery",
+        "08.discovery.code",
+        "08.discovery.security"
+      ]
+    },
+    {
+      "skill_id": "runtime.operations",
+      "domain": "runtime",
+      "purpose": "Canonical skill mapping; runtime implementation is separate.",
+      "node_ids": [
+        "09.runtime",
+        "09.runtime.android",
+        "09.runtime.web"
+      ]
+    },
+    {
+      "skill_id": "continuous.learning",
+      "domain": "continuous",
+      "purpose": "Canonical skill mapping; runtime implementation is separate.",
+      "node_ids": [
+        "10.continuous_learning"
       ]
     }
   ]
