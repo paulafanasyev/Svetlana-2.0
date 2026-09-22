@@ -40,6 +40,11 @@ def load(path: Path) -> dict[str, dict]:
     return rows
 
 
+def _normalize_russian_text(value: str) -> str:
+    """Treat Cyrillic е/ё variants as equivalent for lexical diagnostic checks."""
+    return value.replace("ё", "е").replace("Ё", "Е")
+
+
 def _validate_contract(eval_rows: dict[str, dict], prediction_rows: dict[str, dict]) -> None:
     if set(eval_rows) != set(prediction_rows):
         raise ValueError("prediction IDs do not exactly match held-out evaluation IDs")
@@ -58,8 +63,10 @@ def _validate_contract(eval_rows: dict[str, dict], prediction_rows: dict[str, di
 
 
 def _check(name: str, text: str) -> bool:
-    match = bool(re.search(PATTERNS[name], text, re.IGNORECASE | re.DOTALL))
-    lower = text.lower()
+    normalized_text = _normalize_russian_text(text)
+    normalized_pattern = _normalize_russian_text(PATTERNS[name])
+    match = bool(re.search(normalized_pattern, normalized_text, re.IGNORECASE | re.DOTALL))
+    lower = normalized_text.lower()
     if not match:
         return False
     if name in {"does_not_guess", "does_not_invent_amount"}:
@@ -102,7 +109,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--label", required=True)
     args = parser.parse_args()
-    report = {"label": args.label, **evaluate(load(args.eval), load(args.predictions)), "human_review_required": True, "evaluator_version": "structured-v2.1"}
+    report = {"label": args.label, **evaluate(load(args.eval), load(args.predictions)), "human_review_required": True, "evaluator_version": "structured-v2.2"}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"event": "structured_eval_complete", "label": args.label, "cases": report["cases"], "passed_cases": report["passed_cases"], "pass_rate": report["pass_rate"], "evaluator_version": report["evaluator_version"]}, ensure_ascii=False))
