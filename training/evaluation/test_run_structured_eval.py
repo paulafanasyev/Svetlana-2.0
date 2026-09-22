@@ -4,10 +4,19 @@ from training.evaluation.run_structured_eval import _check, evaluate, load
 
 ROOT = Path(__file__).resolve().parents[2]
 EVAL = ROOT / "training/datasets/svetlana_eval.jsonl"
+EXPANDED_EVAL = ROOT / "training/evaluation/svetlana_acceptance_eval_v2.jsonl"
 
 
 def _golden_predictions():
     rows = load(EVAL)
+    return {
+        case_id: {"id": case_id, "generated": case["messages"][-1]["content"]}
+        for case_id, case in rows.items()
+    }
+
+
+def _golden_expanded_predictions():
+    rows = load(EXPANDED_EVAL)
     return {
         case_id: {"id": case_id, "generated": case["messages"][-1]["content"]}
         for case_id, case in rows.items()
@@ -40,3 +49,13 @@ def test_creation_claim_with_tool_confirmation_is_allowed():
 def test_russian_e_yo_variants_are_equivalent_for_privacy_storage():
     assert _check("routes_data_to_protected_storage", "Данные хранятся в защищённом CRM.")
     assert _check("routes_data_to_protected_storage", "Данные хранятся в защищенном CRM/хранилище.")
+
+
+def test_expanded_acceptance_golden_references_satisfy_declared_checks():
+    rows = load(EXPANDED_EVAL)
+    assert len(rows) == 24
+    assert len(set(row["category"] for row in rows.values())) == 8
+    report = evaluate(rows, _golden_expanded_predictions())
+    assert report["cases"] == 24
+    assert report["passed_cases"] == 24
+    assert report["pass_rate"] == 1.0
