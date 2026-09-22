@@ -11,9 +11,9 @@ import json
 from pathlib import Path
 
 try:
-    from training.evaluation.run_structured_eval import evaluate
+    from training.evaluation.run_structured_eval import evaluate, load as load_eval
 except ModuleNotFoundError:
-    from run_structured_eval import evaluate
+    from run_structured_eval import evaluate, load as load_eval
 
 
 def sha256(path: Path) -> str:
@@ -77,7 +77,7 @@ def main() -> int:
         if not candidate_path.is_file():
             raise FileNotFoundError(candidate_path)
 
-        eval_rows = index(load_jsonl(eval_path))
+        eval_rows = load_eval(eval_path)
         baseline_rows = index(load_jsonl(baseline_path))
         candidate_rows = index(load_jsonl(candidate_path))
         baseline_report = evaluate(eval_rows, baseline_rows)
