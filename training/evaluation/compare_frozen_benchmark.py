@@ -112,6 +112,8 @@ def main() -> int:
                 "pass_rate": candidate_report["pass_rate"],
             },
             "delta_pass_rate": delta,
+            "baseline_prediction_sha256": sha256(baseline_path),
+            "candidate_prediction_sha256": sha256(candidate_path),
             "regression": regression,
         })
 
