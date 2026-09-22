@@ -57,7 +57,7 @@ def test_environment_gate_uses_the_single_pinned_requirements_file():
 
 
 def test_environment_gate_imports_unsloth_before_transformers_and_trl():
-    assert "required_names = ('unsloth', 'unsloth-zoo', 'transformers', 'trl'" in SCRIPT
+    assert "required_names = ('unsloth', 'unsloth-zoo', 'torchcodec', 'transformers', 'trl'" in SCRIPT
 
 def test_production_can_reuse_completed_training_for_evidence_recovery():
     assert "SVETLANA_EVIDENCE_ONLY" in SCRIPT
