@@ -185,6 +185,9 @@
     "marketplace_training": "training/datasets/svetlana_marketplace_training_v1.jsonl",
     "self_employed_training": "training/datasets/svetlana_self_employed_training_v1.jsonl",
     "ya_zaryadka_training": "training/datasets/svetlana_ya_zaryadka_training_v1.jsonl",
-    "admin_governance_training": "training/datasets/svetlana_admin_governance_training_v1.jsonl"
+    "admin_governance_training": "training/datasets/svetlana_admin_governance_training_v1.jsonl",
+    "coverage_contract": "training/knowledge/SVETLANA_COVERAGE_CONTRACT.json",
+    "frozen_benchmark_manifest": "training/evaluation/FROZEN_BENCHMARK_MANIFEST_V1.json",
+    "frozen_benchmark_validator": "training/evaluation/validate_benchmark_manifest.py"
   }
 }
