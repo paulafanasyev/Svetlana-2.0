@@ -53,6 +53,11 @@
       "path": "training/datasets/svetlana_behavior_curriculum_v2.jsonl",
       "format": "messages",
       "role": "balanced_behavior_curriculum_v2"
+    },
+    {
+      "path": "training/datasets/svetlana_acceptance_hardening_v1.jsonl",
+      "format": "messages",
+      "role": "acceptance_gate_hardening_v1"
     }
   ],
   "reference_knowledge": [
