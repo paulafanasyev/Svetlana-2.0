@@ -1,42 +1,121 @@
 """Validate the frozen benchmark registry without executing a model.
 
-The validator checks that benchmark suite files exist, are unique and contain
-privacy classifications. It intentionally does not produce a quality PASS.
+The validator checks benchmark identity, suite paths, held-out record integrity and
+structured-evaluator compatibility. It intentionally does not produce a model-quality PASS.
 """
 from __future__ import annotations
+
 import argparse
 import json
 from pathlib import Path
 
+from training.evaluation.run_structured_eval import PATTERNS
+
+
+REQUIRED_SUITE_KEYS = ("suite_id", "node_prefix", "eval_path", "evaluator", "status")
+ALLOWED_SUITE_STATUS = {"READY_FOR_EVAL"}
+ALLOWED_EVALUATORS = {"structural_or_custom", "custom_behavior"}
+
+
 def main(root: Path) -> int:
-    m = json.loads((root / "training/evaluation/FROZEN_BENCHMARK_MANIFEST_V1.json").read_text(encoding="utf-8"))
-    suites = m.get("suites", [])
-    errors = []
-    ids = [s.get("suite_id") for s in suites]
-    if len(ids) != len(set(ids)):
-        errors.append("duplicate suite_id")
+    manifest_path = root / "training/evaluation/FROZEN_BENCHMARK_MANIFEST_V1.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    errors: list[str] = []
+
+    if manifest.get("benchmark_id") != "SVETLANA_FROZEN_BENCHMARK":
+        errors.append("invalid benchmark_id")
+    if manifest.get("benchmark_version") != "1.0":
+        errors.append("invalid benchmark_version")
+    if manifest.get("evaluator_version") != "structured-v2.2":
+        errors.append("invalid evaluator_version")
+
+    suites = manifest.get("suites", [])
+    if not suites:
+        errors.append("benchmark has no suites")
+
+    suite_ids: set[str] = set()
+    eval_paths: set[str] = set()
+    global_record_ids: set[str] = set()
+
     for suite in suites:
-        p = root / suite["eval_path"]
-        if not p.is_file():
-            errors.append(f"missing eval file: {suite['eval_path']}")
+        for key in REQUIRED_SUITE_KEYS:
+            if key not in suite:
+                errors.append(f"suite missing {key}")
+        suite_id = suite.get("suite_id")
+        eval_path = suite.get("eval_path")
+        if not isinstance(suite_id, str) or not suite_id:
             continue
-        seen = set()
+        if suite_id in suite_ids:
+            errors.append(f"duplicate suite_id: {suite_id}")
+        suite_ids.add(suite_id)
+        if eval_path in eval_paths:
+            errors.append(f"duplicate eval_path: {eval_path}")
+        eval_paths.add(eval_path)
+
+        if suite.get("status") not in ALLOWED_SUITE_STATUS:
+            errors.append(f"{suite_id}: unsupported status {suite.get('status')!r}")
+        if suite.get("evaluator") not in ALLOWED_EVALUATORS:
+            errors.append(f"{suite_id}: unsupported evaluator {suite.get('evaluator')!r}")
+
+        if not isinstance(eval_path, str):
+            continue
+        p = root / eval_path
+        if not p.is_file():
+            errors.append(f"missing eval file: {eval_path}")
+            continue
+
+        seen: set[str] = set()
+        node_prefix = suite.get("node_prefix", "")
         for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
             if not line.strip():
                 continue
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                errors.append(f"{p}:{n}: invalid JSON: {exc}")
+                continue
+
             rid = row.get("id")
-            if not rid:
+            if not isinstance(rid, str) or not rid:
                 errors.append(f"{p}:{n}: missing id")
-            elif rid in seen:
-                errors.append(f"{p}:{n}: duplicate id {rid}")
-            seen.add(rid)
+            else:
+                if rid in seen:
+                    errors.append(f"{p}:{n}: duplicate id {rid}")
+                if rid in global_record_ids:
+                    errors.append(f"{p}:{n}: record id repeated across benchmark suites: {rid}")
+                seen.add(rid)
+                global_record_ids.add(rid)
+
             if row.get("privacy_classification") != "synthetic_no_personal_data":
                 errors.append(f"{p}:{n}: invalid privacy classification")
+
+            node_id = row.get("node_id")
+            if not isinstance(node_id, str) or not node_id:
+                errors.append(f"{p}:{n}: missing node_id")
+            elif not isinstance(node_prefix, str) or not node_id.startswith(node_prefix):
+                errors.append(f"{p}:{n}: node_id {node_id!r} does not match suite prefix {node_prefix!r}")
+
+            required_behaviors = row.get("evaluation", {}).get("required_behaviors")
+            if not isinstance(required_behaviors, list) or not required_behaviors:
+                errors.append(f"{p}:{n}: missing evaluation.required_behaviors")
+            else:
+                for behavior in required_behaviors:
+                    if behavior not in PATTERNS:
+                        errors.append(f"{p}:{n}: unknown required behavior {behavior!r}")
+
     result = "VERIFIED" if not errors else "NOT_PROVEN"
-    report = {"result": result, "suites": len(suites), "errors": errors}
+    report = {
+        "result": result,
+        "benchmark_id": manifest.get("benchmark_id"),
+        "benchmark_version": manifest.get("benchmark_version"),
+        "evaluator_version": manifest.get("evaluator_version"),
+        "suites": len(suites),
+        "record_count": len(global_record_ids),
+        "errors": errors,
+    }
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if not errors else 1
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
