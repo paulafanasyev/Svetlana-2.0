@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0",
+  "purpose": "Frozen benchmark registry for baseline-vs-candidate evaluation.",
+  "rules": {
+    "eval_sets_are_never_training_inputs": true,
+    "benchmark_version_must_be_immutable_for_comparison": true,
+    "baseline_and_candidate_must_use_same_eval_set": true,
+    "training_loss_is_not_capability_evidence": true,
+    "runtime_dependent_capabilities_require_runtime_evidence": true
+  },
+  "suites": [
+    {
+      "suite_id": "core_knowledge_skeleton_v1",
+      "node_prefix": "00.",
+      "eval_path": "training/evaluation/svetlana_knowledge_skeleton_eval_v1.jsonl",
+      "evaluator": "structural_or_custom",
+      "status": "READY_FOR_EVAL"
+    },
+    {
+      "suite_id": "core_knowledge_skeleton_v2",
+      "node_prefix": "00.",
+      "eval_path": "training/evaluation/svetlana_knowledge_skeleton_eval_v2.jsonl",
+      "evaluator": "structural_or_custom",
+      "status": "READY_FOR_EVAL"
+    },
+    {
+      "suite_id": "tool_registry_v3",
+      "node_prefix": "02.agent.registry",
+      "eval_path": "training/evaluation/svetlana_tool_registry_eval_v3.jsonl",
+      "evaluator": "custom_behavior",
+      "status": "READY_FOR_EVAL"
+    },
+    {
+      "suite_id": "document_intelligence_v1",
+      "node_prefix": "01.communication",
+      "eval_path": "training/evaluation/svetlana_document_intelligence_eval_v1.jsonl",
+      "evaluator": "custom_behavior",
+      "status": "READY_FOR_EVAL"
+    },
+    {
+      "suite_id": "marketplace_v1",
+      "node_prefix": "05.marketplace",
+      "eval_path": "training/evaluation/svetlana_marketplace_eval_v1.jsonl",
+      "evaluator": "custom_behavior",
+      "status": "READY_FOR_EVAL"
+    },
+    {
+      "suite_id": "self_employed_v1",
+      "node_prefix": "04.self_employed",
+      "eval_path": "training/evaluation/svetlana_self_employed_eval_v1.jsonl",
+      "evaluator": "custom_behavior",
+      "status": "READY_FOR_EVAL"
+    },
+    {
+      "suite_id": "ya_zaryadka_v1",
+      "node_prefix": "06.ya_zaryadka",
+      "eval_path": "training/evaluation/svetlana_ya_zaryadka_eval_v1.jsonl",
+      "evaluator": "custom_behavior",
+      "status": "READY_FOR_EVAL"
+    },
+    {
+      "suite_id": "admin_governance_v1",
+      "node_prefix": "07.admin",
+      "eval_path": "training/evaluation/svetlana_admin_governance_eval_v1.jsonl",
+      "evaluator": "custom_behavior",
+      "status": "READY_FOR_EVAL"
+    }
+  ],
+  "comparison_record": {
+    "required": [
+      "benchmark_version",
+      "baseline_model",
+      "candidate_model",
+      "generation_config",
+      "eval_commit",
+      "prediction_artifacts",
+      "scores",
+      "regressions",
+      "human_review",
+      "runtime_evidence"
+    ],
+    "status_vocabulary": [
+      "VERIFIED",
+      "NOT_PROVEN",
+      "PENDING"
+    ]
+  }
+}
