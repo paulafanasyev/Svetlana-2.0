@@ -87,8 +87,8 @@ jobs:
       - name: Validate exact train/eval separation
         run: python training/validate_training.py --root .
 
-      - name: Compile training entrypoints
-        run: python -m py_compile training/gemma4/train_svetlana_smoke.py training/gemma4/train_svetlana_production.py training/gemma4/generate_predictions.py training/gemma4/multimodal_preflight.py training/gemma4/train_svetlana_multimodal.py training/evaluation/run_structured_eval.py training/datasets/multimodal/generate_synthetic_images.py training/datasets/multimodal/validate_image_corpus.py
+      - name: Compile training and evaluation entrypoints
+        run: python -m py_compile training/gemma4/train_svetlana_smoke.py training/gemma4/train_svetlana_production.py training/gemma4/generate_predictions.py training/gemma4/multimodal_preflight.py training/gemma4/train_svetlana_multimodal.py training/evaluation/run_structured_eval.py training/evaluation/validate_benchmark_manifest.py training/evaluation/compare_frozen_benchmark.py training/datasets/multimodal/generate_synthetic_images.py training/datasets/multimodal/validate_image_corpus.py
 
       - name: Run deterministic training validator
         run: python training/validate_training.py --root .
@@ -110,7 +110,7 @@ jobs:
         run: PYTHONPATH=training python -m unittest discover -s training/tests -p 'test_*.py'
 
       - name: Run structured evaluation regression tests
-        run: PYTHONPATH=. python -m pytest -q training/evaluation/test_run_structured_eval.py
+        run: PYTHONPATH=. python -m pytest -q training/evaluation/test_run_structured_eval.py training/evaluation/test_compare_frozen_benchmark.py
 
       - name: Run production trainer contract tests
         run: PYTHONPATH=. python -m pytest -q training/gemma4/test_train_svetlana_production.py
