@@ -39,6 +39,32 @@ def main(root: Path) -> int:
     if manifest.get("evaluator_version") != "structured-v2.2":
         errors.append("invalid evaluator_version")
 
+    generation_config_path = manifest.get("generation_config_path")
+    expected_generation_sha = manifest.get("generation_config_git_blob_sha")
+    if not isinstance(generation_config_path, str) or not generation_config_path:
+        errors.append("missing generation_config_path")
+    else:
+        generation_path = root / generation_config_path
+        if not generation_path.is_file():
+            errors.append(f"missing generation config: {generation_config_path}")
+        elif not isinstance(expected_generation_sha, str) or not expected_generation_sha:
+            errors.append("missing generation_config_git_blob_sha")
+        elif git_blob_sha(generation_path) != expected_generation_sha:
+            errors.append(
+                f"generation config blob mismatch: expected {expected_generation_sha}, got {git_blob_sha(generation_path)}"
+            )
+        else:
+            try:
+                generation = json.loads(generation_path.read_text(encoding="utf-8"))
+                if generation.get("benchmark_id") != manifest.get("benchmark_id"):
+                    errors.append("generation config benchmark_id mismatch")
+                if generation.get("benchmark_version") != manifest.get("benchmark_version"):
+                    errors.append("generation config benchmark_version mismatch")
+                if not generation.get("rules", {}).get("baseline_and_candidate_must_use_identical_config"):
+                    errors.append("generation config does not require identical baseline/candidate config")
+            except json.JSONDecodeError as exc:
+                errors.append(f"invalid generation config JSON: {exc}")
+
     suites = manifest.get("suites", [])
     if not suites:
         errors.append("benchmark has no suites")
