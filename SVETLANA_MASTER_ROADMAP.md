@@ -281,6 +281,7 @@ The knowledge architecture introduced by the September 2026 expansion is maintai
 
 ### Current static evidence
 - VERIFIED: 38 knowledge nodes are defined.
+- VERIFIED: combined V1 + V2 knowledge packs provide dedicated structured knowledge for all 38/38 nodes.
 - VERIFIED: 37 v1 + 67 v2 synthetic training examples were created and registered.
 - VERIFIED: 18 v1 + 24 v2 held-out cases were created and kept outside the train list.
 - VERIFIED: no ID overlap was found within the new v1/v2/v3 train and eval groups; every new train example references a skeleton node.
