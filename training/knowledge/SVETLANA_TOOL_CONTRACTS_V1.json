@@ -22,7 +22,11 @@
       },
       "confirmation": "policy_required_for_sensitive_target",
       "verification": "app_visible_or_expected_screen_observed",
-      "runtime_tool_id": "open_app"
+      "runtime_tool_id": "open_app",
+      "required_permissions": [
+        "device.navigation"
+      ],
+      "authorization_binding": "runtime_tool_field_not_yet_bound"
     },
     {
       "contract_id": "core.tap_element",
@@ -37,7 +41,11 @@
       },
       "confirmation": "policy_required_for_sensitive_target",
       "verification": "expected_ui_state_changed",
-      "runtime_tool_id": "tap_element"
+      "runtime_tool_id": "tap_element",
+      "required_permissions": [
+        "device.interaction"
+      ],
+      "authorization_binding": "runtime_tool_field_not_yet_bound"
     },
     {
       "contract_id": "core.type_text",
@@ -52,7 +60,11 @@
       },
       "confirmation": "policy_required_when_target_is_sensitive",
       "verification": "target_field_contains_expected_text",
-      "runtime_tool_id": "type_text"
+      "runtime_tool_id": "type_text",
+      "required_permissions": [
+        "device.input"
+      ],
+      "authorization_binding": "runtime_tool_field_not_yet_bound"
     },
     {
       "contract_id": "core.capture_screen",
@@ -65,7 +77,11 @@
       "input_schema": {},
       "confirmation": "none",
       "verification": "image_artifact_returned",
-      "runtime_tool_id": "capture_screen"
+      "runtime_tool_id": "capture_screen",
+      "required_permissions": [
+        "device.screen"
+      ],
+      "authorization_binding": "runtime_tool_field_not_yet_bound"
     },
     {
       "contract_id": "core.send_message",
@@ -80,7 +96,11 @@
       },
       "confirmation": "required_before_external_send",
       "verification": "delivery_or_sent_state_confirmed",
-      "runtime_tool_id": "send_message"
+      "runtime_tool_id": "send_message",
+      "required_permissions": [
+        "communication.send"
+      ],
+      "authorization_binding": "runtime_tool_field_not_yet_bound"
     },
     {
       "contract_id": "research.web_search",
@@ -96,7 +116,11 @@
       },
       "confirmation": "none",
       "verification": "source_results_returned_with_provenance",
-      "runtime_tool_id": "search_web"
+      "runtime_tool_id": "search_web",
+      "required_permissions": [
+        "research.web"
+      ],
+      "authorization_binding": "runtime_tool_field_not_yet_bound"
     },
     {
       "contract_id": "marketplace.catalog.read",
@@ -111,7 +135,11 @@
       },
       "confirmation": "none",
       "verification": "catalog_state_returned",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "marketplace.catalog.read"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "marketplace.catalog.write",
@@ -126,7 +154,11 @@
       },
       "confirmation": "required_for_publish_or_material_change",
       "verification": "record_state_reloaded_and_matches_intent",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "marketplace.catalog.write"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "marketplace.seo.research",
@@ -141,7 +173,11 @@
       },
       "confirmation": "none",
       "verification": "source_provenance_present",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "marketplace.research"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "marketplace.competitor.research",
@@ -156,7 +192,11 @@
       },
       "confirmation": "none",
       "verification": "source_provenance_present",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "marketplace.research"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "marketplace.media.generate",
@@ -170,7 +210,11 @@
       },
       "confirmation": "required_before_external_publish",
       "verification": "artifact_integrity_and_expected_format",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "marketplace.media.generate"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "marketplace.publish",
@@ -184,7 +228,11 @@
       },
       "confirmation": "required",
       "verification": "published_state_verified",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "marketplace.publish"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "self_employed.crm.lookup",
@@ -198,7 +246,11 @@
       },
       "confirmation": "authorized_project_context_required",
       "verification": "source_record_and_scope_verified",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "self_employed.crm.read"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "self_employed.documents.extract",
@@ -212,7 +264,11 @@
       },
       "confirmation": "none_for_local_processing",
       "verification": "extracted_fields_and_source_reference",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "self_employed.documents.read"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "self_employed.calendar.create_draft",
@@ -228,7 +284,11 @@
       },
       "confirmation": "required_before_external_invitation",
       "verification": "draft_state_or_event_state_verified",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "self_employed.calendar.write"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "self_employed.finance.lookup",
@@ -243,7 +303,11 @@
       },
       "confirmation": "authorized_account_context_required",
       "verification": "account_scope_and_returned_state_verified",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "self_employed.finance.read"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "self_employed.tax.official_source",
@@ -259,7 +323,11 @@
       },
       "confirmation": "none",
       "verification": "official_source_and_check_date_present",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "knowledge.tax.read"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "ya_zaryadka.education.answer",
@@ -274,7 +342,11 @@
       },
       "confirmation": "none",
       "verification": "age_policy_and_source_policy_applied",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "ya_zaryadka.education"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "ya_zaryadka.voice.tts",
@@ -289,7 +361,11 @@
       },
       "confirmation": "none",
       "verification": "audio_artifact_returned",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "ya_zaryadka.voice"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "ya_zaryadka.avatar.state",
@@ -303,7 +379,11 @@
       },
       "confirmation": "none",
       "verification": "expected_avatar_state_observed",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "ya_zaryadka.avatar"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "admin.identity.authz_check",
@@ -320,7 +400,11 @@
       },
       "confirmation": "authorized_admin_role_required",
       "verification": "policy_decision_and_audit_record",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "admin.identity.manage"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "admin.model.select",
@@ -335,7 +419,11 @@
       },
       "confirmation": "required",
       "verification": "active_provider_and_audit_record",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "admin.models.manage"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "admin.dataset.publish",
@@ -350,7 +438,11 @@
       },
       "confirmation": "required",
       "verification": "immutable_version_and_audit_record",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "admin.datasets.manage"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "admin.evaluation.run",
@@ -365,7 +457,11 @@
       },
       "confirmation": "authorized_admin_role_required",
       "verification": "prediction_artifacts_and_score_record",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "admin.evaluation.run"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "admin.audit.read",
@@ -379,7 +475,11 @@
       },
       "confirmation": "authorized_admin_role_required",
       "verification": "audit_scope_verified",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "admin.audit.read"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "continuous.learning.candidate_build",
@@ -394,7 +494,11 @@
       },
       "confirmation": "authorized_release_context_required",
       "verification": "immutable_candidate_id_and_manifest",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "admin.training.build"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "continuous.learning.eval_gate",
@@ -409,7 +513,11 @@
       },
       "confirmation": "authorized_release_context_required",
       "verification": "frozen_eval_identity_and_regression_record",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "admin.evaluation.run"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "continuous.learning.promote",
@@ -423,7 +531,11 @@
       },
       "confirmation": "required",
       "verification": "release_state_and_audit_record",
-      "runtime_tool_id": null
+      "runtime_tool_id": null,
+      "required_permissions": [
+        "admin.release.promote"
+      ],
+      "authorization_binding": "design_only"
     },
     {
       "contract_id": "core.swipe",
@@ -439,7 +551,11 @@
       },
       "confirmation": "policy_required_for_sensitive_target",
       "verification": "expected_ui_state_changed",
-      "runtime_tool_id": "swipe"
+      "runtime_tool_id": "swipe",
+      "required_permissions": [
+        "device.interaction"
+      ],
+      "authorization_binding": "runtime_tool_field_not_yet_bound"
     },
     {
       "contract_id": "core.press_key",
@@ -454,7 +570,11 @@
       },
       "confirmation": "policy_required_for_sensitive_key",
       "verification": "expected_ui_state_changed",
-      "runtime_tool_id": "press_key"
+      "runtime_tool_id": "press_key",
+      "required_permissions": [
+        "device.interaction"
+      ],
+      "authorization_binding": "runtime_tool_field_not_yet_bound"
     },
     {
       "contract_id": "core.go_home",
@@ -467,7 +587,11 @@
       "input_schema": {},
       "confirmation": "none",
       "verification": "home_screen_or_expected_transition_observed",
-      "runtime_tool_id": "go_home"
+      "runtime_tool_id": "go_home",
+      "required_permissions": [
+        "device.navigation"
+      ],
+      "authorization_binding": "runtime_tool_field_not_yet_bound"
     },
     {
       "contract_id": "core.go_back",
@@ -480,7 +604,11 @@
       "input_schema": {},
       "confirmation": "none",
       "verification": "previous_screen_or_expected_transition_observed",
-      "runtime_tool_id": "go_back"
+      "runtime_tool_id": "go_back",
+      "required_permissions": [
+        "device.navigation"
+      ],
+      "authorization_binding": "runtime_tool_field_not_yet_bound"
     }
   ]
 }
