@@ -50,6 +50,7 @@ def main(root: Path) -> int:
     skills = load_json(root / "training/knowledge/SVETLANA_SKILL_MANIFESTS_V1.json")
     manifest = load_json(root / "training/datasets/manifest_v2.json")
     contract = load_json(root / "training/knowledge/SVETLANA_COVERAGE_CONTRACT.json")
+    tool_contracts = load_json(root / "training/knowledge/SVETLANA_TOOL_CONTRACTS_V1.json")
 
     nodes_list = skeleton.get("nodes", [])
     node_map = {n["id"]: n for n in nodes_list}
@@ -63,7 +64,23 @@ def main(root: Path) -> int:
             errors.append(f"node {node['id']}: unknown parent {parent}")
 
     skill_map = {s["skill_id"]: s for s in skills.get("skills", [])}
+    tool_contract_map = {c["contract_id"]: c for c in tool_contracts.get("contracts", [])}
+    if len(tool_contract_map) != len(tool_contracts.get("contracts", [])):
+        errors.append("tool contracts: duplicate contract_id")
+    for contract_id, tc in tool_contract_map.items():
+        for required_key in ("skill_ids", "action", "risk_level", "input_schema", "confirmation", "verification"):
+            if required_key not in tc:
+                errors.append(f"tool contract {contract_id}: missing {required_key}")
     for skill_id, skill in skill_map.items():
+        contract_ids = skill.get("tool_contract_ids", [])
+        if not contract_ids:
+            errors.append(f"skill {skill_id}: has no tool_contract_ids")
+        for contract_id in contract_ids:
+            tc = tool_contract_map.get(contract_id)
+            if tc is None:
+                errors.append(f"skill {skill_id}: unknown tool contract {contract_id}")
+            elif skill_id not in tc.get("skill_ids", []):
+                errors.append(f"tool contract {contract_id}: missing skill {skill_id}")
         for node_id in skill.get("node_ids", []):
             if node_id not in node_map:
                 errors.append(f"skill {skill_id}: unknown node {node_id}")
@@ -110,6 +127,16 @@ def main(root: Path) -> int:
     tool_registry = read_tool_ids(root / "src/services/ToolRegistry.ts")
     real_tools = read_tool_ids(root / "src/services/RealTools.ts")
     real_tool_set = set(real_tools)
+    contract_runtime_ids = set()
+    for contract_id, tc in tool_contract_map.items():
+        runtime_tool_id = tc.get("runtime_tool_id")
+        if runtime_tool_id:
+            contract_runtime_ids.add(runtime_tool_id)
+            if runtime_tool_id not in real_tool_set:
+                errors.append(f"tool contract {contract_id}: runtime_tool_id {runtime_tool_id} is not present in RealTools.ts")
+    for tool_id in real_tools:
+        if tool_id not in contract_runtime_ids:
+            errors.append(f"RealTools.ts: tool {tool_id} has no tool contract")
     for skill_id, skill in skill_map.items():
         for tool_id in skill.get("tool_ids", []):
             if tool_id not in real_tool_set:
@@ -168,6 +195,7 @@ def main(root: Path) -> int:
         "nodes_with_knowledge_artifact": sum(x["knowledge_artifacts"] > 0 for x in report),
         "tool_registry_ids_detected": len(tool_registry),
         "real_tool_ids_detected": len(real_tools),
+        "tool_contract_ids_detected": len(tool_contract_map),
         "runtime_sources_present": required_runtime_sources,
         "train_records_scanned": len(train_rows),
         "eval_records_scanned": len(eval_rows),
@@ -192,6 +220,7 @@ def main(root: Path) -> int:
         f"- Nodes linked to knowledge artifacts: {summary['nodes_with_knowledge_artifact']}",
         f"- ToolRegistry IDs detected: {summary['tool_registry_ids_detected']}",
         f"- RealTools IDs detected: {summary['real_tool_ids_detected']}",
+        f"- Tool contract IDs detected: {summary['tool_contract_ids_detected']}",
         f"- Train records scanned: {summary['train_records_scanned']}",
         f"- Eval records scanned: {summary['eval_records_scanned']}",
         "",
