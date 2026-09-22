@@ -24,6 +24,17 @@ jobs:
       - name: Validate canonical knowledge coverage graph
         run: python training/knowledge/check_coverage.py --root .
 
+      - name: Upload coverage diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: svetlana-coverage-diagnostic
+          path: |
+            training/knowledge/SVETLANA_COVERAGE_REPORT.json
+            training/knowledge/SVETLANA_COVERAGE_REPORT.md
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Validate manifest and all referenced dataset paths
         run: |
           python - <<'PY'
