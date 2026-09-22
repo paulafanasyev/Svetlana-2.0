@@ -6,6 +6,7 @@ structured-evaluator compatibility. It intentionally does not produce a model-qu
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -18,6 +19,12 @@ except ModuleNotFoundError:
 REQUIRED_SUITE_KEYS = ("suite_id", "node_prefix", "eval_path", "evaluator", "status")
 ALLOWED_SUITE_STATUS = {"READY_FOR_EVAL"}
 ALLOWED_EVALUATORS = {"structural_or_custom", "custom_behavior"}
+
+
+def git_blob_sha(path: Path) -> str:
+    data = path.read_bytes()
+    header = f"blob {len(data)}\0".encode("utf-8")
+    return hashlib.sha1(header + data).hexdigest()
 
 
 def main(root: Path) -> int:
@@ -66,6 +73,15 @@ def main(root: Path) -> int:
         if not p.is_file():
             errors.append(f"missing eval file: {eval_path}")
             continue
+        expected_blob_sha = suite.get("eval_git_blob_sha")
+        if not isinstance(expected_blob_sha, str) or not expected_blob_sha:
+            errors.append(f"{suite_id}: missing eval_git_blob_sha")
+        else:
+            actual_blob_sha = git_blob_sha(p)
+            if actual_blob_sha != expected_blob_sha:
+                errors.append(
+                    f"{suite_id}: frozen eval blob mismatch: expected {expected_blob_sha}, got {actual_blob_sha}"
+                )
 
         seen: set[str] = set()
         node_prefixes = suite.get("node_prefixes")
