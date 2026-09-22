@@ -98,6 +98,11 @@
       "path": "training/datasets/svetlana_admin_governance_training_v1.jsonl",
       "format": "messages",
       "role": "admin_governance_training_v1"
+    },
+    {
+      "path": "training/datasets/svetlana_knowledge_skeleton_expansion_v3.jsonl",
+      "format": "messages",
+      "role": "knowledge_skeleton_leaf_gap_expansion_v3"
     }
   ],
   "reference_knowledge": [
@@ -158,6 +163,11 @@
       "path": "training/evaluation/svetlana_admin_governance_eval_v1.jsonl",
       "format": "messages",
       "role": "admin_governance_heldout_v1"
+    },
+    {
+      "path": "training/evaluation/svetlana_knowledge_skeleton_eval_v3.jsonl",
+      "format": "messages",
+      "role": "knowledge_skeleton_leaf_heldout_v3"
     }
   ],
   "rules": {
