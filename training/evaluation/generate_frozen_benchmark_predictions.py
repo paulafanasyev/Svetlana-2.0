@@ -97,6 +97,15 @@ def main() -> int:
 
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     generation = json.loads(args.generation_config.read_text(encoding="utf-8"))
+    frozen_config_path = root / manifest.get("generation_config_path", "")
+    if args.generation_config.resolve() != frozen_config_path.resolve():
+        raise ValueError("generation config path does not match frozen benchmark manifest")
+    expected_config_sha = manifest.get("generation_config_git_blob_sha")
+    actual_config_sha = git_blob_sha(args.generation_config)
+    if not isinstance(expected_config_sha, str) or actual_config_sha != expected_config_sha:
+        raise ValueError(
+            f"generation config is not frozen benchmark config: expected {expected_config_sha}, got {actual_config_sha}"
+        )
     if generation.get("benchmark_id") != manifest.get("benchmark_id"):
         raise ValueError("generation config benchmark_id mismatch")
     if generation.get("benchmark_version") != manifest.get("benchmark_version"):
