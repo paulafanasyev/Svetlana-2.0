@@ -70,7 +70,7 @@ These additions explicitly teach the separation between trusted identity/policy 
 
 ## Expansion v6 — executable evidence contracts
 
-- Added `SVETLANA_KNOWLEDGE_PACK_V2.json` with 19 structured entries for previously uncovered skeleton leaf nodes; coverage checker now scans V1, V2 and the document-intelligence pack.
+- Added `SVETLANA_KNOWLEDGE_PACK_V2.json` with 18 structured entries for the remaining previously uncovered skeleton nodes; coverage checker now scans V1, V2 and the document-intelligence pack.
 - VERIFIED static: the new V2 pack provides dedicated knowledge entries for core reasoning/uncertainty/privacy/recovery, agent execution, self-employed subdomains, Я‑Зарядка education/voice, admin/model governance, discovery code, runtime and continuous learning.
 
 - Skeleton leaf-gap expansion v3: 54 new training examples + 54 new held-out cases, one targeted pair per underrepresented leaf node.
