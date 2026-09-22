@@ -3,6 +3,7 @@
 # Transformers <=5.5.0 and TRL <=0.24.0. Pin the matching zoo release explicitly.
 --extra-index-url https://download.pytorch.org/whl/cu126
 torch==2.12.1
+torchcodec==0.12.0
 transformers==5.5.0
 trl==0.24.0
 unsloth==2026.9.7
