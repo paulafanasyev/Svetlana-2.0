@@ -37,7 +37,7 @@ def main() -> None:
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--adapter", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--min-baseline", type=float, default=0.75)
+    parser.add_argument("--min-baseline", type=float, default=0.875)
     args = parser.parse_args()
     baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
     adapter = json.loads(args.adapter.read_text(encoding="utf-8"))
