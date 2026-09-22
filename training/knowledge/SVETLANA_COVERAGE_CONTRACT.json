@@ -7,7 +7,8 @@
     "tool_registry": "src/services/ToolRegistry.ts",
     "real_tools": "src/services/RealTools.ts",
     "policy_engine": "src/services/PolicyEngine.ts",
-    "verification": "src/services/Verification.ts"
+    "verification": "src/services/Verification.ts",
+    "tool_contracts": "training/knowledge/SVETLANA_TOOL_CONTRACTS_V1.json"
   },
   "links": {
     "node_to_skill": {
@@ -135,5 +136,9 @@
     "account": "NOT_PROVEN",
     "mixed": "NOT_PROVEN"
   },
-  "completion_rule": "A node reaches VERIFIED only when knowledge coverage, training coverage, held-out evaluation coverage and required runtime evidence are all satisfied. Static files alone cannot produce runtime VERIFIED."
+  "completion_rule": "A node reaches VERIFIED only when knowledge coverage, training coverage, held-out evaluation coverage and required runtime evidence are all satisfied. Static files alone cannot produce runtime VERIFIED.",
+  "rules": {
+    "every_skill_requires_tool_contract_links": true,
+    "every_runtime_tool_requires_a_contract": true
+  }
 }
