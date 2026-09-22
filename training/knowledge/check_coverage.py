@@ -67,7 +67,11 @@ def main(root: Path) -> int:
         for node_id in skill.get("node_ids", []):
             if node_id not in node_map:
                 errors.append(f"skill {skill_id}: unknown node {node_id}")
-    for node_id, linked_skills in contract.get("links", {}).get("node_to_skill", {}).items():
+    contract_links = contract.get("links", {}).get("node_to_skill", {})
+    for node_id in node_map:
+        if node_id not in contract_links or not contract_links[node_id]:
+            errors.append(f"contract: node {node_id} has no skill link")
+    for node_id, linked_skills in contract_links.items():
         if node_id not in node_map:
             errors.append(f"contract: unknown node {node_id}")
         for skill_id in linked_skills:
@@ -75,6 +79,10 @@ def main(root: Path) -> int:
                 errors.append(f"contract: node {node_id} references unknown skill {skill_id}")
             elif node_id not in skill_map[skill_id].get("node_ids", []):
                 errors.append(f"contract: skill {skill_id} missing node {node_id}")
+    linked_by_skill = {node_id for skill in skill_map.values() for node_id in skill.get("node_ids", [])}
+    for node_id in node_map:
+        if node_id not in linked_by_skill:
+            errors.append(f"skill map: node {node_id} is not assigned to any skill")
 
     train_rows: list[dict[str, Any]] = []
     eval_rows: list[dict[str, Any]] = []
