@@ -18,7 +18,7 @@ export interface AvatarStateOverlay {
 export const SVETLANA_IDENTITY: AvatarIdentity = {
   id: 'svetlana-master',
   name: 'Светлана',
-  masterImage: 'https://image.qwenlm.ai/generated-images/d8b8a3e6-3ce8-4a10-9263-3f2280c94260/_result.png',
+  masterImage: '/images/avatar/svetlana-master.jpg',
   description: 'Единый образ Светланы с динамическими состояниями',
 };
 

@@ -237,7 +237,7 @@ export default function AvatarPage() {
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full overflow-hidden border-2 border-indigo-500/30">
                   <img
-                    src="https://image.qwenlm.ai/generated-images/d8b8a3e6-3ce8-4a10-9263-3f2280c94260/_result.png"
+                    src="/images/avatar/svetlana-master.jpg"
                     alt="Svetlana"
                     className="w-full h-full object-cover"
                   />
