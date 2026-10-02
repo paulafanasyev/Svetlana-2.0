@@ -43,6 +43,8 @@ def main() -> None:
     adapter = json.loads(args.adapter.read_text(encoding="utf-8"))
     validate_report(baseline, "baseline")
     validate_report(adapter, "adapter")
+    if baseline.get("evaluator_version") != adapter.get("evaluator_version"):
+        raise SystemExit("baseline and adapter evaluator versions differ")
     baseline_ids = [row["id"] for row in baseline["results"]]
     adapter_ids = [row["id"] for row in adapter["results"]]
     if baseline_ids != adapter_ids:
