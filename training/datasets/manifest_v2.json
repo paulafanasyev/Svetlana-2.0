@@ -63,6 +63,11 @@
       "path": "training/datasets/svetlana_acceptance_hardening_v3.jsonl",
       "format": "messages",
       "role": "acceptance_gate_targeted_hardening_v3"
+    },
+    {
+      "path": "training/datasets/svetlana_acceptance_anchor_v5.jsonl",
+      "format": "messages",
+      "role": "acceptance_gate_minimal_behavior_anchor_v5"
     }
   ],
   "reference_knowledge": [
