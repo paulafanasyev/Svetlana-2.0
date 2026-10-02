@@ -15,7 +15,7 @@ python -m pip install --upgrade pip
 python -m pip install -r training/environment/requirements-colab-gpu.txt
 # Text-only Gemma4 training does not use TorchAudio. Remove preinstalled mismatched wheels
 # from hosted Colab images so CUDA 12.8/12.6 warnings cannot mask real failures.
-python -m pip uninstall -y torchaudio >/dev/null 2>&1 || true
+python -m pip uninstall -y torchaudio torchcodec >/dev/null 2>&1 || true
 
 python - <<'PY'
 import importlib
@@ -26,7 +26,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 REQUIREMENTS = Path('training/environment/requirements-colab-gpu.txt')
-required_names = ('unsloth', 'unsloth-zoo', 'torchcodec', 'transformers', 'trl', 'datasets', 'accelerate', 'peft')
+required_names = ('unsloth', 'unsloth-zoo', 'transformers', 'trl', 'datasets', 'accelerate', 'peft')
 pins = {}
 for line in REQUIREMENTS.read_text(encoding='utf-8').splitlines():
     match = re.fullmatch(r'([A-Za-z0-9_.-]+)==([^\s]+)', line.strip())
