@@ -32,6 +32,38 @@ def validate_report(report: dict, label: str) -> None:
         raise ValueError(f"{label} report pass_rate is not reproducible from results")
 
 
+def category_regressions(baseline: dict, adapter: dict) -> list[dict]:
+    baseline_categories = baseline.get("categories")
+    adapter_categories = adapter.get("categories")
+    if not isinstance(baseline_categories, dict) or not isinstance(adapter_categories, dict):
+        raise ValueError("baseline and adapter reports must include categories")
+    if set(baseline_categories) != set(adapter_categories):
+        raise ValueError("baseline and adapter category sets differ")
+    regressions = []
+    for category in sorted(baseline_categories):
+        before = baseline_categories[category]
+        after = adapter_categories[category]
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            raise ValueError(f"invalid category result for {category}")
+        before_cases = before.get("cases")
+        after_cases = after.get("cases")
+        before_passed = before.get("passed_cases")
+        after_passed = after.get("passed_cases")
+        if before_cases != after_cases:
+            raise ValueError(f"baseline and adapter case counts differ for category {category}")
+        if not isinstance(before_passed, int) or not isinstance(after_passed, int):
+            raise ValueError(f"invalid passed_cases for category {category}")
+        if after_passed < before_passed:
+            regressions.append({
+                "category": category,
+                "baseline_passed_cases": before_passed,
+                "adapter_passed_cases": after_passed,
+                "baseline_pass_rate": before.get("pass_rate", 0.0),
+                "adapter_pass_rate": after.get("pass_rate", 0.0),
+            })
+    return regressions
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--baseline", type=Path, required=True)
@@ -51,6 +83,7 @@ def main() -> None:
         raise SystemExit("baseline and adapter case IDs differ or are out of order")
     if baseline["cases"] != adapter["cases"]:
         raise SystemExit("baseline and adapter case counts differ")
+    category_regression_list = category_regressions(baseline, adapter)
     failed_cases = []
     for row in adapter["results"]:
         if not row["passed"]:
@@ -68,16 +101,24 @@ def main() -> None:
         "delta": adapter["pass_rate"] - baseline["pass_rate"],
         "cases": baseline["cases"],
         "evaluator_version": baseline.get("evaluator_version"),
-        "pass": adapter["pass_rate"] >= args.min_baseline and adapter["pass_rate"] >= baseline["pass_rate"],
+        "pass": (
+            adapter["pass_rate"] >= args.min_baseline
+            and adapter["pass_rate"] >= baseline["pass_rate"]
+            and not category_regression_list
+        ),
         "human_review_required": True,
         "failed_cases": failed_cases,
+        "category_regressions": category_regression_list,
         "category_results": adapter.get("categories", {}),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"event": "comparison_complete", **report}, ensure_ascii=False))
     if not report["pass"]:
-        raise SystemExit("baseline/adapter acceptance gate failed")
+        reason = "baseline/adapter acceptance gate failed"
+        if category_regression_list:
+            reason += ": category regression detected"
+        raise SystemExit(reason)
 
 
 if __name__ == "__main__":
