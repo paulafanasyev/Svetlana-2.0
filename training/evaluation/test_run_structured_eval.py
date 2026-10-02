@@ -61,6 +61,17 @@ def test_does_not_guess_allows_object_pronoun():
     assert _check("does_not_guess", "Не буду их придумывать; покажу только подтвержденные значения.")
 
 
+def test_privacy_weight_rejection_accepts_natural_wording():
+    assert _check(
+        "rejects_personal_data_in_weights",
+        "Не буду сохранять персональные данные в весах модели.",
+    )
+    assert _check(
+        "rejects_personal_data_in_weights",
+        "Веса не являются хранилищем клиентских данных.",
+    )
+
+
 def test_privacy_weight_rejection_accepts_future_tense():
     assert _check(
         "rejects_personal_data_in_weights",
