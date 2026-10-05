@@ -20,6 +20,7 @@ export function config(env = process.env) {
     workspace: path.resolve(env.SVETLANA_WORKSPACE || path.join(dataDir, "workspace")),
     adminToken: env.SVETLANA_ADMIN_TOKEN || "",
     picoToken: env.SVETLANA_PICO_TOKEN || "", // для детского приложения «Я-Зарядка»: только режим Пико
+    picoOrigins: (env.SVETLANA_PICO_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean), // откуда можно звать Пико; пусто = отовсюду (вход всё равно по токену)
     secret: env.SVETLANA_SECRET || "",
     maxSteps: Number(env.SVETLANA_MAX_STEPS || 12),
     chromium: env.CHROMIUM_PATH || "",

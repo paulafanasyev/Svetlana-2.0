@@ -17,7 +17,7 @@ const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; cha
 export function createServer(app) {
   const { cfg } = app;
   if (!cfg.adminToken || cfg.adminToken.length < 16) throw new Error("Задайте SVETLANA_ADMIN_TOKEN (не короче 16 символов) — это ваш пароль входа");
-  const sessions = new Map(); const fails = new Map(); const A = artifacts(cfg);
+  const sessions = new Map(); const fails = new Map(); const picoHits = new Map(); const A = artifacts(cfg);
   const sec = { "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY",
     "Content-Security-Policy": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'",
     "Permissions-Policy": "microphone=(self), camera=(self), display-capture=(self)" };
@@ -38,6 +38,24 @@ export function createServer(app) {
     try {
       if (p === "/healthz") return json(res, 200, { ok: true });
       if (!p.startsWith("/api/")) return serveStatic(res, p, send);
+      // Детское приложение «Я-Зарядка» (другой источник: Capacitor/веб): свой токен, только режим Пико, без cookie, поэтому CORS безопасен.
+      if (p === "/api/pico/chat") {
+        const o = req.headers.origin, allow = cfg.picoOrigins?.length ? cfg.picoOrigins : ["*"];
+        const cors = o && (allow.includes("*") || allow.includes(o)) ? { "Access-Control-Allow-Origin": allow.includes("*") ? "*" : o, "Access-Control-Allow-Headers": "Authorization, Content-Type", "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Max-Age": "600", Vary: "Origin" } : {};
+        const pj = (status, obj) => send(res, status, JSON.stringify(obj), { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...cors });
+        if (req.method === "OPTIONS") return send(res, 204, "", cors);
+        if (req.method !== "POST") return pj(405, { error: "только POST" });
+        if (o && !cors["Access-Control-Allow-Origin"]) return pj(403, { error: "чужой источник запроса" });
+        const bt = (req.headers.authorization || "").replace(/^Bearer\s+/, "");
+        if (!cfg.picoToken || cfg.picoToken.length < 16 || !safeEq(bt, cfg.picoToken)) return pj(401, { error: "нужен токен Пико" });
+        const ip = req.socket.remoteAddress, now = Date.now(), hits = (picoHits.get(ip) || []).filter((x) => now - x < 60_000);
+        if (hits.length >= 30) return pj(429, { error: "Пико устал, подожди минутку" }); hits.push(now); picoHits.set(ip, hits);
+        const b = await readJson(req); const text = String(b.text || "").slice(0, 4000); if (!text.trim()) return pj(400, { error: "пустое сообщение" });
+        const old = b.conversationId && app.store.get("conversations", b.conversationId);
+        if (old && old.mode !== "pico") return pj(403, { error: "это не разговор Пико" });
+        const r = await app.agent.chat({ conversationId: old ? old.id : undefined, text, mode: "pico" });
+        return pj(200, { conversationId: r.conversationId, answer: r.answer, steps: r.steps.map(({ tool, ok }) => ({ tool, ok })) });
+      }
       if (req.method !== "GET" && !sameOrigin(req)) return json(res, 403, { error: "чужой источник запроса" });
       if (p === "/api/login" && req.method === "POST") {
         const ip = req.socket.remoteAddress; const f = fails.get(ip) || { n: 0, t: 0 };
@@ -46,16 +64,6 @@ export function createServer(app) {
         if (!safeEq(String(token || ""), cfg.adminToken)) { fails.set(ip, { n: f.n + 1, t: Date.now() }); return json(res, 401, { error: "неверный пароль" }); }
         fails.delete(ip); const sid = crypto.randomBytes(32).toString("base64url"); sessions.set(sid, Date.now() + 30 * 24 * 3600_000);
         return send(res, 200, JSON.stringify({ ok: true }), { "Content-Type": "application/json", "Set-Cookie": `sv=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000${req.headers["x-forwarded-proto"] === "https" ? "; Secure" : ""}` });
-      }
-      // Детское приложение «Я-Зарядка»: свой токен, только режим Пико (без денег, устройств и кода), чужие разговоры не видны.
-      if (p === "/api/pico/chat" && req.method === "POST") {
-        const bt = (req.headers.authorization || "").replace(/^Bearer\s+/, "");
-        if (!cfg.picoToken || cfg.picoToken.length < 16 || !safeEq(bt, cfg.picoToken)) return json(res, 401, { error: "нужен токен Пико" });
-        const b = await readJson(req); const text = String(b.text || "").slice(0, 4000); if (!text.trim()) return json(res, 400, { error: "пустое сообщение" });
-        const old = b.conversationId && app.store.get("conversations", b.conversationId);
-        if (old && old.mode !== "pico") return json(res, 403, { error: "это не разговор Пико" });
-        const r = await app.agent.chat({ conversationId: old ? old.id : undefined, text, mode: "pico" });
-        return json(res, 200, { conversationId: r.conversationId, answer: r.answer, steps: r.steps.map(({ tool, ok }) => ({ tool, ok })) });
       }
       if (!authed(req)) return json(res, 401, { error: "нужен вход" });
       if (p === "/api/logout") { sessions.delete(cookie(req).sv); return json(res, 200, { ok: true }); }
