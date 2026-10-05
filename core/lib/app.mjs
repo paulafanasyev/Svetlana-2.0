@@ -10,6 +10,7 @@ import { docTools } from "./tools/docs.mjs";
 import { stpConnector, webTools } from "./tools/connectors.mjs";
 import { DeviceHub, deviceTools } from "./devices.mjs";
 import { lifeTools } from "./tools/life.mjs";
+import { brainTools } from "./tools/brain.mjs";
 import { Confirmations } from "./confirm.mjs";
 import { Agent } from "./agent.mjs";
 
@@ -19,7 +20,7 @@ export function createApp(cfg, { fetchImpl = fetch } = {}) {
   const providers = new Providers(path.join(cfg.dataDir, "providers.json"), fetchImpl);
   const hub = new DeviceHub(store);
   const registry = new Registry().add(
-    ...codeTools(cfg), ...businessTools(store), ...docTools(cfg, providers), ...webTools(), ...deviceTools(hub), ...lifeTools(store),
+    ...codeTools(cfg), ...businessTools(store), ...docTools(cfg, providers), ...webTools(), ...deviceTools(hub), ...lifeTools(store), ...brainTools(store, cfg),
     ...stpConnector({ id: "aiko", title: "Маркетплейс АИКО", base: cfg.aikoUrl, token: cfg.aikoToken, fx: fetchImpl }),
     ...stpConnector({ id: "selfemployed", title: "Мир самозанятых", base: cfg.selfEmployedUrl, token: cfg.selfEmployedToken, fx: fetchImpl }),
   );

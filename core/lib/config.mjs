@@ -19,6 +19,7 @@ export function config(env = process.env) {
     dataDir,
     workspace: path.resolve(env.SVETLANA_WORKSPACE || path.join(dataDir, "workspace")),
     adminToken: env.SVETLANA_ADMIN_TOKEN || "",
+    picoToken: env.SVETLANA_PICO_TOKEN || "", // для детского приложения «Я-Зарядка»: только режим Пико
     secret: env.SVETLANA_SECRET || "",
     maxSteps: Number(env.SVETLANA_MAX_STEPS || 12),
     chromium: env.CHROMIUM_PATH || "",
