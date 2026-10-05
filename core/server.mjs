@@ -47,13 +47,23 @@ export function createServer(app) {
         fails.delete(ip); const sid = crypto.randomBytes(32).toString("base64url"); sessions.set(sid, Date.now() + 30 * 24 * 3600_000);
         return send(res, 200, JSON.stringify({ ok: true }), { "Content-Type": "application/json", "Set-Cookie": `sv=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000${req.headers["x-forwarded-proto"] === "https" ? "; Secure" : ""}` });
       }
+      // Детское приложение «Я-Зарядка»: свой токен, только режим Пико (без денег, устройств и кода), чужие разговоры не видны.
+      if (p === "/api/pico/chat" && req.method === "POST") {
+        const bt = (req.headers.authorization || "").replace(/^Bearer\s+/, "");
+        if (!cfg.picoToken || cfg.picoToken.length < 16 || !safeEq(bt, cfg.picoToken)) return json(res, 401, { error: "нужен токен Пико" });
+        const b = await readJson(req); const text = String(b.text || "").slice(0, 4000); if (!text.trim()) return json(res, 400, { error: "пустое сообщение" });
+        const old = b.conversationId && app.store.get("conversations", b.conversationId);
+        if (old && old.mode !== "pico") return json(res, 403, { error: "это не разговор Пико" });
+        const r = await app.agent.chat({ conversationId: old ? old.id : undefined, text, mode: "pico" });
+        return json(res, 200, { conversationId: r.conversationId, answer: r.answer, steps: r.steps.map(({ tool, ok }) => ({ tool, ok })) });
+      }
       if (!authed(req)) return json(res, 401, { error: "нужен вход" });
       if (p === "/api/logout") { sessions.delete(cookie(req).sv); return json(res, 200, { ok: true }); }
       if (p === "/api/chat" && req.method === "POST") {
         const b = await readJson(req);
         const text = String(b.text || "").slice(0, 20000); if (!text.trim()) return json(res, 400, { error: "пустое сообщение" });
         const images = (Array.isArray(b.images) ? b.images : []).filter((u) => typeof u === "string" && /^data:image\/(png|jpeg|webp);base64,/.test(u) && u.length < 12_000_000).slice(0, 4);
-        return json(res, 200, await app.agent.chat({ conversationId: b.conversationId, text, images }));
+        return json(res, 200, await app.agent.chat({ conversationId: b.conversationId, text, images, mode: b.mode === "pico" ? "pico" : undefined }));
       }
       if (p === "/api/confirm" && req.method === "POST") { const b = await readJson(req); return json(res, 200, await app.agent.confirm(b)); }
       if (p === "/api/conversations" && req.method === "GET") return json(res, 200, app.store.all("conversations").map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt || c.createdAt })).reverse().slice(0, 100));
