@@ -4,6 +4,7 @@
   pip install -r requirements.txt
   python agent.py --url wss://ваш-домен/ws/device --token dev_...   [--view-only]
 
+Видит любую программу (1С, браузер, Render, Excel…): скриншот + список элементов с текстом и рамками (ui_tree.py).
 Подключается К ядру Светланы (исходящее соединение, роутер настраивать не нужно), по запросу присылает скриншот
 и выполняет команды мыши/клавиатуры. Безопасность: каждое действие подтверждает владелец в приложении Светланы;
 --view-only — только просмотр; увести мышь в левый верхний угол экрана = аварийная остановка (pyautogui FAILSAFE).
@@ -24,6 +25,7 @@ class Eyes:
     def __init__(self):
         self.geom = None  # (left, top, logical_w, logical_h, img_w, img_h)
         self.last_hash = None
+        self.last_image = None  # последний кадр (для распознавания текста)
 
     def capture(self, max_side=1280, fmt="jpeg"):
         max_side = max(64, min(4096, int(max_side)))
@@ -41,6 +43,7 @@ class Eyes:
         img.save(buf, "JPEG" if fmt == "jpeg" else "PNG", quality=80)
         data = buf.getvalue()
         self.last_hash = hashlib.sha1(img.tobytes()).hexdigest()  # по пикселям, не по кодировке
+        self.last_image = img
         return {"image": base64.b64encode(data).decode(), "mime": "image/jpeg" if fmt == "jpeg" else "image/png", "width": img.width, "height": img.height, "app": active_window()}
 
     def changed(self):
@@ -137,7 +140,7 @@ class Agent:
         self.lock = threading.Lock()
 
     def caps(self):
-        return ["screen", "apps"] + ([] if self.view_only else ["control", "clipboard"])
+        return ["screen", "apps", "tree"] + ([] if self.view_only else ["control", "clipboard"])
 
     def to_screen(self, x, y):
         geom = self.eyes.geom
@@ -158,6 +161,9 @@ class Agent:
             return self.eyes.capture(int(p.get("maxSide", 1280)), p.get("format", "jpeg"))
         if method == "apps.list":
             return list_apps()
+        if method == "ui.tree":  # элементы любой программы: UI Automation (Windows) или распознавание текста
+            from ui_tree import ui_tree
+            return ui_tree(self.eyes)
         if method == "clipboard.get":
             import pyperclip
             return {"text": pyperclip.paste()[:20000]}
