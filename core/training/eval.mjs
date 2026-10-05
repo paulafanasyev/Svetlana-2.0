@@ -32,7 +32,7 @@ async function predict(messages, tools, gold) {
 }
 const args = (c) => { try { const a = c.function.arguments; return typeof a === "string" ? JSON.parse(a) : a; } catch { return null; } };
 // Свободный текст (запросы, промпты, тексты документов) модель вправе сформулировать иначе; всё остальное должно совпасть точно.
-const FREE = new Set(["query", "prompt", "markdown", "content", "text", "title", "note", "subtitle", "bullets", "cover_letter", "description", "q", "reason", "service", "payerName", "find", "replace"]);
+const FREE = new Set(["query", "prompt", "markdown", "content", "text", "title", "note", "subtitle", "bullets", "cover_letter", "description", "q", "reason", "service", "payerName", "find", "replace", "comment", "cue"]);
 const strip = (v) => (Array.isArray(v) ? v.map(strip) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).filter(([k]) => !FREE.has(k)).map(([k, x]) => [k, strip(x)]).sort(([a], [b]) => (a < b ? -1 : 1))) : v);
 const sameArgs = (a, b) => JSON.stringify(strip(a)) === JSON.stringify(strip(b));
 const nums = (t) => (String(t).replace(/(\d)\s(?=\d{3})/g, "$1").match(/\d+(?:[.,]\d+)?/g) || []).filter((x) => x.length >= 2);
