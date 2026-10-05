@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#5a5be8"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon-192.webp">
+<title>Светлана</title><link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <form id="loginForm" class="card">
+    <img src="/svetlana.jpg" alt="" class="ava big">
+    <h1>Светлана</h1><p>Введите пароль владельца</p>
+    <input id="pwd" type="password" autocomplete="current-password" placeholder="Пароль" required>
+    <button class="btn primary">Войти</button><p id="loginErr" class="err" role="alert"></p>
+  </form>
+</div>
+<div id="app" class="app" hidden>
+  <header class="top">
+    <div class="me"><img src="/svetlana.jpg" alt="" class="ava" id="ava"><div><b>Светлана</b><small id="status">готова</small></div></div>
+    <nav id="tabs" role="tablist">
+      <button data-tab="chat" class="on">Чат</button><button data-tab="crm">CRM</button><button data-tab="money">Финансы</button>
+      <button data-tab="devices">Устройства</button><button data-tab="providers">ИИ-провайдеры</button>
+    </nav>
+  </header>
+  <main>
+    <section id="tab-chat" class="tab on">
+      <div id="log" class="log" aria-live="polite"></div>
+      <div id="attach" class="attach"></div>
+      <form id="composer" class="composer">
+        <button type="button" id="mic" class="icon" title="Говорить" aria-label="Голосовой ввод">🎙</button>
+        <button type="button" id="talk" class="icon" title="Режим разговора: слушаю и отвечаю голосом" aria-label="Режим разговора">🗣</button>
+        <label class="icon" title="Фото / файл-изображение" aria-label="Прикрепить изображение">📎<input id="file" type="file" accept="image/*" hidden multiple></label>
+        <button type="button" id="shot" class="icon" title="Показать мой экран Светлане" aria-label="Снимок экрана">🖥</button>
+        <textarea id="text" rows="1" placeholder="Напишите или скажите Светлане…" maxlength="20000"></textarea>
+        <button class="btn primary" id="send">➤</button>
+      </form>
+    </section>
+    <section id="tab-crm" class="tab"><h2>CRM</h2><div class="grid3"><div><h3>Сделки</h3><div id="deals"></div></div><div><h3>Контакты</h3><div id="contacts"></div></div><div><h3>Задачи</h3><div id="tasks"></div></div></div><p class="hint">Добавлять и менять удобно голосом или в чате: «добавь клиента Иван, телефон…», «переведи сделку в переговоры».</p></section>
+    <section id="tab-money" class="tab"><h2>Финансы (НПД)</h2><div id="money"></div><p class="hint">«Запиши доход 15 000 от ООО Ромашка за сайт», «отчёт за сентябрь», «сделай счёт».</p></section>
+    <section id="tab-devices" class="tab"><h2>Устройства</h2>
+      <p>Подключите телефон (приложение «Светлана Руки» для Android) или компьютер (desktop-agent). Без сопряжения Светлана ничего не видит.</p>
+      <form id="pairForm" class="row"><input id="pairName" placeholder="Название: Мой телефон" required maxlength="60">
+        <select id="pairPlatform"><option value="android">Android</option><option value="windows">Windows</option><option value="macos">macOS</option><option value="linux">Linux</option></select>
+        <button class="btn">Получить ключ</button></form>
+      <pre id="pairOut" class="code" hidden></pre>
+      <div id="devList"></div>
+      <h3>Этот браузер</h3><p>Можно показать Светлане экран этого компьютера прямо из браузера (только просмотр, без управления).</p>
+      <button class="btn" id="shareScreen">Дать Светлане видеть экран</button> <span id="shareState"></span>
+    </section>
+    <section id="tab-providers" class="tab"><h2>ИИ-провайдеры</h2>
+      <p>Ключи хранятся только на сервере. Порядок = приоритет; при сбое Светлана переходит к следующему.</p>
+      <div id="provList"></div>
+      <form id="provForm" class="prov">
+        <select id="pvPreset"><option value="vllm">Своя модель (vLLM, сервер в РФ)</option><option value="yandex">YandexGPT</option><option value="gigachat">GigaChat</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="gemini">Google Gemini</option><option value="mistral">Mistral</option><option value="groq">Groq</option><option value="ollama">Ollama (локально)</option><option value="lmstudio">LM Studio</option></select>
+        <input id="pvId" placeholder="id, напр. qwen-ru" required pattern="[a-z0-9_-]{2,40}">
+        <input id="pvUrl" placeholder="Адрес API (пусто = по умолчанию)"><input id="pvModel" placeholder="Модель" required><input id="pvKey" type="password" placeholder="Ключ (пусто = не менять)">
+        <fieldset id="pvCaps"><legend>Умеет</legend></fieldset>
+        <button class="btn primary">Сохранить</button>
+      </form>
+    </section>
+  </main>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>
