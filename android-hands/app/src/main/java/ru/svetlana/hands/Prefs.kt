@@ -23,7 +23,7 @@ class Prefs(ctx: Context) {
     fun capabilities(): List<String> = buildList {
         if (allowScreen) { add("screen"); add("tree") }
         add("apps")
-        if (allowControl) { add("control"); add("clipboard") }
+        if (allowControl) add("control") // clipboard.get на Android 10+ недоступен фоновой службе — не объявляем
     }
 
     /** Только wss://, кроме локальной отладки (эмулятор/USB-проброс). */

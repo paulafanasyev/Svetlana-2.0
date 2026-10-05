@@ -55,8 +55,11 @@ class HandsService : AccessibilityService() {
     private fun <T> onMain(timeoutSec: Long = 10, block: () -> T): T {
         if (Looper.myLooper() == Looper.getMainLooper()) return block()
         val f = CompletableFuture<T>()
-        main.post { try { f.complete(block()) } catch (e: Throwable) { f.completeExceptionally(e) } }
-        return try { f.get(timeoutSec, TimeUnit.SECONDS) } catch (e: java.util.concurrent.ExecutionException) { throw (e.cause ?: e) }
+        val posted = main.post { if (f.isCancelled) return@post; try { f.complete(block()) } catch (e: Throwable) { f.completeExceptionally(e) } }
+        if (!posted) throw IllegalStateException("служба останавливается")
+        return try { f.get(timeoutSec, TimeUnit.SECONDS) }
+        catch (e: java.util.concurrent.TimeoutException) { f.cancel(false); throw IllegalStateException("устройство занято — команда отменена") }
+        catch (e: java.util.concurrent.ExecutionException) { throw (e.cause ?: e) }
     }
 
     fun connect() {
@@ -100,7 +103,7 @@ class HandsService : AccessibilityService() {
         if ((method == "screen.capture" || method == "ui.tree") && !prefs.allowScreen) throw IllegalStateException("просмотр экрана выключен")
         return when (method) {
             "screen.capture" -> capture(p.optInt("maxSide", 1280).coerceIn(64, 4096), p.optString("format", "jpeg"))
-            "ui.tree" -> JSONObject().put("root", onMain { rootInActiveWindow?.let { tree(it, 0, intArrayOf(0)) } } ?: JSONObject.NULL)
+            "ui.tree" -> JSONObject().put("root", onMain { withRoot { tree(it, 0, intArrayOf(0)) } } ?: JSONObject.NULL)
             "apps.list" -> apps()
             "app.launch" -> act { onMain { launch(p.getString("app")) } }
             "input.tap" -> act { gesture(sx(p.getDouble("x")), sy(p.getDouble("y")), sx(p.getDouble("x")), sy(p.getDouble("y")), 60) }
@@ -122,7 +125,7 @@ class HandsService : AccessibilityService() {
         val after = signature()
         return JSONObject().put("executed", executed).put("verified", executed && before != after)
     }
-    private fun signature(): Int = onMain { rootInActiveWindow?.let { tree(it, 0, intArrayOf(0)).toString().hashCode() } ?: 0 }
+    private fun signature(): Int = onMain { withRoot { tree(it, 0, intArrayOf(0)).toString().hashCode() } ?: 0 }
 
     // координаты приходят в пикселях последнего скриншота → в реальные пиксели экрана
     private fun sx(v: Double): Float { val w = realMetrics().widthPixels; return (if (lastShotW > 0) v * w / lastShotW else v).toFloat().coerceIn(0f, w - 1f) }
@@ -157,7 +160,7 @@ class HandsService : AccessibilityService() {
             lastShotW = scaled.width; lastShotH = scaled.height
             val png = format.equals("png", true)
             val out = ByteArrayOutputStream(); scaled.compress(if (png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, 80, out)
-            val app = onMain { rootInActiveWindow?.packageName?.toString() }
+            val app = onMain { withRoot { it.packageName?.toString() } }
             return JSONObject().put("image", Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)).put("mime", if (png) "image/png" else "image/jpeg")
                 .put("width", scaled.width).put("height", scaled.height).put("app", app ?: JSONObject.NULL)
         } finally { if (scaled !== bmp) scaled.recycle(); bmp.recycle() }
@@ -172,7 +175,7 @@ class HandsService : AccessibilityService() {
         if (n.isPassword) o.put("text", "***") // пароли не отдаём никогда
         if (depth < 25 && count[0] < 400) {
             val kids = JSONArray()
-            for (i in 0 until n.childCount) n.getChild(i)?.let { if (count[0] < 400) kids.put(tree(it, depth + 1, count)) }
+            for (i in 0 until n.childCount) n.getChild(i)?.let { c -> try { if (count[0] < 400) kids.put(tree(c, depth + 1, count)) } finally { @Suppress("DEPRECATION") c.recycle() } }
             if (kids.length() > 0) o.put("children", kids)
         }
         return o
@@ -210,16 +213,21 @@ class HandsService : AccessibilityService() {
         return ok && f.get(5, TimeUnit.SECONDS)
     }
 
-    private fun typeText(text: String): Boolean {
-        val node = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: throw IllegalStateException("нет активного поля ввода — сначала нажмите на поле")
+    /** Корень активного окна с гарантированным освобождением (на старых Android узлы — системный ресурс). */
+    @Suppress("DEPRECATION")
+    private fun <T> withRoot(block: (AccessibilityNodeInfo) -> T): T? { val r = rootInActiveWindow ?: return null; return try { block(r) } finally { r.recycle() } }
+    @Suppress("DEPRECATION")
+    private fun <T> withFocus(block: (AccessibilityNodeInfo?) -> T): T = withRoot { root -> val f = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT); try { block(f) } finally { f?.recycle() } } ?: block(null)
+
+    private fun typeText(text: String): Boolean = withFocus { node ->
+        if (node == null) throw IllegalStateException("нет активного поля ввода — сначала нажмите на поле")
         if (node.isPassword) throw IllegalStateException("в поле пароля Светлана не печатает")
         val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, (node.text?.toString() ?: "") + text) }
-        return node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
     }
 
     private fun key(k: String): Boolean = when (k.lowercase()) {
-        "enter" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            ?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id) ?: false else false
+        "enter" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) withFocus { it?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id) ?: false } else false
         "back", "esc" -> performGlobalAction(GLOBAL_ACTION_BACK)
         "home" -> performGlobalAction(GLOBAL_ACTION_HOME)
         "recents" -> performGlobalAction(GLOBAL_ACTION_RECENTS)
