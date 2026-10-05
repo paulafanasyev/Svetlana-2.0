@@ -48,9 +48,9 @@ export function codeTools(cfg) {
   const root = cfg.workspace; fs.mkdirSync(root, { recursive: true });
   const P = (rel) => safePath(root, rel);
   return [
-    { name: "code_list", domain: "code", risk: "read", description: "Показать файлы и папки в рабочей папке проекта.",
+    { name: "code_list", domain: "code", risk: "read", taints: true, description: "Показать файлы и папки в рабочей папке проекта.",
       parameters: { type: "object", properties: { path: { type: "string", maxLength: 500 }, depth: { type: "integer", minimum: 0, maximum: 6 } }, additionalProperties: false },
-      async execute(_c, a) { const out = []; await walk(P(a.path || "."), root, a.depth ?? 2, out, 800); return { data: { files: out, truncated: out.length >= 800 }, summary: `Файлов и папок: ${out.length}` }; } },
+      async execute(_c, a) { const out = []; await walk(P(a.path || "."), root, a.depth ?? 2, out, 800); return { data: { files: out, truncated: out.length >= 800 }, summary: `Файлов и папок: ${out.length}`, untrusted: true }; } },
     { name: "code_read", domain: "code", risk: "read", taints: true, description: "Прочитать файл (с номерами строк). Можно диапазон строк.",
       parameters: { type: "object", properties: { path: { type: "string", maxLength: 500 }, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 1 } }, required: ["path"], additionalProperties: false },
       async execute(_c, a) {
