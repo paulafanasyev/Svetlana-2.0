@@ -3,5 +3,5 @@ workspace/
 node_modules/
 .env
 web/svetlana.jpg
-web/icon-*.webp
+web/icon-*.png
 __pycache__/
