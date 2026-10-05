@@ -52,7 +52,8 @@ export function safeGet(u, { maxBytes = 3_000_000, timeoutMs = 20000, headers = 
     const req = mod.get(url, { lookup: guardedLookup, headers: { "User-Agent": "SvetlanaBot/1.0", Accept: "text/html,application/json,text/plain,*/*", ...headers }, timeout: timeoutMs }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume(); if (hops <= 0) return reject(new Error("слишком много перенаправлений"));
-        return safeGet(new URL(res.headers.location, url).toString(), { maxBytes, timeoutMs, headers, hops: hops - 1 }).then(resolve, reject);
+        let next; try { next = new URL(res.headers.location, url).toString(); } catch { return reject(new Error("некорректное перенаправление")); }
+        return safeGet(next, { maxBytes, timeoutMs, headers, hops: hops - 1 }).then(resolve, reject);
       }
       const chunks = []; let n = 0;
       res.on("data", (d) => { n += d.length; if (n > maxBytes) { req.destroy(); resolve({ status: res.statusCode, url: url.toString(), headers: res.headers, body: Buffer.concat(chunks), truncated: true }); } else chunks.push(d); });

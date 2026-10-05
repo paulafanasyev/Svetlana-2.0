@@ -5,3 +5,4 @@ node_modules/
 web/svetlana.jpg
 web/icon-*.png
 __pycache__/
+training/data/
