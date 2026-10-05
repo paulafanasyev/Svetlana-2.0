@@ -76,3 +76,9 @@ test("устройство: без свежего скриншота и за п�
   assert.equal((await act.execute({}, { deviceId: "d", action: "tap", x: 50, y: 50 })).ok, false, "{} от устройства — не успех");
   assert.deepEqual(calls, ["screen.capture", "input.tap"]);
 });
+
+test("имена файлов из code_list считаются чужими данными (после них запись — только с подтверждением)", async () => {
+  const app = mk([], []); const t = app.registry.get("code_list");
+  assert.equal(t.taints, true); assert.equal((await app.registry.run(t, {}, {})).untrusted, true);
+  assert.equal((await app.registry.get("device_act").execute({}, { deviceId: "d", action: "tap", x: -5, y: 1 })).error, "некорректные координаты");
+});

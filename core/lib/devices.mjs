@@ -76,6 +76,7 @@ export function deviceTools(hub) {
         if (["tap", "swipe"].includes(a.action) && (a.x === undefined || a.y === undefined)) return { ok: false, error: "нужны координаты x, y" };
         if (a.action === "swipe" && (a.x2 === undefined || a.y2 === undefined)) return { ok: false, error: "нужны x2, y2" };
         if (["type", "clipboard_set"].includes(a.action) && typeof a.text !== "string") return { ok: false, error: "нужен text" };
+        if ([a.x, a.y, a.x2, a.y2].some((v) => v !== undefined && (!Number.isFinite(v) || v < 0))) return { ok: false, error: "некорректные координаты" };
         // Сначала смотрим, потом делаем: нужен свежий скриншот (≤2 мин), координаты — в его границах.
         const shot = hub.shots.get(a.deviceId);
         if (!shot || Date.now() - shot.at > 120_000) return { ok: false, error: "сначала посмотрите экран (screen_view) — скриншот старше 2 минут или его нет" };
