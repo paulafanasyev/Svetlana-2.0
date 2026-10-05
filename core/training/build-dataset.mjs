@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // Датасет для дообучения модели Светланы на ЕЁ инструментах (OpenAI-формат: messages + tools).
-// Сценарии: базовые ниже + scenarios-extra.mjs. Схемы инструментов и системный промпт берутся из живого кода ядра, каждый вызов проверяется validate().
+// Сценарии: базовые ниже + scenarios-extra.mjs + scenarios-brain.mjs (продукты, ПК, Пико). Схемы инструментов и системный промпт берутся из живого кода ядра, каждый вызов проверяется validate().
 //   node training/build-dataset.mjs [--train 3000] [--eval 300] [--seed 7] [--out training/data]
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createApp } from "../lib/app.mjs";
-import { systemFor } from "../lib/agent.mjs";
+import { systemFor, toolFilter } from "../lib/agent.mjs";
 import { extraScenarios, checkQuestions } from "./scenarios-extra.mjs";
+import { brainScenarios, checkDocs } from "./scenarios-brain.mjs";
 import { validate } from "../lib/tools/registry.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -20,6 +21,7 @@ const pick = (a) => a[Math.floor(rnd() * a.length)]; const int = (a, b) => a + M
 
 const app = createApp({ port: 0, host: "127.0.0.1", dataDir: fs.mkdtempSync(path.join(os.tmpdir(), "svds-")), workspace: fs.mkdtempSync(path.join(os.tmpdir(), "svws-")), adminToken: "x".repeat(16), secret: "dataset", maxSteps: 8, chromium: "", aikoUrl: "", aikoToken: "", selfEmployedUrl: "", selfEmployedToken: "", commandAllow: ["node", "npm", "npx", "git", "python3", "pytest", "ls", "cat", "tsc", "eslint", "vitest"], allowHostExec: false, chromiumNoSandbox: false, runnerSocket: "" });
 const TOOLS = app.registry.forModel(); const REG = app.registry;
+const TOOLS_BY_MODE = { pavel: TOOLS, pico: app.registry.forModel(toolFilter("pico")) }; // Пико видит только детские инструменты, как в бою
 
 // ---------- словари ----------
 const NAMES = ["Иван Петров", "Анна Смирнова", "Олег Кузнецов", "Мария Волкова", "Дмитрий Орлов", "Елена Соколова", "Сергей Морозов", "Наталья Лебедева", "Артём Козлов", "Ольга Новикова", "Игорь Павлов", "Татьяна Фёдорова"];
@@ -28,6 +30,7 @@ const SERVICES = ["разработка сайта", "настройка рек�
 // падежи имён: кому (dat), с кем (ins), кого/у кого (gen) — чтобы модель училась на грамотном русском
 const CASES = { Иван: ["Ивану", "Иваном", "Ивана"], Анна: ["Анне", "Анной", "Анны"], Олег: ["Олегу", "Олегом", "Олега"], Мария: ["Марии", "Марией", "Марии"], Дмитрий: ["Дмитрию", "Дмитрием", "Дмитрия"], Елена: ["Елене", "Еленой", "Елены"], Сергей: ["Сергею", "Сергеем", "Сергея"], Наталья: ["Наталье", "Натальей", "Натальи"], Артём: ["Артёму", "Артёмом", "Артёма"], Ольга: ["Ольге", "Ольгой", "Ольги"], Игорь: ["Игорю", "Игорем", "Игоря"], Татьяна: ["Татьяне", "Татьяной", "Татьяны"] };
 const dat = (n) => CASES[n.split(" ")[0]][0], ins = (n) => CASES[n.split(" ")[0]][1], gen = (n) => CASES[n.split(" ")[0]][2];
+const genFull = (n) => { const [f, s] = n.split(" "); return `${CASES[f][2]} ${/[ое]ва$/.test(s) ? s.slice(0, -1) + "ой" : s + "а"}`; }; // «от Ольги Новиковой», «от Ивана Петрова»
 const PHONES = () => `+7 9${int(10, 99)} ${int(100, 999)}-${int(10, 99)}-${int(10, 99)}`;
 const DATE = () => new Date(ctx.today.getTime() - int(0, 20) * 86400_000).toISOString().slice(0, 10); // не позже «сегодня» из system
 const AMOUNT = () => pick([1500, 3000, 4500, 7000, 12000, 15000, 25000, 40000, 55000, 80000, 120000]);
@@ -74,9 +77,10 @@ const S = {
     const amt = AMOUNT(), d = DATE(), biz = rnd() < 0.5, who = biz ? pick(COMPANIES) : pick(NAMES), s = pick(SERVICES);
     const c = tc("acc_income_add", { amount: amt, date: d, payer: biz ? "business" : "individual", payerName: who, service: s });
     const pend = rnd() < 0.25;
-    const turns = [U(pick([`Запиши доход ${rub(amt)} от ${who} за «${s}», ${d}`, `${who}: оплата ${rub(amt)} за «${s}» (${d}), внеси в учёт`, `Пришло ${amt} руб. от ${who}, услуга: ${s}, дата ${d}`])), A("", [c])];
+    const from = biz ? who : genFull(who);
+    const turns = [U(pick([`Запиши доход ${rub(amt)} от ${from} за «${s}», ${d}`, `${who}: оплата ${rub(amt)} за «${s}» (${d}), внеси в учёт`, `Пришло ${amt} руб. от ${from}, услуга: ${s}, дата ${d}`])), A("", [c])];
     if (pend) turns.push(TF(c, "пользователь отклонил действие"), A("Хорошо, доход не записываю. Скажите, если нужно поправить сумму или дату."));
-    else turns.push(T(c, { data: { id: id("inc"), receiptPending: true }, summary: `Доход ${rub(amt)} записан; чек в «Мой налог» ещё не пробит.` }), A(`Записала доход ${rub(amt)} от ${who}. Не забудьте пробить чек в «Мой налог» — сама я этого сделать не могу.`));
+    else turns.push(T(c, { data: { id: id("inc"), receiptPending: true }, summary: `Доход ${rub(amt)} записан; чек в «Мой налог» ещё не пробит.` }), A(`Записала доход ${rub(amt)} от ${from}. Не забудьте пробить чек в «Мой налог» — сама я этого сделать не могу.`));
     return { cat: pend ? "confirm" : "accounting", turns };
   },
   report() {
@@ -142,7 +146,7 @@ const S = {
     return { cat: "honesty", turns: [U("Сгенерируй баннер для акции"), A("", [c]), TF(c, "не подключён провайдер генерации изображений (capability image)"), A("Не получилось: не подключён провайдер, который умеет картинки. Добавьте его во вкладке «ИИ-провайдеры» с отметкой «картинки» — и сделаю.")] };
   },
   memory() {
-    const k = pick(["ИНН", "любимый цвет бренда", "часовой пояс"]), v = pick(["253801234567", "фиолетовый #5a5be8", "Владивосток, UTC+10"]);
+    const [k, v] = pick([["ИНН", "253801234567"], ["любимый цвет бренда", "фиолетовый #5a5be8"], ["часовой пояс", "Владивосток, UTC+10"], ["имя сына", "Миша, 8 лет"], ["банк для оплаты", "Т-Банк"]]);
     const c = tc("memory_save", { key: k, value: v });
     return { cat: "memory", turns: [U(`Запомни: мой ${k} — ${v}`), A("", [c]), T(c, { summary: `Запомнила: ${k}` }), A(`Запомнила: ${k} — ${v}.`)] };
   },
@@ -156,20 +160,21 @@ const S = {
   },
 };
 const WEIGHTS = { crm_contact: 8, crm_deal: 6, crm_move: 5, crm_notfound: 4, crm_overview: 4, income: 10, report: 7, invoice: 6, slides: 4, doc: 4, code_fix: 6, code_fail: 3, device: 7, device_offline: 3, injection: 7, aiko: 5, selfemployed: 4, image: 3, image_noprovider: 2, memory: 3, chit_chat: 4, cant_do: 4 };
-const bad = checkQuestions(); if (bad.length) { console.error("Вопросы базы знаний ведут не туда:\n" + bad.join("\n")); process.exit(1); }
+const bad = [...checkQuestions(), ...checkDocs()]; if (bad.length) { console.error("Вопросы базы знаний ведут не туда:\n" + bad.join("\n")); process.exit(1); }
 const X = extraScenarios({ tc, A, T, TF, U, id, pick, int, rub, rnd, dat, ins, gen, NAMES, COMPANIES, SERVICES, AMOUNT, ctx });
-Object.assign(S, X.S); Object.assign(WEIGHTS, X.W);
+const B = brainScenarios({ tc, A, T, TF, U, id, pick, int, rub, rnd, dat, ins, gen, NAMES, COMPANIES, SERVICES, AMOUNT, ctx });
+Object.assign(S, X.S, B.S); Object.assign(WEIGHTS, X.W, B.W);
 const bag = Object.entries(WEIGHTS).flatMap(([k, w]) => Array(w).fill(k));
 
 function sample() {
   ctx.now = new Date(Date.UTC(2026, int(0, 11), int(1, 28), int(3, 18), int(0, 59))); // разные «сейчас» (06:00–21:59 по Москве)
   ctx.today = new Date(new Date(ctx.now.getTime() + 3 * 3600_000).toISOString().slice(0, 10) + "T00:00:00Z"); // Москва = UTC+3 круглый год
-  const kind = pick(bag); const { cat, turns } = S[kind]();
+  const kind = pick(bag); const { cat, turns, mode = "pavel" } = S[kind]();
   for (const m of turns) for (const c of m.tool_calls || []) {
-    const t = REG.get(c.function.name); if (!t) throw new Error(`${kind}: нет инструмента ${c.function.name}`);
+    const t = REG.get(c.function.name); if (!t || !toolFilter(mode)(t)) throw new Error(`${kind}: нет инструмента ${c.function.name} в режиме ${mode}`);
     const errs = validate(t.parameters, JSON.parse(c.function.arguments)); if (errs.length) throw new Error(`${kind}/${c.function.name}: ${errs.join("; ")}`);
   }
-  return { messages: [{ role: "system", content: systemFor(ctx.now, "Europe/Moscow") }, ...turns], tools: TOOLS, meta: { kind, cat } };
+  return { messages: [{ role: "system", content: systemFor(ctx.now, "Europe/Moscow", mode) }, ...turns], tools: TOOLS_BY_MODE[mode], meta: { kind, cat, mode } };
 }
 
 fs.mkdirSync(OUT, { recursive: true });
