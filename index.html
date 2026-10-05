@@ -1,97 +1,79 @@
 <!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Svetlana 2.0 — AI Agent System</title>
-    <link
-      rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
-    />
-    <style>
-      /* 内联样式确保主题色立即生效，避免闪烁 */
-      html,
-      body {
-        margin: 0;
-        padding: 0;
-        width: 100%;
-        height: 100%;
-      }
-      html.light,
-      html.light body {
-        background-color: #ffffff !important;
-        color: #000000;
-      }
-      html.dark,
-      html.dark body {
-        background-color: #1a1a1a !important;
-        color: #ffffff;
-      }
-    </style>
-    <script>
-      // 在 React 加载前立即设置主题，避免闪烁
-      (function () {
-        const isInIframe = window.self !== window.top;
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Светлана 2.0: датасет и обучение в Colab</title>
+<meta name="description" content="Мастер-датасет Светланы, датасет маркетплейса и Colab-блокнот для обучения LoRA на Gemma 4.">
+<style>
+:root{--ink:#221b2e;--muted:#5f5670;--bg:#f7f5fa;--card:#fff;--line:#e4dfec;--brand:#7d5cb0;--brand-d:#5f4390;--accent:#ad5512}
+*{box-sizing:border-box}body{margin:0;font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg)}
+a{color:var(--brand-d)}main{max-width:960px;margin:0 auto;padding:40px 20px 64px}
+header p{color:var(--muted);max-width:640px}h1{font-size:clamp(28px,5vw,42px);line-height:1.15;margin:8px 0 12px}
+.eyebrow{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);font-weight:600}
+.cta{display:flex;gap:12px;flex-wrap:wrap;margin:24px 0 8px}.btn{display:inline-block;padding:12px 18px;border-radius:12px;background:var(--brand);color:#fff;text-decoration:none;font-weight:600}
+.btn.ghost{background:transparent;color:var(--brand-d);border:1.5px solid var(--brand)}.btn:hover{background:var(--brand-d);color:#fff}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:32px 0}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}.stat b{display:block;font-size:28px}.stat span{color:var(--muted);font-size:14px}
+h2{margin:40px 0 12px;font-size:22px}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+th,td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:top;font-size:15px}th{background:#efeaf6;font-weight:600}tr:last-child td{border-bottom:0}
+code{font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;background:#efeaf6;padding:2px 6px;border-radius:6px;word-break:break-all}
+ol li{margin:6px 0}.chat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;display:grid;gap:10px}
+.msg{padding:10px 14px;border-radius:12px;max-width:85%}.u{background:#efeaf6;justify-self:end}.a{background:#f3ece6}.t{font:12px/1.4 ui-monospace,monospace;color:var(--muted);background:#f7f5fa;border:1px dashed var(--line)}
+.note{background:#fff7ef;border:1px solid #f0d9c4;border-radius:14px;padding:14px 16px;color:#5a3a1c}
+footer{margin-top:48px;color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<main>
+<header>
+<div class="eyebrow">Svetlana 2.0 · обучение</div>
+<h1>Свой мозг для Светланы: датасет и обучение в Google Colab</h1>
+<p>Здесь мастер-датасет по 24 разделам плана, датасет маркетплейса с вызовами инструментов и подтверждениями, отложенный eval и блокнот, который обучает LoRA на Gemma 4 E2B на бесплатной T4.</p>
+<div class="cta">
+<a class="btn" href="https://colab.research.google.com/github/paulafanasyev/Svetlana-2.0/blob/training-master-dataset-2026-10/training/gemma4/svetlana_colab.ipynb">Открыть в Colab</a>
+<a class="btn ghost" href="https://github.com/paulafanasyev/Svetlana-2.0/tree/training-master-dataset-2026-10/training">Файлы на GitHub</a>
+</div>
+</header>
 
-        function applyThemeToDOM(theme) {
-          document.documentElement.classList.remove("light", "dark");
-          document.documentElement.classList.add(theme);
-          document.documentElement.setAttribute("data-theme", theme);
-        }
+<section class="stats" aria-label="Объём данных">
+<div class="stat"><b>35</b><span>эталонных диалогов в мастер-датасете</span></div>
+<div class="stat"><b>1031</b><span>диалог маркетплейса из генератора</span></div>
+<div class="stat"><b>23</b><span>сценария: покупатель, продавец, безопасность</span></div>
+<div class="stat"><b>32</b><span>отложенных eval-кейса на других товарах</span></div>
+</section>
 
-        if (isInIframe) {
-          // 监听父窗口主动推送的主题消息
-          window.addEventListener("message", function (event) {
-            if (event.data && typeof event.data.theme === "string") {
-              const theme = event.data.theme;
-              if (theme === "light" || theme === "dark") {
-                applyThemeToDOM(theme);
-              }
-            }
-          });
-        } else {
-          // 非 iframe 环境，使用默认 light 主题
-          applyThemeToDOM("light");
-        }
-      })();
-    </script>
-      <script>
-      (function () {
-        if (window.self === window.top) return;
-        var reported = {};
-        window.addEventListener("error", function (event) {
-          // 资源加载失败的 error 事件没有 message，此处仅上报 JS 运行时错误
-          if (!event || !event.message) return;
-          var key =
-            event.message + "|" + (event.filename || "") + "|" + (event.lineno || 0);
-          if (reported[key]) return; // 相同错误只上报一次，避免渲染循环刷屏
-          reported[key] = true;
-          try {
-            window.parent.postMessage(
-              {
-                type: "sandbox-runtime-error",
-                payload: {
-                  message: String(event.message).slice(0, 500),
-                  filename: event.filename || "",
-                  lineno: event.lineno || 0,
-                  colno: event.colno || 0,
-                  stack:
-                    event.error && event.error.stack
-                      ? String(event.error.stack).slice(0, 2000)
-                      : ""
-                }
-              },
-              "*"
-            );
-          } catch (e) {
-            /* 上报失败不影响页面运行 */
-          }
-        });
-      })();
-    </script>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<h2>Как обучить за 4 шага</h2>
+<ol>
+<li>Нажмите «Открыть в Colab», затем <b>Runtime → Change runtime type → T4 GPU</b>.</li>
+<li>Запустите ячейки по порядку. Блокнот сам соберёт датасет и проверит схему, дубли, утечку eval и sha256.</li>
+<li>Посмотрите базовый результат eval, потом обучение (около 30–60 минут на T4) и повторный eval.</li>
+<li>Адаптер и отчёт сохранятся на Google Drive в папку <code>svetlana_lora</code>.</li>
+</ol>
+
+<h2>Файлы</h2>
+<table>
+<thead><tr><th>Файл</th><th>Что внутри</th></tr></thead>
+<tbody>
+<tr><td><a href="https://github.com/paulafanasyev/Svetlana-2.0/blob/training-master-dataset-2026-10/training/datasets/svetlana_master_training_v1.jsonl">svetlana_master_training_v1.jsonl</a></td><td>Ядро знаний: уточнение задачи, расчёты, продуктивность, самозанятые (422‑ФЗ), продажи, КП, договоры, карьера, маркировка рекламы, финансы и УСН, CRM, документы, источники и противоречия, операторские действия, приватность, prompt injection, стратегия, RAG против дообучения, мультимодальность, восстановление после ошибок, история, детская безопасность Я‑Зарядки, маркетплейс.</td></tr>
+<tr><td><a href="https://github.com/paulafanasyev/Svetlana-2.0/blob/training-master-dataset-2026-10/training/datasets/marketplace/build_marketplace_dataset.py">build_marketplace_dataset.py</a></td><td>Детерминированный генератор: поиск, сравнение, заказы, отмена с подтверждением, возвраты по ст. 26.1 ЗоЗПП, споры, карточки и SEO, цены конкурентов, отзывы, выплаты, ошибки инструментов, аналитика.</td></tr>
+<tr><td><a href="https://github.com/paulafanasyev/Svetlana-2.0/blob/training-master-dataset-2026-10/training/gemma4/svetlana_colab.ipynb">svetlana_colab.ipynb</a></td><td>Обучение LoRA (Unsloth, 4-bit), loss только по ответам ассистента, eval до и после, сохранение на Drive, опционально GGUF.</td></tr>
+<tr><td><a href="https://github.com/paulafanasyev/Svetlana-2.0/blob/training-master-dataset-2026-10/training/MASTER_DATASET.md">MASTER_DATASET.md</a></td><td>Описание, формат, контрольные суммы, правила и честный статус.</td></tr>
+</tbody>
+</table>
+
+<h2>Как выглядит пример</h2>
+<div class="chat" aria-label="Пример диалога из датасета">
+<div class="msg u">Отмени заказ СВ-4821</div>
+<div class="msg t">&lt;tool_call&gt;{"name": "orders.get", "arguments": {"order_id": "СВ-4821"}}&lt;/tool_call&gt;</div>
+<div class="msg t">&lt;tool_result&gt;{"status": "PAID", "total_rub": 12490, "cancellable": true}&lt;/tool_result&gt;</div>
+<div class="msg a">Заказ СВ-4821: Наушники Harmonia Wireless Pro, 12 490 ₽, статус «оплачен». Если отменить, деньги вернутся на карту. Отменяю? Ответьте «да», чтобы подтвердить.</div>
+</div>
+
+<h2>Честный статус</h2>
+<p class="note"><b>Датасет: VERIFIED</b> (схема, дубли и утечка eval проверены). <b>Обученная модель: NOT PROVEN</b>, пока блокнот не прогнан и ответы не проверены вручную. Снижение loss не доказывает качество. Цены, законы и статусы модель должна брать из инструментов и базы знаний, а не из памяти.</p>
+
+<footer>Svetlana 2.0 · данные без персональной информации · <a href="https://github.com/paulafanasyev/Svetlana-2.0">репозиторий</a></footer>
+</main>
+</body>
 </html>
