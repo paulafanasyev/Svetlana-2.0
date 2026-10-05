@@ -1,0 +1,7 @@
+data/
+workspace/
+node_modules/
+.env
+web/svetlana.jpg
+web/icon-*.webp
+__pycache__/
