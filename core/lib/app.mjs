@@ -27,8 +27,7 @@ export function createApp(cfg, { fetchImpl = fetch } = {}) {
     load: () => { try { return JSON.parse(fs.readFileSync(nonceFile, "utf8")); } catch { return []; } },
     save: (e) => { const t = nonceFile + ".tmp"; fs.writeFileSync(t, JSON.stringify(e)); fs.renameSync(t, nonceFile); },
   });
-  if (!cfg.secret) console.warn("⚠ SVETLANA_SECRET не задан: после перезапуска выданные подтверждения станут недействительны
-");
+  if (!cfg.secret) console.warn("⚠ SVETLANA_SECRET не задан: после перезапуска выданные подтверждения станут недействительны");
   const agent = new Agent({ providers, registry, store, confirmations, maxSteps: cfg.maxSteps });
   return { cfg, store, providers, hub, registry, confirmations, agent };
 }
