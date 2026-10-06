@@ -1,5 +1,5 @@
 """Проверка агента ПК без настоящего экрана: подменяем mss/pyautogui/websocket/pyperclip заглушками."""
-import json, sys, types, os
+import json, sys, types, os, threading
 from PIL import Image
 
 clicks, hotkeys, clip = [], [], {"v": "старое"}
@@ -20,7 +20,7 @@ sys.modules["pyperclip"] = types.SimpleNamespace(paste=lambda: clip["v"], copy=l
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "desktop-agent"))
 import agent
 
-a = agent.Agent("wss://x/ws/device", "dev_t", False)
+a = agent.Agent("wss://x/ws/device", "dev_t", False, log=lambda m: None)
 try:
     a.handle("input.tap", {"x": 1, "y": 1}); raise SystemExit("FAIL: тап без скриншота должен отклоняться")
 except RuntimeError: pass
@@ -33,9 +33,27 @@ a.handle("input.swipe", {"x": 0, "y": 0, "x2": 1279, "y2": 799})
 assert clicks[-1] == ("drag", 1440 - 1, 900 - 1) or clicks[-1][1] >= 1438, clicks[-1]
 a.handle("input.type", {"text": "Привет"}); assert clip["v"] == "старое", "буфер обмена восстановлен"
 a.handle("input.key", {"key": "ctrl+s"}); assert hotkeys[-1] == ("ctrl", "s")
-v = agent.Agent("wss://x", "dev_t", True); v.handle("screen.capture", {})
+v = agent.Agent("wss://x", "dev_t", True, log=lambda m: None); v.handle("screen.capture", {})
 try:
     v.handle("input.tap", {"x": 1, "y": 1}); raise SystemExit("FAIL: view-only")
 except RuntimeError: pass
 assert "control" not in v.caps() and "control" in a.caps()
+
+# голос: доступ «voice» объявляется только при включении, фраза уходит в ядро и ответ возвращается по reqId
+assert "voice" not in a.caps() and "voice" in agent.Agent("wss://x", "dev_t", False, voice=True).caps()
+try:
+    a.ask("привет"); raise SystemExit("FAIL: без связи ask должен падать")
+except RuntimeError as e: assert "нет связи" in str(e)
+class FakeWs:
+    def __init__(self, ag): self.ag, self.sent = ag, []
+    def send(self, s):
+        m = json.loads(s); self.sent.append(m)
+        if m.get("type") in ("say", "confirm"):
+            threading.Timer(0.05, lambda: self.ag.on_message(self, json.dumps({"type": "reply", "reqId": m["reqId"], "answer": "Ок: " + m.get("text", str(m.get("approve")))}))).start()
+w = FakeWs(a); a.ws, a.connected = w, True
+assert a.ask("сколько я заработал")["answer"] == "Ок: сколько я заработал"
+assert a.confirm(True)["answer"] == "Ок: True"
+assert w.sent[0]["type"] == "say" and w.sent[1] == {"type": "confirm", "approve": True, "reqId": w.sent[1]["reqId"]}
+# обрыв связи будит ожидающих
+a.waiting["zz"] = [threading.Event(), None]; a.on_close(); assert a.waiting["zz"][1]["error"]
 print("OK")
