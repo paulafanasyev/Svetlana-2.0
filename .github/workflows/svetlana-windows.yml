@@ -1,0 +1,54 @@
+# ШАБЛОН автосборки установщика.
+name: svetlana-windows
+on:
+  push:
+    branches: [svetlana-core-v2, svetlana-2.0-core-development-0416c]
+    paths:
+      - "core/desktop-agent/**"
+      - ".github/workflows/svetlana-windows.yml"
+  pull_request:
+    paths:
+      - "core/desktop-agent/**"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: core/desktop-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Dependencies
+        run: python -m pip install --upgrade pip; python -m pip install -r requirements.txt -r requirements-desktop.txt "pyinstaller>=6.6"
+      - name: Voice tests
+        run: python ..\test\voice_check.py; python -c "import vosk, sounddevice, pyttsx3, pystray, uiautomation; print('modules ok')"
+      - name: Build installer
+        run: ./packaging/build_windows.ps1
+      - name: Version
+        id: v
+        run: echo "version=$(python -c 'import version; print(version.VERSION)')" >> $env:GITHUB_OUTPUT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SvetlanaSetup-${{ steps.v.outputs.version }}
+          path: core/desktop-agent/packaging/Output/*.exe
+      - name: Publish to Releases
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-v${{ steps.v.outputs.version }}
+          name: Светлана для Windows ${{ steps.v.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: core/desktop-agent/packaging/Output/*.exe
+          body: |
+            **Установка:** скачайте установщик и запустите его.
+            Если Windows покажет предупреждение SmartScreen, установщик пока без цифровой подписи.
+            **Подключение:** в приложении Светланы вкладка «Устройства» → «Подключить» (платформа Windows) → адрес и ключ в окно Светланы → «Сохранить и подключить».
