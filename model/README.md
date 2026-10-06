@@ -4,8 +4,10 @@
 
 | Версия | Основа | Где работает | Файл |
 |---|---|---|---|
-| `pc` | Qwen2.5-7B-Instruct + LoRA Светланы | компьютер, локально (Ollama, vLLM, LM Studio) | `svetlana-pc-q4_k_m.gguf`, около 4,7 ГБ |
-| `phone` | Qwen2.5-3B-Instruct + LoRA Светланы | телефон, на устройстве | `svetlana-phone-q4_k_m.gguf`, около 1,9 ГБ |
+| `pc` | Gemma 4 E4B + LoRA Светланы | компьютер, локально (Ollama, llama.cpp, LM Studio) | `svetlana-pc-q4_k_m.gguf` |
+| `phone` | Gemma 4 E2B + LoRA Светланы | телефон, на устройстве | `svetlana-phone-q4_k_m.gguf` |
+
+Gemma 4 понимает картинки и звук. Если при сборке получился файл зрения `svetlana-…-mmproj.gguf`, он лежит в том же релизе. Прежняя основа Qwen2.5 (7B/3B, только текст): обучение с `SV_FAMILY=qwen`.
 
 Веса не хранятся в git: GitHub не принимает файлы больше 100 МБ. Обучение в Colab само выкладывает их в **Releases этого репозитория** (большие файлы частями по 1,9 ГБ с контрольными суммами) и, если нужно, на Hugging Face.
 
