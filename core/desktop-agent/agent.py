@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Светлана — «руки и глаза» на компьютере (Windows / macOS / Linux).
+"""Светлана — «руки, глаза и уши» на компьютере (Windows / macOS / Linux).
 
-  pip install -r requirements.txt
-  python agent.py --url wss://ваш-домен/ws/device --token dev_...   [--view-only]
+  pip install -r requirements.txt                 # руки и глаза
+  pip install -r requirements-desktop.txt         # + голос и окно (для Windows есть готовый установщик)
+  python agent.py --url wss://ваш-домен/ws/device --token dev_...   [--view-only] [--voice] [--no-wake]
 
 Видит любую программу (1С, браузер, Render, Excel…): скриншот + список элементов с текстом и рамками (ui_tree.py).
 Подключается К ядру Светланы (исходящее соединение, роутер настраивать не нужно), по запросу присылает скриншот
 и выполняет команды мыши/клавиатуры. Безопасность: каждое действие подтверждает владелец в приложении Светланы;
 --view-only — только просмотр; увести мышь в левый верхний угол экрана = аварийная остановка (pyautogui FAILSAFE).
+--voice — голосовое управление: «Светлана, …» (распознавание офлайн, быстрые команды без интернета, остальное — мозгу).
 """
-import argparse, base64, hashlib, io, json, os, platform, subprocess, sys, threading, time
+import argparse, base64, hashlib, io, json, os, platform, subprocess, sys, threading, time, uuid
 
 import mss
 import pyautogui
@@ -69,8 +71,13 @@ def active_window():
         return None
 
 
-def list_apps():
+_apps_cache = {"t": 0.0, "v": []}
+
+
+def list_apps(max_age=60):
     """Приложения, которые реально можно запустить: ярлыки «Пуск» (Windows), /Applications (macOS), .desktop (Linux)."""
+    if time.time() - _apps_cache["t"] < max_age and _apps_cache["v"]:
+        return _apps_cache["v"]
     out = {}
     if sys.platform == "win32":
         import glob
@@ -95,7 +102,9 @@ def list_apps():
                         out[f] = e.get("Name[ru]") or e.get("Name")
                 except Exception:
                     pass
-    return sorted(({"id": k, "name": v} for k, v in out.items()), key=lambda x: x["name"].lower())[:500]
+    v = sorted(({"id": k, "name": v} for k, v in out.items()), key=lambda x: x["name"].lower())[:500]
+    _apps_cache.update(t=time.time(), v=v)
+    return v
 
 
 def launch(app):
@@ -134,13 +143,19 @@ KEYS = {"enter": "enter", "esc": "esc", "tab": "tab", "backspace": "backspace", 
 
 
 class Agent:
-    def __init__(self, url, token, view_only):
-        self.url, self.token, self.view_only = url, token, view_only
+    def __init__(self, url, token, view_only, voice=False, log=None, on_state=None):
+        self.url, self.token, self.view_only, self.voice = url, token, view_only, voice
         self.eyes = Eyes()
         self.lock = threading.Lock()
+        self.log = log or (lambda m: print(m, flush=True))
+        self.on_state = on_state or (lambda s: None)
+        self.ws = None
+        self.connected = False
+        self.waiting = {}  # reqId → [Event, ответ]
+        self._stop = threading.Event()
 
     def caps(self):
-        return ["screen", "apps", "tree"] + ([] if self.view_only else ["control", "clipboard"])
+        return ["screen", "apps", "tree"] + ([] if self.view_only else ["control", "clipboard"]) + (["voice"] if self.voice else [])
 
     def to_screen(self, x, y):
         geom = self.eyes.geom
@@ -193,15 +208,46 @@ class Agent:
             pyperclip.copy(str(p.get("text", ""))[:20000])
         else:
             raise RuntimeError("команда не поддерживается на компьютере")
-        print(f"[Светлана] выполнено: {method} {json.dumps(p, ensure_ascii=False)[:120]}", flush=True)
+        self.log(f"[Светлана] выполнено: {method} {json.dumps(p, ensure_ascii=False)[:120]}")
         return {"executed": True, "verified": self.eyes.changed()}
+
+    # ---------- голос → ядро ----------
+    def request(self, payload, timeout=180):
+        """Отправить фразу/подтверждение в ядро и дождаться ответа (мозг может думать до пары минут)."""
+        ws = self.ws
+        if not ws or not self.connected:
+            raise RuntimeError("нет связи с ядром Светланы")
+        rid = uuid.uuid4().hex
+        slot = [threading.Event(), None]
+        self.waiting[rid] = slot
+        try:
+            ws.send(json.dumps({**payload, "reqId": rid}, ensure_ascii=False))
+            if not slot[0].wait(timeout):
+                raise RuntimeError("ядро не ответило вовремя")
+            return slot[1]
+        finally:
+            self.waiting.pop(rid, None)
+
+    def ask(self, text, reset=False):
+        return self.request({"type": "say", "text": text, "reset": bool(reset)})
+
+    def confirm(self, approve):
+        return self.request({"type": "confirm", "approve": bool(approve)}, timeout=300)
 
     def on_message(self, ws, raw):
         try:
             m = json.loads(raw)
-            if not isinstance(m, dict) or "id" not in m:
+            if not isinstance(m, dict):
                 return
         except ValueError:
+            return
+        if m.get("type") == "reply":
+            slot = self.waiting.get(m.get("reqId"))
+            if slot:
+                slot[1] = m
+                slot[0].set()
+            return
+        if "id" not in m:
             return
         def work():
             try:
@@ -215,15 +261,56 @@ class Agent:
     def on_open(self, ws):
         w, h = pyautogui.size()
         ws.send(json.dumps({"type": "hello", "platform": {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux"), "name": platform.node(), "capabilities": self.caps(), "screen": {"width": w, "height": h}}))
-        print(f"[Светлана] подключено. Доступ: {', '.join(self.caps())}. Ctrl+C — отключить.", flush=True)
+        self.ws, self.connected = ws, True
+        self.on_state("online")
+        self.log(f"[Светлана] подключено. Доступ: {', '.join(self.caps())}.")
+
+    def on_close(self, *_a):
+        self.connected = False
+        self.on_state("offline")
+        for slot in list(self.waiting.values()):
+            slot[1] = {"error": "связь с ядром прервалась"}
+            slot[0].set()
 
     def run(self):
-        while True:
-            ws = websocket.WebSocketApp(self.url, subprotocols=[self.token], on_open=self.on_open, on_message=self.on_message,
-                                        on_error=lambda _w, e: print("[Светлана] ошибка:", e, flush=True))
+        while not self._stop.is_set():
+            self.on_state("connecting")
+            ws = websocket.WebSocketApp(self.url, subprotocols=[self.token], on_open=self.on_open, on_message=self.on_message, on_close=self.on_close,
+                                        on_error=lambda _w, e: self.log(f"[Светлана] ошибка связи: {e}"))
+            self.ws = ws
             ws.run_forever(ping_interval=30, ping_timeout=10)
-            print("[Светлана] соединение потеряно, повтор через 5 с", flush=True)
-            time.sleep(5)
+            self.on_close()
+            if self._stop.is_set():
+                break
+            self.log("[Светлана] соединение потеряно, повтор через 5 с")
+            self._stop.wait(5)
+
+    def stop(self):
+        self._stop.set()
+        try:
+            if self.ws:
+                self.ws.close()
+        except Exception:
+            pass
+
+
+def start_voice(agent, require_wake=True, owner="Павел", log=None):
+    """Голосовой режим: уши (Vosk) + быстрые команды + мозг через ядро. Возвращает (loop, listener, speaker)."""
+    import commands, voice
+    log = log or agent.log
+    model = voice.find_model()
+    if not model:
+        log("[голос] модель распознавания не найдена — скачиваю один раз (≈45 МБ)…")
+        model = voice.download_model(lambda p: None)
+    speaker = voice.Speaker(log=log)
+    loop = None
+    acts = commands.SysActions(list_apps=list_apps, launch=launch)
+    cmds = commands.Commands(acts, notify=lambda text: loop.say(text, followup=False), owner=owner)
+    loop = voice.VoiceLoop(cmds, ask=agent.ask, confirm=agent.confirm, speak=speaker.say, stop_speaking=speaker.stop,
+                           online=lambda: agent.connected, require_wake=require_wake, log=log)
+    listener = voice.Listener(model, loop.process, is_muted=speaker.speaking.is_set, log=log)
+    listener.start()
+    return loop, listener, speaker
 
 
 if __name__ == "__main__":
@@ -231,7 +318,12 @@ if __name__ == "__main__":
     ap.add_argument("--url", required=True)
     ap.add_argument("--token", default=os.environ.get("SVETLANA_DEVICE_TOKEN"))
     ap.add_argument("--view-only", action="store_true")
+    ap.add_argument("--voice", action="store_true", help="голосовое управление «Светлана, …»")
+    ap.add_argument("--no-wake", action="store_true", help="реагировать на любую фразу без слова «Светлана»")
     a = ap.parse_args()
     if not a.token:
         sys.exit("нужен --token (выдаётся во вкладке «Устройства»)")
-    Agent(a.url, a.token, a.view_only).run()
+    ag = Agent(a.url, a.token, a.view_only, voice=a.voice)
+    if a.voice:
+        start_voice(ag, require_wake=not a.no_wake)
+    ag.run()
