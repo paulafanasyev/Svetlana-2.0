@@ -134,7 +134,8 @@ def main():
     N_TRAIN = int(os.environ.get("SV_TRAIN") or (3000 if mem >= 39 else 2000 if mem >= 22 else 1200))
     EPOCHS = float(os.environ.get("SV_EPOCHS") or 1)
     SEQ = int(os.environ.get("SV_SEQ") or (8192 if mem >= 22 else 6144))
-    bf16 = torch.cuda.is_bf16_supported()
+    # torch.cuda.is_bf16_supported() на T4 отвечает «да» (эмуляция), а обучение потом падает — смотрим поколение карты (bf16 с Ampere, 8.x)
+    bf16 = torch.cuda.get_device_capability(0)[0] >= 8
     log(f"GPU: {gpu} ({mem:.0f} ГБ) → основа {family}, версии {SIZES}, примеров {N_TRAIN}, эпох {EPOCHS}, контекст {SEQ}")
     if family == "gemma" and not bf16: log("эта видеокарта без bf16: Gemma 4 считается в float32 — медленнее, но работает")
 

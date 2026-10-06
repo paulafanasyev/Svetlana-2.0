@@ -20,8 +20,10 @@ export function createApp(cfg, { fetchImpl = fetch } = {}) {
   const store = new Store(path.join(cfg.dataDir, "db"));
   const providers = new Providers(path.join(cfg.dataDir, "providers.json"), fetchImpl);
   const hub = new DeviceHub(store);
+  // Картинки и видео Светлана сама не генерирует (image_generate/video_generate отключены):
+  // открывает для этого приложения на устройстве (Шедеврум, Kandinsky) или бесплатные сервисы в браузере.
   const registry = new Registry().add(
-    ...codeTools(cfg), ...businessTools(store), ...docTools(cfg, providers), ...webTools(), ...deviceTools(hub), ...lifeTools(store), ...brainTools(store, cfg),
+    ...codeTools(cfg), ...businessTools(store), ...docTools(cfg, providers).filter((t) => t.domain !== "media"), ...webTools(), ...deviceTools(hub), ...lifeTools(store), ...brainTools(store, cfg),
     ...stpConnector({ id: "aiko", title: "Маркетплейс АИКО", base: cfg.aikoUrl, token: cfg.aikoToken, fx: fetchImpl }),
     ...stpConnector({ id: "selfemployed", title: "Мир самозанятых", base: cfg.selfEmployedUrl, token: cfg.selfEmployedToken, fx: fetchImpl }),
   );
