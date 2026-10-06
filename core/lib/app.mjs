@@ -13,6 +13,7 @@ import { lifeTools } from "./tools/life.mjs";
 import { brainTools } from "./tools/brain.mjs";
 import { Confirmations } from "./confirm.mjs";
 import { Agent } from "./agent.mjs";
+import { installVoice } from "./voice.mjs";
 
 export function createApp(cfg, { fetchImpl = fetch } = {}) {
   fs.mkdirSync(cfg.dataDir, { recursive: true });
@@ -31,5 +32,6 @@ export function createApp(cfg, { fetchImpl = fetch } = {}) {
   });
   if (!cfg.secret) console.warn("⚠ SVETLANA_SECRET не задан: после перезапуска выданные подтверждения станут недействительны");
   const agent = new Agent({ providers, registry, store, confirmations, maxSteps: cfg.maxSteps });
+  installVoice(hub, { agent, store }); // «Светлана, …» с компьютера: текст → мозг → ответ для озвучки
   return { cfg, store, providers, hub, registry, confirmations, agent };
 }
