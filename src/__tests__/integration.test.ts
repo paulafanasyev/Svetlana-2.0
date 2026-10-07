@@ -5,10 +5,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { toolRegistry } from '../services/ToolRegistry';
 import { registerRealTools } from '../services/RealTools';
 import { handsManager } from '../services/HandsManager';
+import { policyEngine } from '../services/PolicyEngine';
 
 describe('Integration Tests', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    policyEngine.resetDailyCounts();
+    toolRegistry.setContext({ platform: 'android', permissions: [], environment: {} });
     registerRealTools();
   });
 
@@ -35,14 +38,37 @@ describe('Integration Tests', () => {
       expect(result.success).toBe(true); expect(result.data.typed).toBe('Hello World'); expect(mockHands.clearText).toHaveBeenCalled(); expect(mockHands.type).toHaveBeenCalledWith('Hello World'); expect(mockHands.getAccessibilityTree).toHaveBeenCalled();
     });
 
-    it('should request confirmation before send_message and execute after explicit confirmation', async () => {
+    it('should request confirmation with scoped token before send_message and execute after valid token', async () => {
       const mockHands={isConnected:()=>true,launchApp:vi.fn().mockResolvedValue({success:true}),findElementByText:vi.fn().mockResolvedValueOnce({id:'contact_1',text:'John',bounds:{x:100,y:200,width:200,height:50}}).mockResolvedValueOnce({id:'send_button',text:'Send',bounds:{x:500,y:800,width:100,height:50}}),tap:vi.fn().mockResolvedValue({success:true}),type:vi.fn().mockResolvedValue({success:true}),getAccessibilityTree:vi.fn().mockResolvedValue({root:{children:[{text:'Hello John!',children:[]}]}})};
       vi.spyOn(handsManager,'isConnected').mockResolvedValue(true); vi.spyOn(handsManager,'getHands').mockReturnValue(mockHands as any);
       const params={app:'org.telegram.messenger',contact:'John',message:'Hello John!'};
       const pending=await toolRegistry.executeTool('send_message',params);
-      expect(pending.success).toBe(false); expect(pending.requiresConfirmation).toBe(true); expect(pending.confirmationMessage).toBeDefined();
-      const result=await toolRegistry.executeWithConfirmation('send_message',params);
-      expect(result.success).toBe(true); expect(result.data.app).toBe(params.app); expect(result.data.contact).toBe(params.contact); expect(result.data.message).toBe(params.message); expect(mockHands.launchApp).toHaveBeenCalledWith(params.app); expect(mockHands.findElementByText).toHaveBeenCalledWith('John'); expect(mockHands.type).toHaveBeenCalledWith(params.message); expect(mockHands.getAccessibilityTree).toHaveBeenCalled();
+      expect(pending.success).toBe(false);
+      expect(pending.requiresConfirmation).toBe(true);
+      expect(pending.confirmationToken).toBeDefined();
+      expect(pending.confirmationMessage).toBeDefined();
+
+      // Reject tampered parameters with the same token
+      const tampered = await toolRegistry.executeWithConfirmation('send_message', { ...params, message: 'Attacking!' }, pending.confirmationToken);
+      expect(tampered.success).toBe(false);
+      expect(tampered.error).toContain('confirmation token');
+
+      // Re-issue token after consumed/failed attempt
+      const pending2 = await toolRegistry.executeTool('send_message', params);
+      const result=await toolRegistry.executeWithConfirmation('send_message', params, pending2.confirmationToken);
+      expect(result.success).toBe(true);
+      expect(result.data.app).toBe(params.app);
+      expect(result.data.contact).toBe(params.contact);
+      expect(result.data.message).toBe(params.message);
+      expect(mockHands.launchApp).toHaveBeenCalledWith(params.app);
+    });
+
+    it('should enforce policy platform restrictions', async () => {
+      toolRegistry.setContext({ platform: 'web' });
+      const mockHands={isConnected:()=>true}; vi.spyOn(handsManager,'isConnected').mockResolvedValue(true); vi.spyOn(handsManager,'getHands').mockReturnValue(mockHands as any);
+      const result=await toolRegistry.executeTool('tap_element',{elementText:'Settings'});
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Action denied by policy');
     });
 
     it('should enforce policy for high-risk actions', async () => {
