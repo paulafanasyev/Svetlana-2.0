@@ -78,6 +78,11 @@
       "path": "training/datasets/svetlana_acceptance_hardening_v6.jsonl",
       "format": "messages",
       "role": "acceptance_gate_targeted_hardening_v6"
+    },
+    {
+      "path": "training/datasets/yazaryadka_fitness_v1.jsonl",
+      "format": "messages",
+      "role": "yazaryadka_domain_behavior_v1"
     }
   ],
   "reference_knowledge": [
@@ -98,6 +103,11 @@
     {
       "path": "training/datasets/svetlana_eval.jsonl",
       "format": "messages"
+    },
+    {
+      "path": "training/evaluation/yazaryadka_fitness_eval_v1.jsonl",
+      "format": "messages",
+      "role": "yazaryadka_heldout_v1"
     }
   ],
   "rules": {
