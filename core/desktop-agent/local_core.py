@@ -18,9 +18,11 @@ import time
 import urllib.error
 import urllib.request
 
+import models
+
 DEFAULT_PORT = 8787
 DEFAULT_MODEL = "qwen3-vl:8b"  # Ollama: видит картинки и умеет вызывать инструменты; можно сменить в окне
-OLLAMA = "http://127.0.0.1:11434"
+OLLAMA = models.OLLAMA
 
 
 def _app_dir():
@@ -65,15 +67,17 @@ def _free_port():
         return s.getsockname()[1]
 
 
-def ollama_status(model=None, base=OLLAMA, timeout=2):
+def ollama_status(model=None, base=None, timeout=2):
     """(запущена ли Ollama, скачана ли нужная модель, список моделей)."""
-    try:
-        with urllib.request.urlopen(base + "/api/tags", timeout=timeout) as r:
-            names = [m.get("name", "") for m in json.loads(r.read().decode("utf-8")).get("models", [])]
-    except Exception:
+    names = models.installed(timeout=timeout)
+    if names is None:
         return False, False, []
-    has = bool(model) and any(n == model or n == model + ":latest" or (":" not in model and n.split(":")[0] == model) for n in names)
-    return True, has, names
+    return True, models.has_model(model, names), names
+
+
+def provider(model, caps=None):
+    return {"id": "local", "name": "Светлана локально (Ollama)", "preset": "ollama", "model": model,
+            "capabilities": caps or models.capabilities(model), "timeoutMs": 300000}
 
 
 class LocalCore:
@@ -157,8 +161,7 @@ class LocalCore:
         f = os.path.join(self.data, "providers.json")
         if os.path.exists(f):
             return False
-        prov = [{"id": "local", "name": "Светлана локально (Ollama)", "preset": "ollama", "model": self.st["model"],
-                 "capabilities": ["chat", "tools", "vision"], "timeoutMs": 300000}]
+        prov = [provider(self.st["model"])]
         with open(f, "w", encoding="utf-8") as fh:
             json.dump(prov, fh, ensure_ascii=False, indent=1)
         return True
@@ -224,9 +227,19 @@ class LocalCore:
                 p.kill()
 
 
-def set_local_model(core, model):
-    """Сменить локальную модель (провайдер «local») в уже запущенном ядре."""
+def sync_model(core, model, refresh=False):
+    """При каждом старте: провайдер «local» в ядре должен смотреть на модель из окна (даже если её сменили, пока ядро не работало).
+    refresh=True (Ollama отвечает) — заодно пересчитать, видит ли модель экран."""
+    cur = next((p for p in (core._req("GET", "/api/providers") or []) if p.get("id") == "local"), None)
+    if cur is None or cur.get("model") != model or (refresh and sorted(cur.get("capabilities") or []) != sorted(models.capabilities(model))):
+        return set_local_model(core, model)
+    return cur.get("capabilities") or []
+
+
+def set_local_model(core, model, caps=None):
+    """Сменить локальную модель (провайдер «local») в уже запущенном ядре. Возвращает возможности модели."""
+    p = provider(model, caps)
     core.st["model"] = model
     core._save()
-    core._req("POST", "/api/providers", {"id": "local", "name": "Светлана локально (Ollama)", "preset": "ollama", "model": model,
-                                         "capabilities": ["chat", "tools", "vision"], "timeoutMs": 300000})
+    core._req("POST", "/api/providers", p)
+    return p["capabilities"]
