@@ -12,7 +12,8 @@ export const SYSTEM = `Ты — Светлана, личная ИИ-помощн
 4. Код: сначала прочитай нужные файлы, правь точечно (code_edit), после правок запусти тесты/сборку, покажи результат честно.
 5. Устройства: сначала screen_view (на ПК с withTree — список элементов с текстом и рамками), потом одно действие device_act в центр нужного элемента, потом снова screen_view, чтобы убедиться. Так работаешь с любой программой: 1С, браузер, Render, Excel. Пароли и платёжные данные не вводи без прямой просьбы; проведение документов и оплаты — только после подтверждения.
 6. Налоги и законы — только по knowledge_search, всегда называй статью/источник; если в базе нет — честно скажи и предложи проверить на nalog.gov.ru.
-7. Деньги, публикации, отправка сообщений людям, команды и управление устройством — только с подтверждением пользователя (его запрашивает система, ты просто вызываешь инструмент).`;
+7. Деньги, публикации, отправка сообщений людям, команды и управление устройством — только с подтверждением пользователя (его запрашивает система, ты просто вызываешь инструмент).
+8. Новое приложение: сначала code_env (ОС, папка проектов, что установлено); каждый проект — в своей папке; напиши файлы (большие — частями: code_write, затем code_append), установи зависимости и проверь сборку или тесты (code_run, каждую команду отдельно, без && и |), запусти просмотр (code_serve) и дай адрес. Ошибка — прочитай вывод, исправь и повтори; не сдавайся после первой неудачи, но и не гоняй одно и то же больше трёх раз.`;
 
 /** Режим Пико: тот же мозг для детей в «Я-Зарядке». Свои правила и только детские инструменты. */
 export const PICO = `Ты — Пико, весёлый тренер и репетитор из приложения «Я-Зарядка». Тебя слышит ребёнок 4–16 лет. Говори на «ты», просто, коротко (1–3 предложения), тепло и с юмором; хвали за старание и ход мысли, а не за «правильность».
@@ -25,6 +26,8 @@ export const PICO = `Ты — Пико, весёлый тренер и репе�
 const MODE_TOOLS = { pico: new Set(["workout_plan", "workout_analyze", "exercise_templates", "exercise_evaluate", "math_check"]) };
 /** Инструменты, которые видит модель в этом режиме (у Пико нет доступа к деньгам, устройствам и коду). */
 export const toolFilter = (mode) => (MODE_TOOLS[mode] ? (t) => MODE_TOOLS[mode].has(t.name) : () => true);
+/** Свои файлы проекта и вывод своих команд — не «внешние данные» для режима разработки (но по-прежнему данные, не инструкции). */
+const WORKSPACE_DOMAINS = new Set(["code", "code_run"]);
 
 const WD = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
 /** Системный промпт + текущая дата (нужна для «завтра в 10», отчётов «за прошлый месяц»). Тот же формат используется в обучении. */
@@ -34,18 +37,19 @@ export function systemFor(now = new Date(), tz = process.env.SVETLANA_TZ || "Eur
   return `${mode === "pico" ? PICO : SYSTEM}\nСейчас: ${d} ${p.hour}:${p.minute}, ${wd} (${tz}).`;
 }
 
+const MAX_TOKENS = Math.min(16000, Math.max(1000, Number(process.env.SVETLANA_MAX_TOKENS) || 3000)); // локально 8000: крупные файлы в одном tool-call
 const CLAIM = /(?<!\p{L})(готово|сделала|выполнила|отправила|опубликовала|создала|записала|удалила|оплатила|перевела|запустила)(?!\p{L})/iu;
 
 export class Agent {
   constructor({ providers, registry, store, confirmations, maxSteps = 12, log = () => {} }) {
     Object.assign(this, { providers, registry, store, conf: confirmations, maxSteps, log });
     this.locks = new Map();
-    this.grants = new Map(); // domain → expiresAt (разрешение на N минут; code_run и платежи не выдаются)
+    this.grants = new Map(); // domain → expiresAt (разрешение на N минут; code_run и платежи не выдаются; dev — «режим разработки»)
   }
   grantSet() { const now = Date.now(); return { has: (d) => (this.grants.get(d) || 0) > now }; }
   grant(domain, minutes) {
-    if (!["device", "code", "crm", "accounting", "aiko", "selfemployed", "media"].includes(domain)) throw new Error("для этого раздела разрешение на время не выдаётся");
-    this.grants.set(domain, Date.now() + Math.min(120, Math.max(1, minutes)) * 60_000);
+    if (!["device", "code", "crm", "accounting", "aiko", "selfemployed", "media", "dev"].includes(domain)) throw new Error("для этого раздела разрешение на время не выдаётся");
+    this.grants.set(domain, Date.now() + Math.min(domain === "dev" ? 60 : 120, Math.max(1, minutes)) * 60_000);
   }
   conv(id) {
     let c = id && this.store.get("conversations", id);
@@ -54,7 +58,7 @@ export class Agent {
   }
   save(c) { // картинки не храним — только отметку
     const slim = c.messages.map((m) => Array.isArray(m.content) ? { ...m, content: m.content.map((p) => p.type === "image_url" ? { type: "text", text: "[изображение было показано]" } : p) } : m);
-    this.store.update("conversations", c.id, { messages: trimHistory(slim), pending: c.pending, title: c.title, tainted: Boolean(c.tainted), pendingImages: c.pendingImages || [], mode: c.mode || "pavel" });
+    this.store.update("conversations", c.id, { messages: trimHistory(slim), pending: c.pending, title: c.title, tainted: Boolean(c.tainted), taintedExt: Boolean(c.taintedExt), pendingImages: c.pendingImages || [], mode: c.mode || "pavel" });
   }
 
   /** Один разговор — один ход за раз (две вкладки не перемешают шаги и подтверждения). */
@@ -81,15 +85,15 @@ export class Agent {
     if (!c.title) c.title = String(text).slice(0, 60);
     const content = images.length ? [...images.slice(0, 4).map((url) => ({ type: "image_url", image_url: { url } })), { type: "text", text }] : text;
     c.messages.push({ role: "user", content });
-    c.tainted = false; // новое сообщение владельца — новый ход
-    return this.loop(c, { steps: [], artifacts: [], tainted: false });
+    c.tainted = false; c.taintedExt = false; // новое сообщение владельца — новый ход
+    return this.loop(c, { steps: [], artifacts: [], tainted: false, taintedExt: images.length > 0 });
   }
 
   async _confirm(id, { decisions = [], grant }) {
     const c = this.conv(id);
     if (!c.pending?.length) return { conversationId: c.id, answer: "Нечего подтверждать — действие уже выполнено или отменено.", steps: [], pending: [], artifacts: [] };
     if (grant) this.grant(grant.domain, grant.minutes);
-    const turn = { steps: [], artifacts: [], tainted: Boolean(c.tainted) }; const pend = c.pending; c.pending = [];
+    const turn = { steps: [], artifacts: [], tainted: Boolean(c.tainted), taintedExt: Boolean(c.taintedExt) }; const pend = c.pending; c.pending = [];
     let broken = false; const images = [];
     for (const p of pend) {
       const d = decisions.find((x) => x.callId === p.callId);
@@ -120,7 +124,7 @@ export class Agent {
     const t0 = Date.now(); const r = await this.registry.run(tool, args, ctx);
     turn.steps.push({ tool: name, args: redactArgs(args), ok: r.ok, summary: r.summary || r.error, ms: Date.now() - t0 });
     if (r.artifacts) turn.artifacts.push(...r.artifacts);
-    if (tool.taints || r.untrusted) turn.tainted = true;
+    if (tool.taints || r.untrusted) { turn.tainted = true; if (!WORKSPACE_DOMAINS.has(tool.domain) || r.foreign) turn.taintedExt = true; }
     this.log({ type: "tool", tool: name, ok: r.ok, ms: Date.now() - t0 });
     return r;
   }
@@ -128,12 +132,13 @@ export class Agent {
   async loop(c, turn) {
     const mode = c.mode || "pavel", allow = toolFilter(mode); const tools = this.registry.forModel(allow);
     for (let step = 0; step < this.maxSteps; step++) {
-      const res = await this.providers.chat({ messages: [{ role: "system", content: systemFor(new Date(), undefined, mode) }, ...trimHistory(c.messages, 60)], tools, temperature: 0.3, maxTokens: 3000 });
+      const res = await this.providers.chat({ messages: [{ role: "system", content: systemFor(new Date(), undefined, mode) }, ...trimHistory(c.messages, 60)], tools, temperature: 0.3, maxTokens: MAX_TOKENS });
       const calls = (res.toolCalls || []).slice(0, 8);
       if (!calls.length) {
         let answer = res.content || "…";
         const didWrite = turn.steps.some((s) => s.ok && this.registry.get(s.tool)?.risk !== "read");
         if (CLAIM.test(answer) && !didWrite) answer += "\n\n(Проверка: в этом ходе ничего не изменено — проверьте результат выше.)";
+        c.tainted = turn.tainted; c.taintedExt = turn.taintedExt;
         c.messages.push({ role: "assistant", content: answer }); this.save(c);
         return { conversationId: c.id, answer, steps: turn.steps, pending: [], artifacts: turn.artifacts, provider: res.provider };
       }
@@ -147,7 +152,7 @@ export class Agent {
         if (!k.arguments) { answer({ ok: false, error: "аргументы не JSON-объект" }); continue; }
         const errs = validate(tool.parameters, k.arguments);
         if (errs.length) { answer({ ok: false, error: "неверные аргументы: " + errs.slice(0, 5).join("; ") }); continue; }
-        const need = this.registry.needsConfirm(tool, k.arguments, { grants: this.grantSet(), tainted: turn.tainted });
+        const need = this.registry.needsConfirm(tool, k.arguments, { grants: this.grantSet(), tainted: turn.tainted, externalTaint: turn.taintedExt });
         if (need || stop) { // после первого «ждёт подтверждения» всё следующее тоже ждёт — порядок действий сохраняется
           c.pending.push({ callId, tool: k.name, args: k.arguments, token: need || tool.risk !== "read" ? this.conf.issue(k.name, k.arguments) : null, risk: tool.risk });
           stop = true; continue;
@@ -159,7 +164,7 @@ export class Agent {
       if (!stop) for (const [t, im] of batchImages) this.pushImage(c, t, im);
       if (stop) {
         c.pendingImages = batchImages.slice(-2); // картинки покажем модели после ВСЕХ результатов этой пачки (после подтверждения)
-        c.tainted = turn.tainted;
+        c.tainted = turn.tainted; c.taintedExt = turn.taintedExt;
         this.save(c);
         const pending = c.pending.filter((p) => p.token).map((p) => ({ callId: p.callId, tool: p.tool, args: redactArgs(p.args), risk: p.risk, token: p.token, title: describe(p, this.registry) }));
         const said = res.content?.trim();
@@ -181,8 +186,10 @@ function describe(p, reg) {
   const t = reg.get(p.tool); const a = p.args || {}; const q = (v, n = 60) => String(v ?? "").slice(0, n);
   switch (p.tool) {
     case "code_write": return `записать файл ${q(a.path)}`;
+    case "code_append": return `дописать в файл ${q(a.path)}`;
     case "code_edit": return `изменить файл ${q(a.path)}`;
-    case "code_run": return `запустить команду: ${q(a.command)} ${Array.isArray(a.args) ? a.args.map((x) => q(x, 80)).join(" ") : ""}`;
+    case "code_run": return `запустить команду: ${q(a.command)} ${Array.isArray(a.args) ? a.args.map((x) => q(x, 80)).join(" ") : ""}${a.cwd ? ` (в папке ${q(a.cwd)})` : ""}`;
+    case "code_serve": return `запустить в фоне: ${q(a.command)} ${Array.isArray(a.args) ? a.args.map((x) => q(x, 80)).join(" ") : ""}${a.cwd ? ` (в папке ${q(a.cwd)})` : ""}`;
     case "device_act": return `на устройстве: ${q(a.action)}${a.text ? ` «${q(a.text, 40)}»` : ""}${a.app ? ` ${q(a.app)}` : ""}${a.x !== undefined ? ` (${a.x}, ${a.y})` : ""}`;
     case "image_generate": return "сгенерировать изображение (платно у провайдера)";
     case "video_generate": return "сгенерировать видео (платно у провайдера)";
