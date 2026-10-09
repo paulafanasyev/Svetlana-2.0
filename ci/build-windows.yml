@@ -38,10 +38,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: |
+          npm ci
+          npm install --no-save @rollup/rollup-win32-x64-msvc
 
       - name: Build frontend
-        run: npx vite build
+        run: npm run build
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0.0" --locked
