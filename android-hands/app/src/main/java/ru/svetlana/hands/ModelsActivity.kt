@@ -44,6 +44,7 @@ class ModelsActivity : Activity() {
         status = Ui.text(this, "", 15f); root.addView(status, Ui.lp())
         if (!dev.offline) root.addView(Ui.text(this, if (!dev.serverBundled && dev.arm64) "Это 32-битная версия приложения. Для модели на телефоне установите версию arm64-v8a."
             else "На этом телефоне модель без интернета не запустится (нужен 64-битный процессор и Android 9+). Светлана будет работать через облако: добавьте ключ во вкладке «ИИ-провайдеры» в чате (GigaChat, YandexGPT, DeepSeek и др.).", 14f, 0xFFC62828.toInt()), Ui.lp())
+        if (dev.offline && Models.recommended(dev) == null) root.addView(Ui.text(this, "Памяти у телефона мало для модели без интернета — советую облако со своим ключом (вкладка «ИИ-провайдеры» в чате). Лёгкую модель попробовать можно, но она может работать медленно и закрываться.", 14f, 0xFFC62828.toInt()), Ui.lp())
         root.addView(Ui.text(this, "Модели на телефоне работают без интернета, но медленнее облака. Скачивать лучше по Wi-Fi.", 13f, Ui.SOFT), Ui.lp())
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }; root.addView(list, Ui.lp())
         root.addView(Ui.button(this, "Выключить модель на телефоне") { CoreService.start(this, CoreService.ACTION_LLM_STOP); toast("Выключаю…") }, Ui.lp())

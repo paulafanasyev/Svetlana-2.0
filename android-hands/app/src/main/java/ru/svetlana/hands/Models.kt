@@ -66,8 +66,8 @@ object Models {
     fun delete(ctx: Context, m: Model) = parts(ctx, m).forEach { (f, _, _) -> f.delete(); mark(f).delete() }
     /** Сколько памяти нужно модели вместе с контекстом и запасом (ГБ). */
     fun needGb(m: Model) = m.totalGb + 0.7
-    /** Совет: самая сильная модель своего уровня, которая с запасом помещается в ОЗУ (не больше ~60% всей памяти). */
-    fun recommended(d: Device): Model = catalog.filter { !it.vision && it.tier <= d.tier && needGb(it) <= d.ramGb * 0.6 }.maxByOrNull { it.tier } ?: catalog.first()
+    /** Совет: самая сильная модель своего уровня, которая с запасом помещается в ОЗУ (не больше ~60% всей памяти). null — безопасной нет, лучше облако. */
+    fun recommended(d: Device): Model? = catalog.filter { !it.vision && it.tier <= d.tier && needGb(it) <= d.ramGb * 0.6 }.maxByOrNull { it.tier }
     /** Сколько потоков и контекста дать модели на этом телефоне. */
     fun threads(d: Device) = minOf(4, maxOf(2, d.cores / 2))
     fun context(d: Device, m: Model) = when { d.ramGb >= 7.5 && m.tier >= 1 -> 8192; d.ramGb < 3.5 -> 2048; else -> 4096 }
