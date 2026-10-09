@@ -16,6 +16,7 @@ import tkinter as tk
 import webbrowser
 from tkinter import messagebox, ttk
 
+import models
 import voice
 from version import VERSION
 
@@ -81,10 +82,12 @@ class App:
         self.gen = 0  # номер подключения: устаревший фоновый запуск ядра не перехватывает новое подключение
         self.conn_lock = threading.Lock()  # connect() и запуск агента из фонового потока не пересекаются
         self.tray = None
+        self.ollama_names = None  # скачанные модели (None — Ollama не отвечает)
+        self.cancel_dl = None     # threading.Event идущего скачивания
         self.root = tk.Tk()
         self.root.title(f"{APP} {VERSION}")
-        self.root.geometry("580x680")
-        self.root.minsize(500, 580)
+        self.root.geometry("600x760")
+        self.root.minsize(520, 660)
         try:
             self.root.iconbitmap(os.path.join(voice.app_dir(), "svetlana.ico"))
         except Exception:
@@ -92,6 +95,7 @@ class App:
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
         self.build()
         self.root.after(100, self.pump)
+        self.refresh_models()
         self.start_tray()
         if self.cfg["mode"] == "local" or (self.cfg["url"] and self.cfg["token"]):
             self.connect()
@@ -117,10 +121,24 @@ class App:
         ttk.Radiobutton(mbox, text="На этом компьютере (всё локально, без облака)", value="local", variable=self.mode, command=self.on_mode).pack(anchor="w", padx=8, pady=(6, 0))
         lm = ttk.Frame(mbox)
         lm.pack(fill="x", padx=28, pady=2)
-        ttk.Label(lm, text="Модель Ollama:").pack(side="left")
-        self.model = tk.StringVar(value=self.cfg["local_model"])
-        self.model_entry = ttk.Entry(lm, textvariable=self.model, width=24)
-        self.model_entry.pack(side="left", padx=4)
+        ttk.Label(lm, text="Модель:").pack(side="left")
+        tag = self.cfg["local_model"]
+        self.model = tk.StringVar(value=models.label(models.BY_TAG[tag]) if tag in models.BY_TAG else tag)
+        self.model_entry = ttk.Combobox(lm, textvariable=self.model, values=[models.label(m) for m in models.CATALOG], width=30)
+        self.model_entry.pack(side="left", padx=4, fill="x", expand=True)
+        self.model_entry.bind("<<ComboboxSelected>>", lambda _e: self.update_model_info())
+        self.model_entry.bind("<KeyRelease>", lambda _e: self.update_model_info())
+        mb = ttk.Frame(mbox)
+        mb.pack(fill="x", padx=28, pady=(2, 0))
+        self.dl_btn = ttk.Button(mb, text="⬇ Скачать", command=self.on_download, width=22)
+        self.dl_btn.pack(side="left")
+        ttk.Button(mb, text="↻ Обновить", command=self.refresh_models).pack(side="left", padx=6)
+        info = ttk.Frame(mbox)
+        info.pack(fill="x", padx=28)
+        self.model_info = ttk.Label(info, text="Проверяю Ollama…", foreground="#555", wraplength=520, justify="left")
+        self.model_info.pack(anchor="w")
+        self.dl_bar = ttk.Progressbar(info, maximum=100, mode="determinate")
+        self.dl_bar.pack(fill="x", pady=(2, 0))
         ttk.Radiobutton(mbox, text="Свой сервер (VPS) по адресу и ключу", value="server", variable=self.mode, command=self.on_mode).pack(anchor="w", padx=8, pady=(6, 0))
         self.url = tk.StringVar(value=self.cfg["url"])
         self.token = tk.StringVar(value=self.cfg["token"])
@@ -162,6 +180,7 @@ class App:
     def on_mode(self):
         local = self.mode.get() == "local"
         self.model_entry.configure(state="normal" if local else "disabled")
+        self.dl_btn.configure(state="normal" if local else "disabled")
         for e in (self.url_entry, self.token_entry):
             e.configure(state="disabled" if local else "normal")
 
@@ -187,6 +206,19 @@ class App:
                     self.status.configure(text={"online": "🟢 на связи", "connecting": "🟡 подключаюсь…", "offline": "🔴 нет связи"}.get(v, v))
                     if self.tray:
                         self.tray.title = f"Светлана: {'на связи' if v == 'online' else 'нет связи'}"
+                elif kind == "models":
+                    self.ollama_names = v
+                    self.update_model_info()
+                elif kind == "progress":
+                    pct, text = v
+                    self.dl_bar.configure(value=pct)
+                    self.model_info.configure(text=text)
+                elif kind == "dl_done":
+                    self.cancel_dl = None
+                    self.dl_bar.configure(value=0)
+                    self.refresh_models()
+                    if v:
+                        self.apply_model(v)
                 elif kind == "show":
                     self.show()
                 elif kind == "listen":
@@ -203,7 +235,7 @@ class App:
         url, token = self.url.get().strip(), self.token.get().strip()
         if mode == "server" and (not (url.startswith("ws://") or url.startswith("wss://")) or not token.startswith("dev_")):
             return messagebox.showerror(APP, "Нужны адрес (wss://…/ws/device) и ключ устройства (dev_…) из вкладки «Устройства».")
-        model = self.model.get().strip() or DEFAULTS["local_model"]
+        model = models.tag_from_label(self.model.get()) or DEFAULTS["local_model"]
         model_changed = model != self.cfg.get("local_model")
         self.cfg.update(mode=mode, local_model=model, url=url, token=token, voice=self.v_voice.get(), wake=self.v_wake.get(),
                         view_only=self.v_view.get(), autostart=self.v_auto.get())
@@ -212,14 +244,103 @@ class App:
             set_autostart(self.cfg["autostart"])
         except Exception as e:
             self.log(f"Автозапуск не настроился: {e}")
-        if mode == "local" and model_changed and self.core and self.core.healthy():
+        if mode == "local" and model_changed:
+            self.apply_model(model, save=False)
+        self.connect()
+
+    # ---------- офлайн-модели ----------
+    def selected_tag(self):
+        return models.tag_from_label(self.model.get())
+
+    def refresh_models(self):
+        threading.Thread(target=lambda: self.ui.put(("models", models.installed())), daemon=True, name="ollama-tags").start()
+
+    def update_model_info(self):
+        if self.cancel_dl:
+            return  # идёт скачивание: строку состояния обновляет прогресс
+        tag, names = self.selected_tag(), self.ollama_names
+        m = models.BY_TAG.get(tag)
+        if names is None:
+            have = models.ollama_exe()
+            self.dl_btn.configure(text="▶ Запустить Ollama" if have else "⬇ Установить Ollama")
+            self.model_info.configure(text="Ollama установлена, но не запущена." if have else
+                                      "Ollama не установлена: она скачивает и запускает модели на этом ПК (бесплатно).")
+            return
+        what = ("видит экран и управляет компьютером" if m["screen"] else "без зрения: только разговор и быстрые команды") if m else "своя модель: возможности проверю после скачивания"
+        if models.has_model(tag, names):
+            self.dl_btn.configure(text="✓ Скачана")
+            self.model_info.configure(text=f"✓ {tag} скачана · {what}")
+        else:
+            self.dl_btn.configure(text="⬇ Скачать")
+            need = f" · {m['size']}, нужно {m['ram']}" if m else ""
+            self.model_info.configure(text=f"{tag} не скачана{need} · {what}")
+
+    def on_download(self):
+        if self.cancel_dl:  # повторное нажатие — отмена
+            self.cancel_dl.set()
+            return
+        tag = self.selected_tag()
+        if self.ollama_names is None:
+            if models.ollama_exe():
+                models.start_ollama()
+                self.log("Запускаю Ollama…")
+                self.root.after(3000, self.refresh_models)
+                return
+            return self.start_download(self.download_ollama_worker, "Скачиваю установщик Ollama…")
+        if not tag:
+            return self.log("Выберите модель из списка или впишите её тег из ollama.com/library.")
+        if models.has_model(tag, self.ollama_names):
+            return self.apply_model(tag)
+        self.start_download(lambda c: self.pull_worker(tag, c), f"Скачиваю {tag}…")
+
+    def start_download(self, worker, text):
+        self.cancel_dl = threading.Event()
+        self.dl_btn.configure(text="✕ Отмена")
+        self.ui.put(("progress", (0, text)))
+        threading.Thread(target=worker, args=(self.cancel_dl,), daemon=True, name="download").start()
+
+    def pull_worker(self, tag, cancel):
+        try:
+            models.pull(tag, lambda pct, st: self.ui.put(("progress", (pct, f"Скачиваю {tag}: {pct}% ({st})"))), cancel=cancel)
+            self.log(f"Модель {tag} скачана.")
+            self.ui.put(("dl_done", tag))
+        except Exception as e:
+            self.log(f"Модель не скачалась: {e}")
+            self.ui.put(("dl_done", None))
+
+    def download_ollama_worker(self, cancel):
+        try:
+            path = models.download_ollama(lambda pct: self.ui.put(("progress", (pct, f"Скачиваю установщик Ollama: {pct}%"))), cancel=cancel)
+            self.log("Открываю установщик Ollama: пройдите его, потом нажмите ↻ и скачайте модель.")
+            if sys.platform == "win32":
+                os.startfile(path)
+        except Exception as e:
+            self.log(f"Ollama не скачалась: {e}. Можно поставить вручную с ollama.com")
+        self.ui.put(("dl_done", None))
+
+    def apply_model(self, tag, save=True):
+        """Сделать модель мозгом Светланы (если выбрана в списке и ядро запущено)."""
+        if save:
+            if tag != self.selected_tag():
+                return
+            self.cfg["local_model"] = tag
+            save_cfg(self.cfg)
+        core = self.core
+        if self.cfg["mode"] != "local" or not core:
+            return
+        def work():
             try:
                 import local_core
-                local_core.set_local_model(self.core, model)
-                self.log(f"Локальная модель: {model}")
+                caps = local_core.set_local_model(core, tag)
+                if "tools" not in caps:
+                    self.log(f"⚠ {tag} не умеет вызывать инструменты: Светлана с ней работать не сможет, выберите другую.")
+                elif "vision" not in caps:
+                    self.log(f"Мозг: {tag}. ⚠ Экран она не видит: разговор и команды есть, управления компьютером нет.")
+                else:
+                    self.log(f"Мозг: {tag} (видит экран и управляет компьютером).")
             except Exception as e:
                 self.log(f"Не удалось сменить модель: {e}")
-        self.connect()
+        threading.Thread(target=work, daemon=True, name="apply-model").start()
 
     # ---------- работа ----------
     def connect(self):
@@ -257,11 +378,23 @@ class App:
         if self._stale(gen, core):  # пока ядро запускалось, пользователь переключился
             return
         running, has, names = local_core.ollama_status(self.cfg["local_model"])
+        if not running and models.start_ollama():
+            self.log("Запускаю Ollama…")
+            for _ in range(20):
+                time.sleep(0.5)
+                running, has, names = local_core.ollama_status(self.cfg["local_model"])
+                if running:
+                    break
+        self.ui.put(("models", names if running else None))
+        try:  # после запуска Ollama: возможности модели (видит ли экран) спрашиваем у неё самой
+            local_core.sync_model(core, self.cfg["local_model"], refresh=running)
+        except Exception as e:
+            self.log(f"Не удалось выставить модель {self.cfg['local_model']}: {e}")
         if not running:
-            self.log("Ollama не запущена. Поставьте её с ollama.com и откройте — без неё локальный мозг молчит "
+            self.log("Ollama не установлена: нажмите «⬇ Установить Ollama» в окне. Без неё локальный мозг молчит "
                      "(быстрые голосовые команды работают и так). Или подключите облачный ИИ в чате → «ИИ-провайдеры».")
         elif not has:
-            self.log(f"Модель {self.cfg['local_model']} не скачана. Выполните в терминале: ollama pull {self.cfg['local_model']}"
+            self.log(f"Модель {self.cfg['local_model']} не скачана: нажмите «⬇ Скачать» в окне."
                      + (f"  (сейчас есть: {', '.join(names[:5])})" if names else ""))
         else:
             self.log(f"Локальный мозг готов: {self.cfg['local_model']} через Ollama.")

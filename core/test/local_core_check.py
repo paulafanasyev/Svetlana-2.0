@@ -47,6 +47,9 @@ try:
     assert ws_status(lc.port, t1) == 101, "руки и глаза подключаются по выданному ключу"
     assert ws_status(lc.port, "dev_xxx") == 401, "чужой ключ не пускает"
     assert ws_status(lc.port, None) == 401, "без ключа не пускает"
+    # модель сменили в окне, пока ядро не работало: при старте провайдер «local» подтягивается
+    local_core.sync_model(lc, "qwen3-vl:4b")
+    assert next(p for p in lc._req("GET", "/api/providers") if p["id"] == "local")["model"] == "qwen3-vl:4b"
     # второй экземпляр видит уже работающее ядро и не запускает дубль
     lc2 = local_core.LocalCore(port=port, log=logs.append)
     assert lc2.admin_token == lc.admin_token and lc2.start() and lc2.proc is None
