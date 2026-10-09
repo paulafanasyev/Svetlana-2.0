@@ -44,9 +44,9 @@ Step "copy core"
 # 3) Svetlana core (server + web app), without tests, training data and this desktop agent
 if (Test-Path "build\core") { Remove-Item -Recurse -Force "build\core" }
 New-Item -ItemType Directory -Force "build\core" | Out-Null
-foreach ($item in @("server.mjs", "package.json", "lib", "web", "knowledge", "connectors", "scripts")) {
-  if (Test-Path "..\$item") { Copy-Item "..\$item" "build\core\$item" -Recurse }
-}
+$skip = @("desktop-agent", "test", "training", "Dockerfile", "docker-compose.yml", ".dockerignore", ".env.example", ".gitignore")
+Get-ChildItem ".." -Force | Where-Object { $skip -notcontains $_.Name } | ForEach-Object { Copy-Item $_.FullName "build\core\$($_.Name)" -Recurse }
+if (Test-Path "build\core\server.mjs") { Get-ChildItem "build\core" | ForEach-Object { Write-Host "  core: $($_.Name)" } }
 Push-Location "build\core"
 & "..\node\node.exe" "scripts\restore-assets.mjs"
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "restore-assets failed" }
@@ -86,6 +86,7 @@ $smoke = & python ..\test\local_core_check.py 2>&1 | ForEach-Object { "$_" }
 $smokeCode = $LASTEXITCODE
 $ErrorActionPreference = "Stop"
 $smoke | ForEach-Object { Write-Host $_ }
+if ($smokeCode -ne 0) { Get-ChildItem -Recurse -Filter core.log $env:APPDATA, $env:TEMP, "build" -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { $tail = (Get-Content $_.FullName -Tail 15) -join " | "; Write-Host "::error title=core.log::$tail" } }
 if ($smokeCode -ne 0) { throw ("local core smoke test failed: " + (($smoke | Select-Object -Last 12) -join " | ")) }
 Remove-Item Env:SVETLANA_NODE, Env:SVETLANA_CORE_DIR, Env:SVETLANA_AGENT_DIR
 
