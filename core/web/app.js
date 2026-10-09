@@ -11,7 +11,8 @@ const api = async (path, opts = {}) => {
   return data;
 };
 const S = { conv: localStorage.getItem("sv_conv") || null, images: [], talk: false, speaking: false };
-const GRANTABLE = { device_act: "device", code_write: "code", code_edit: "code", image_generate: "media", video_generate: "media", acc_income_add: "accounting", acc_income_cancel: "accounting", aiko_call: "aiko", selfemployed_call: "selfemployed" };
+// code_* → «режим разработки»: правки и обычные команды в папке проектов без кликов на время (опасные команды всё равно спросит)
+const GRANTABLE = { device_act: "device", code_write: "dev", code_edit: "dev", code_append: "dev", code_run: "dev", code_serve: "dev", image_generate: "media", video_generate: "media", acc_income_add: "accounting", acc_income_cancel: "accounting", aiko_call: "aiko", selfemployed_call: "selfemployed" };
 
 function showLogin() { $("#app").hidden = true; $("#login").hidden = false; $("#pwd").focus(); }
 function showApp() { $("#login").hidden = true; $("#app").hidden = false; }
@@ -31,22 +32,24 @@ $("#tabs").addEventListener("click", (e) => {
 
 // ---------- чат ----------
 function bubble(role, html) { const d = document.createElement("div"); d.className = "msg " + role; d.innerHTML = html; $("#log").appendChild(d); d.scrollIntoView({ block: "end", behavior: "smooth" }); return d; }
-const fmt = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\n/g, "<br>");
+// адрес запущенного проекта (code_serve) — сразу ссылка «открыть»; только этот компьютер
+const linkify = (h) => h.replace(/\bhttp:\/\/(?:127\.0\.0\.1|localhost):\d{2,5}(?:\/[\w\-./?=&;%#]*)?/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
+const fmt = (t) => linkify(esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\n/g, "<br>"));
 function setStatus(t, mood) { $("#status").textContent = t; $("#ava").dataset.mood = mood || ""; }
 
 function render(res) {
   let html = `<div class="txt">${fmt(res.answer)}</div>`;
-  if (res.steps?.length) html += `<details class="steps"><summary>Действия: ${res.steps.length}</summary>${res.steps.map((s) => `<div class="${s.ok ? "ok" : "bad"}">${s.ok ? "✔" : "✘"} <code>${esc(s.tool)}</code> — ${esc(s.summary || "")}</div>`).join("")}</details>`;
+  if (res.steps?.length) html += `<details class="steps"><summary>Действия: ${res.steps.length}</summary>${res.steps.map((s) => `<div class="${s.ok ? "ok" : "bad"}">${s.ok ? "✔" : "✘"} <code>${esc(s.tool)}</code> — ${linkify(esc(s.summary || ""))}</div>`).join("")}</details>`;
   if (res.artifacts?.length) html += `<div class="files">${res.artifacts.map((a) => `<a href="${esc(a.url)}" target="_blank" rel="noopener">📄 ${esc(a.name)}</a>`).join("")}</div>`;
   const d = bubble("bot", html);
   if (res.pending?.length) {
     const box = document.createElement("div"); box.className = "confirm";
     box.innerHTML = `<b>Нужно подтверждение:</b>${res.pending.map((p) => `<div>• ${esc(p.title)} <span class="risk ${esc(p.risk)}">${esc({ write: "изменение", external: "внешнее/платное", dangerous: "опасное" }[p.risk] || p.risk)}</span></div>`).join("")}
-      <div class="row"><button class="btn primary" data-a="yes">Подтвердить</button><button class="btn" data-a="no">Отклонить</button>${grantDomain(res.pending) ? `<button class="btn" data-a="grant">Разрешить на 15 минут</button>` : ""}</div>`;
+      <div class="row"><button class="btn primary" data-a="yes">Подтвердить</button><button class="btn" data-a="no">Отклонить</button>${grantDomain(res.pending) ? `<button class="btn" data-a="grant"${grantDomain(res.pending) === "dev" ? ' title="30 минут Светлана сама пишет файлы и запускает обычные команды в папке проектов. Публикация, git push, пакеты из интернета, код из строки и всё после чтения сайтов — всё равно спросит."' : ""}>${grantDomain(res.pending) === "dev" ? "Режим разработки на 30 минут" : "Разрешить на 15 минут"}</button>` : ""}</div>`;
     box.addEventListener("click", async (e) => {
       const a = e.target.dataset?.a; if (!a) return; box.querySelectorAll("button").forEach((b) => (b.disabled = true));
       const decisions = res.pending.map((p) => ({ callId: p.callId, token: p.token, approve: a !== "no" }));
-      await turn(() => api("/api/confirm", { method: "POST", body: JSON.stringify({ conversationId: res.conversationId, decisions, grant: a === "grant" ? { domain: grantDomain(res.pending), minutes: 15 } : undefined }) }), a === "no" ? "Отклонено" : "Подтверждаю");
+      await turn(() => api("/api/confirm", { method: "POST", body: JSON.stringify({ conversationId: res.conversationId, decisions, grant: a === "grant" ? { domain: grantDomain(res.pending), minutes: grantDomain(res.pending) === "dev" ? 30 : 15 } : undefined }) }), a === "no" ? "Отклонено" : "Подтверждаю");
     });
     d.appendChild(box);
   }

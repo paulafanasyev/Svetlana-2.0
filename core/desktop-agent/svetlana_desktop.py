@@ -177,7 +177,8 @@ class App:
         ttk.Button(btns, text="Сохранить и подключить", command=self.save_connect).pack(side="left")
         ttk.Button(btns, text="💬 Открыть чат", command=self.open_chat).pack(side="left", padx=6)
         ttk.Button(btns, text="🎤 Слушать", command=self.listen_now).pack(side="left")
-        ttk.Button(btns, text="Команды", command=self.show_help).pack(side="left", padx=6)
+        ttk.Button(btns, text="📁 Проекты", command=self.open_projects).pack(side="left", padx=6)
+        ttk.Button(btns, text="❓", width=3, command=self.show_help).pack(side="left")  # список команд
 
         ttk.Label(f, text="Журнал:").pack(anchor="w", padx=12)
         self.text = tk.Text(f, height=12, wrap="word", state="disabled", font=("Consolas", 9))
@@ -303,7 +304,7 @@ class App:
             self.model_info.configure(text="Ollama установлена, но не запущена." if have else
                                       "Ollama не установлена: она скачивает и запускает модели на этом ПК (бесплатно).")
             return
-        what = ("видит экран и управляет компьютером" if m["screen"] else "без зрения: только разговор и быстрые команды") if m else "своя модель: возможности проверю после скачивания"
+        what = ("видит экран и управляет компьютером" if m["screen"] else "пишет и запускает код, экран не видит" if m.get("code") else "без зрения: только разговор и быстрые команды") if m else "своя модель: возможности проверю после скачивания"
         if models.has_model(tag, names):
             self.dl_btn.configure(text="✓ Скачана")
             self.model_info.configure(text=f"✓ {tag} скачана · {what}")
@@ -488,6 +489,19 @@ class App:
             u = self.cfg["url"].replace("wss://", "https://").replace("ws://", "http://").split("/ws/")[0]
             webbrowser.open(u) if u.startswith("http") else self.log("Сначала укажите адрес сервера.")
 
+    def open_projects(self):
+        """Папка, где Светлана создаёт и запускает приложения."""
+        if self.cfg["mode"] != "local":
+            return self.log("Проекты лежат на сервере Светланы: смотрите их в чате.")
+        import local_core
+        path = self.core.workspace if self.core else local_core.default_workspace()
+        os.makedirs(path, exist_ok=True)
+        self.log(f"Папка проектов: {path}")
+        if sys.platform == "win32":
+            os.startfile(path)
+        else:
+            webbrowser.open("file://" + path)
+
     def listen_now(self):
         if self.loop:
             self.loop.wake_now()
@@ -498,7 +512,7 @@ class App:
         messagebox.showinfo(APP, "Скажите «Светлана» и команду.\n\nБез интернета, мгновенно:\n• который час / какое сегодня число\n• открой калькулятор, Excel, Telegram, ютуб, почту\n"
                                  "• громче / тише / без звука (громче на 20)\n• пауза, следующий трек\n• таймер на 5 минут\n• сделай скриншот\n• заряд батареи\n"
                                  "• сверни все окна, закрой окно, заблокируй компьютер\n• загугли …\n\nВсё остальное думает мозг Светланы:\n«Светлана, открой Блокнот и напиши список дел»\n"
-                                 "«Светлана, открой 1С и найди счёт Иванова»\n\nСлужебные: «стоп», «повтори», «новый разговор».\nРискованное Светлана переспросит: ответьте «да» или «нет».")
+                                 "«Светлана, открой 1С и найди счёт Иванова»\n«Светлана, сделай приложение «список дел» и запусти его» (файлы — в 📁 Проекты)\n\nСлужебные: «стоп», «повтори», «новый разговор».\nРискованное Светлана переспросит: ответьте «да» или «нет».")
 
     def show(self):
         self.root.deiconify()

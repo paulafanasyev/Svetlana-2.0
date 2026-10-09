@@ -22,23 +22,34 @@ if (-not (Test-Path "build\model\am")) {
 }
 
 # 2) Portable Node.js: the Svetlana core runs on this PC (local mode), no system Node needed.
-#    Only node.exe is taken from the zip (the full archive has npm with very long paths).
+#    Only node.exe and npm/npx are taken from the zip (entry by entry: Expand-Archive chokes on the full archive).
 $nodeVer = "v22.12.0"
-if (-not (Test-Path "build\node\node.exe")) {
+if (-not (Test-Path "build\node\node_modules\npm\bin\npm-cli.js")) {
   Step "download node $nodeVer"
   Invoke-WebRequest "https://nodejs.org/dist/$nodeVer/node-$nodeVer-win-x64.zip" -OutFile "build\node.zip"
   New-Item -ItemType Directory -Force "build\node" | Out-Null
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   $zip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path "build\node.zip").Path)
   try {
-    $entry = $zip.Entries | Where-Object { $_.FullName -eq "node-$nodeVer-win-x64/node.exe" } | Select-Object -First 1
-    if (-not $entry) { throw "node.exe not found inside node zip" }
-    [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path (Get-Location) "build\node\node.exe"), $true)
+    # node.exe + npm/npx (Svetlana the developer runs npm install / npx vite without a separate Node.js install)
+    $prefix = "node-$nodeVer-win-x64/"
+    $keep = @("${prefix}node.exe", "${prefix}npm.cmd", "${prefix}npx.cmd")
+    $want = $zip.Entries | Where-Object { ($keep -contains $_.FullName) -or ($_.FullName.StartsWith("${prefix}node_modules/npm/") -and $_.Name) }
+    if (-not ($want | Where-Object { $_.FullName -eq "${prefix}node.exe" })) { throw "node.exe not found inside node zip" }
+    $nodeRoot = Join-Path (Get-Location) "build\node"
+    foreach ($e in $want) {
+      $dest = Join-Path $nodeRoot ($e.FullName.Substring($prefix.Length) -replace "/", "\")
+      New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+      [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $dest, $true)
+    }
+    Write-Host "  node files: $(@($want).Count)"
   } finally { $zip.Dispose() }
   Remove-Item -Force "build\node.zip"
 }
 & "build\node\node.exe" --version
 if ($LASTEXITCODE -ne 0) { throw "bundled node.exe does not run" }
+& "build\node\npm.cmd" --version
+if ($LASTEXITCODE -ne 0) { throw "bundled npm does not run" }
 
 Step "copy core"
 # 3) Svetlana core (server + web app), without tests, training data and this desktop agent
@@ -97,6 +108,16 @@ $smoke | ForEach-Object { Write-Host $_ }
 if ($smokeCode -ne 0) { Get-ChildItem -Recurse -Filter core.log $env:APPDATA, $env:TEMP, "build" -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { $tail = (Get-Content $_.FullName -Tail 15) -join " | "; Write-Host "::error title=core.log::$tail" } }
 if ($smokeCode -ne 0) { throw ("local core smoke test failed: " + (($smoke | Select-Object -Last 12) -join " | ")) }
 Remove-Item Env:SVETLANA_NODE, Env:SVETLANA_CORE_DIR, Env:SVETLANA_AGENT_DIR
+
+# 6b) Developer mode on real Windows: npm.cmd via cmd.exe, python alias, background dev server (bundled node)
+Step "smoke test (developer mode)"
+$ErrorActionPreference = "Continue"
+$env:PATH = (Resolve-Path "build\node").Path + ";" + $env:PATH  # as in the app: bundled node/npm first
+$dev = & "build\node\node.exe" --test ..\test\devmode.test.mjs 2>&1 | ForEach-Object { "$_" }
+$devCode = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+$dev | Select-Object -Last 12 | ForEach-Object { Write-Host $_ }
+if ($devCode -ne 0) { throw ("developer mode smoke test failed: " + (($dev | Where-Object { $_ -match "not ok|Error|error:" } | Select-Object -First 6) -join " | ")) }
 
 Step "inno setup"
 # 7) Installer (Inno Setup needs UTF-8 with BOM for Cyrillic)

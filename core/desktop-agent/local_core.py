@@ -52,6 +52,11 @@ def find_core():
     return None
 
 
+def default_workspace():
+    """Папка проектов, которые Светлана пишет и запускает: Документы\\Svetlana Projects (видна в Проводнике)."""
+    return os.path.join(os.path.expanduser("~"), "Documents", "Svetlana Projects")
+
+
 def _kill_with_parent(proc):
     """Windows: ядро (node.exe) в Job Object «убить при закрытии» — если Светлану закроют, обновят или она упадёт,
     ядро уйдёт вместе с ней и не займёт порт со старым паролем. Возвращает дескриптор (держать открытым!) или None."""
@@ -65,6 +70,7 @@ def _kill_with_parent(proc):
         k32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
         k32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
         k32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+        k32.CloseHandle.argtypes = (wintypes.HANDLE,)
 
         class IO(ctypes.Structure):
             _fields_ = [(n, ctypes.c_ulonglong) for n in ("r", "w", "o", "rb", "wb", "ob")]
@@ -83,9 +89,9 @@ def _kill_with_parent(proc):
             return None
         info = EXT()
         info.Basic.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        if not k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):  # JobObjectExtendedLimitInformation
-            return None
-        if not k32.AssignProcessToJobObject(job, wintypes.HANDLE(int(proc._handle))):
+        if not k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)) or \
+                not k32.AssignProcessToJobObject(job, wintypes.HANDLE(int(proc._handle))):  # 9 = JobObjectExtendedLimitInformation
+            k32.CloseHandle(job)  # не вышло — дескриптор не теряем
             return None
         return job
     except Exception:
@@ -167,6 +173,12 @@ class LocalCore:
         return f"ws://127.0.0.1:{self.port}/ws/device"
 
     @property
+    def workspace(self):
+        w = self.st.get("workspace") or default_workspace()
+        os.makedirs(w, exist_ok=True)
+        return w
+
+    @property
     def admin_token(self):
         return self.st["adminToken"]
 
@@ -211,8 +223,14 @@ class LocalCore:
     def env(self):
         e = dict(os.environ)
         e.update({"HOST": "127.0.0.1", "PORT": str(self.port), "SVETLANA_DATA_DIR": self.data,
-                  "SVETLANA_WORKSPACE": os.path.join(self.data, "workspace"), "SVETLANA_ADMIN_TOKEN": self.admin_token,
-                  "SVETLANA_SECRET": self.st["secret"], "SVETLANA_MAX_STEPS": str(self.st.get("maxSteps", 40))})
+                  "SVETLANA_WORKSPACE": self.workspace, "SVETLANA_ADMIN_TOKEN": self.admin_token,
+                  "SVETLANA_SECRET": self.st["secret"], "SVETLANA_MAX_STEPS": str(self.st.get("maxSteps", 40)),
+                  # свой компьютер: Светлана-разработчица запускает npm/python/git в папке проектов, каждую команду — после подтверждения
+                  "SVETLANA_ALLOW_HOST_EXEC": "1", "SVETLANA_MAX_TOKENS": "8000"})
+        e.pop("SVETLANA_RUNNER_SOCKET", None)
+        node = find_node()
+        if node:  # встроенный node + npm/npx из установщика доступны командам Светланы без отдельной установки Node.js
+            e["PATH"] = os.path.dirname(node) + os.pathsep + e.get("PATH", "")
         return e
 
     def start(self, wait=25):
@@ -223,6 +241,9 @@ class LocalCore:
             self.st["port"] = _free_port()
             self._save()
             self.log(f"[ядро] порт занят другой программой, беру {self.port}")
+        if self._job or self.proc:  # прошлое ядро упало: добиваем его осиротевших потомков, прежде чем запускать новое
+            self._kill_tree(self.proc)
+            self.proc = None
         node, core = find_node(), find_core()
         if not node:
             raise RuntimeError("не найден node.exe (переустановите Светлану)")
@@ -237,6 +258,8 @@ class LocalCore:
                 raise RuntimeError("не удалось подготовить картинки веб-приложения, подробности в core.log")
         self.proc = subprocess.Popen([node, "server.mjs"], cwd=core, env=self.env(), stdout=logf, stderr=logf, creationflags=flags)
         self._job = _kill_with_parent(self.proc)
+        if sys.platform == "win32" and not self._job:
+            self.log("[ядро] ⚠ не удалось привязать ядро к Светлане: если ядро упадёт, запущенные проекты придётся закрыть вручную")
         t0 = time.time()
         while time.time() - t0 < wait:
             if self.proc.poll() is not None:
@@ -261,8 +284,28 @@ class LocalCore:
         self._save()
         return tok
 
+    def _kill_tree(self, p):
+        """Ядро вместе со всеми его потомками (dev-серверы проектов): Job Object, иначе taskkill /T."""
+        job, self._job = self._job, None
+        if sys.platform != "win32":
+            return
+        if job:
+            try:
+                import ctypes
+                k32 = ctypes.WinDLL("kernel32")
+                k32.TerminateJobObject.argtypes = (ctypes.c_void_p, ctypes.c_uint)
+                k32.CloseHandle.argtypes = (ctypes.c_void_p,)
+                k32.TerminateJobObject(job, 1)
+                k32.CloseHandle(job)
+                return
+            except Exception:
+                pass
+        if p and p.poll() is None:  # без Job Object дерево можно погасить, только пока жив сам родитель
+            subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
     def stop(self):
         p, self.proc = self.proc, None
+        self._kill_tree(p)
         if p and p.poll() is None:
             p.terminate()
             try:
