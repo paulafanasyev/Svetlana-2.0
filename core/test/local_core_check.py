@@ -57,6 +57,8 @@ try:
     assert lc2.admin_token == lc.admin_token and lc2.start() and lc2.proc is None
     # ядро слушает только 127.0.0.1
     assert lc.env()["HOST"] == "127.0.0.1" and int(lc.env()["SVETLANA_MAX_STEPS"]) >= 30
+    # Светлана-разработчица: команды в папке проектов (каждая — с подтверждением), папка видна в Документах
+    assert lc.env()["SVETLANA_ALLOW_HOST_EXEC"] == "1" and os.path.isdir(lc.env()["SVETLANA_WORKSPACE"]), lc.env()["SVETLANA_WORKSPACE"]
 finally:
     lc.stop()
 assert not lc.healthy(), "ядро остановлено"
