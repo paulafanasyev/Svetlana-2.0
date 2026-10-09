@@ -53,6 +53,13 @@ if ($LASTEXITCODE -ne 0) { Pop-Location; throw "restore-assets failed" }
 Pop-Location
 if (-not (Test-Path "build\core\server.mjs")) { throw "core was not copied" }
 
+# 3b) Avatar: the same image as in the Svetlana-2.0 app (pinned commit, so the build is reproducible)
+Step "avatar"
+$avatarUrl = "https://raw.githubusercontent.com/paulafanasyev/Svetlana-2.0/31a51149541a6e49679bf904e5fd509f7e1c4dcc/public/images/avatar/svetlana-master.jpg"
+if (-not (Test-Path "build\avatar.jpg")) { Invoke-WebRequest $avatarUrl -OutFile "build\avatar.jpg" }
+python -c "from PIL import Image; im = Image.open(r'build\avatar.jpg'); im.verify(); print('avatar', im.size)"
+if ($LASTEXITCODE -ne 0) { throw "avatar image is broken" }
+
 # 4) Icon
 Step "icon"
 python packaging\make_icon.py build\svetlana.ico
@@ -65,12 +72,13 @@ python -m PyInstaller --noconfirm --clean --windowed --name Svetlana `
   --add-data "build\node;node" `
   --add-data "build\core;core" `
   --add-data "build\svetlana.ico;." `
+  --add-data "build\avatar.jpg;." `
   --collect-all vosk `
   --collect-all uiautomation `
   --hidden-import pystray._win32 `
   --hidden-import pyttsx3.drivers `
   --hidden-import pyttsx3.drivers.sapi5 `
-  --hidden-import agent --hidden-import commands --hidden-import ui_tree --hidden-import local_core --hidden-import models `
+  --hidden-import agent --hidden-import commands --hidden-import ui_tree --hidden-import local_core --hidden-import models --hidden-import avatar `
   svetlana_desktop.py
 if (-not (Test-Path "dist\Svetlana\Svetlana.exe")) { throw "PyInstaller did not build Svetlana.exe" }
 $bundled = Get-ChildItem -Recurse -Filter "server.mjs" "dist\Svetlana" | Select-Object -First 1

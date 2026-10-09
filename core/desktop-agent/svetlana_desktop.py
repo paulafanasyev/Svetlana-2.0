@@ -16,6 +16,7 @@ import tkinter as tk
 import webbrowser
 from tkinter import messagebox, ttk
 
+import avatar
 import models
 import voice
 from version import VERSION
@@ -84,10 +85,11 @@ class App:
         self.tray = None
         self.ollama_names = None  # скачанные модели (None — Ollama не отвечает)
         self.cancel_dl = None     # threading.Event идущего скачивания
+        self.conn_state = "offline"
         self.root = tk.Tk()
         self.root.title(f"{APP} {VERSION}")
-        self.root.geometry("600x760")
-        self.root.minsize(520, 660)
+        self.root.geometry("600x820")
+        self.root.minsize(520, 720)
         try:
             self.root.iconbitmap(os.path.join(voice.app_dir(), "svetlana.ico"))
         except Exception:
@@ -110,10 +112,16 @@ class App:
         f = ttk.Frame(self.root)
         f.pack(fill="both", expand=True)
         head = ttk.Frame(f)
-        head.pack(fill="x", **pad)
-        ttk.Label(head, text="Светлана", font=("Segoe UI", 18, "bold")).pack(side="left")
+        head.pack(fill="x", padx=12, pady=(8, 4))
+        self.avatar = avatar.AvatarWidget(head, size=88)
+        self.avatar.pack(side="left")
+        names = ttk.Frame(head)
+        names.pack(side="left", padx=12)
+        ttk.Label(names, text="Светлана", font=("Segoe UI", 20, "bold")).pack(anchor="w")
+        self.mood = ttk.Label(names, text="нет связи", font=("Segoe UI", 11), foreground="#666")
+        self.mood.pack(anchor="w")
         self.status = ttk.Label(head, text="⚪ не подключена", font=("Segoe UI", 10))
-        self.status.pack(side="right")
+        self.status.pack(side="right", anchor="n")
 
         self.mode = tk.StringVar(value=self.cfg["mode"])
         mbox = ttk.LabelFrame(f, text="Где работает мозг Светланы")
@@ -203,6 +211,7 @@ class App:
                         self.text.delete("1.0", "100.0")
                     self.text.configure(state="disabled")
                 elif kind == "state":
+                    self.conn_state = v if v in ("online", "connecting", "offline") else self.conn_state
                     self.status.configure(text={"online": "🟢 на связи", "connecting": "🟡 подключаюсь…", "offline": "🔴 нет связи"}.get(v, v))
                     if self.tray:
                         self.tray.title = f"Светлана: {'на связи' if v == 'online' else 'нет связи'}"
@@ -228,7 +237,28 @@ class App:
                     return
         except queue.Empty:
             pass
-        self.root.after(150, self.pump)
+        self.update_avatar()
+        self.root.after(100, self.pump)
+
+    def avatar_state(self):
+        """Что сейчас делает Светлана — для кольца аватара."""
+        if self.conn_state != "online":
+            return self.conn_state
+        sp, lp = self.speaker, self.loop
+        if sp is not None and getattr(sp, "speaking", None) is not None and sp.speaking.is_set():
+            return "speaking"
+        if lp is not None and getattr(lp, "busy", False):
+            return "thinking"
+        if lp is not None:
+            now = lp.clock()
+            if getattr(lp, "awake_until", 0) > now or getattr(lp, "confirm_until", 0) > now:
+                return "listening"
+        return "idle"
+
+    def update_avatar(self):
+        st = self.avatar_state()
+        self.avatar.set_state(st)
+        self.mood.configure(text=avatar.STATES[st]["text"])
 
     def save_connect(self):
         mode = self.mode.get()
@@ -489,7 +519,10 @@ class App:
             import pystray
             from PIL import Image
             ico = os.path.join(voice.app_dir(), "svetlana.ico")
-            img = Image.open(ico) if os.path.exists(ico) else Image.new("RGB", (64, 64), (124, 92, 232))
+            try:
+                img = avatar.round_image(64)  # в трее — тот же аватар
+            except Exception:
+                img = Image.open(ico) if os.path.exists(ico) else Image.new("RGB", (64, 64), (124, 92, 232))
             menu = pystray.Menu(pystray.MenuItem("Открыть", lambda *_: self.ui.put(("show", None)), default=True),
                                 pystray.MenuItem("🎤 Слушать", lambda *_: self.ui.put(("listen", None))),
                                 pystray.MenuItem("Выход", lambda *_: self.ui.put(("quit", None))))
