@@ -28,6 +28,7 @@ class ModelsActivity : Activity() {
     private val dm by lazy { getSystemService(DOWNLOAD_SERVICE) as DownloadManager }
     private val prefs by lazy { getSharedPreferences("models", MODE_PRIVATE) }
     private var ticking = false
+    private val verifying = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -82,9 +83,13 @@ class ModelsActivity : Activity() {
                     btn("Отменить") { ids.forEach { dm.remove(it) }; prefs.edit().remove(m.id).apply() }
                 }
                 Models.ready(this, m) -> {
-                    if (active == m.id) card.addView(Ui.text(this, "Включена", 13f, 0xFF2F7D55.toInt()), Ui.lp())
-                    else if (dev.offline) btn("Включить", primary = true) { CoreService.start(this, CoreService.ACTION_LLM_START, m.id); toast("Загружаю модель — до пары минут") }
-                    btn("Удалить") { confirm("Удалить «${m.title}» (%.1f ГБ)?".format(m.totalGb)) { if (active == m.id) CoreService.start(this, CoreService.ACTION_LLM_STOP); Models.path(this, m).delete(); Models.mmprojPath(this, m)?.delete() } }
+                    if (active == m.id) card.addView(Ui.text(this, if (st.optString("state") == "starting") "Загружается в память…" else "Включена", 13f, 0xFF2F7D55.toInt()), Ui.lp())
+                    else if (dev.offline) btn("Включить", primary = true) { enable(m) }
+                    btn("Удалить") { confirm("Удалить «${m.title}» (%.1f ГБ)?".format(m.totalGb)) { if (active == m.id) CoreService.start(this, CoreService.ACTION_LLM_STOP); Models.delete(this, m) } }
+                }
+                Models.downloaded(this, m) -> { // скачано — проверяем контрольную сумму, только потом можно включать
+                    card.addView(Ui.text(this, "Проверяю файл (контрольная сумма)…", 13f, Ui.SOFT), Ui.lp())
+                    if (verifying.add(m.id)) Thread { val ok = Models.verify(this, m); verifying.remove(m.id); main.post { if (!ok) toast("Файл «${m.title}» повреждён или подменён — удалён, скачайте заново"); render() } }.start()
                 }
                 dev.offline -> btn("Скачать %.1f ГБ".format(m.totalGb), primary = m == rec) { download(m) }
             }
@@ -111,15 +116,22 @@ class ModelsActivity : Activity() {
         val go = {
             val ids = mutableListOf<Long>()
             fun enqueue(url: String, file: File, title: String) {
-                file.delete(); File(file.path + ".part").delete()
+                file.delete(); File(file.path + ".part").delete(); File(file.path + ".ok").delete()
                 ids += dm.enqueue(DownloadManager.Request(Uri.parse(url)).setTitle(title).setDescription("Модель для Светланы")
                     .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE).setDestinationInExternalFilesDir(this@ModelsActivity, "models", file.name).setAllowedOverMetered(true).setAllowedOverRoaming(false))
             }
-            if (!Models.path(this, m).let { it.isFile && it.length() > m.bytes * 0.97 }) enqueue(m.url, Models.path(this, m), m.title)
-            Models.mmprojPath(this, m)?.let { f -> if (!(f.isFile && f.length() > m.mmprojBytes * 0.97)) enqueue(m.mmprojUrl!!, f, m.title + " (зрение)") }
+            if (!Models.path(this, m).let { it.isFile && it.length() == m.bytes }) enqueue(m.url, Models.path(this, m), m.title)
+            Models.mmprojPath(this, m)?.let { f -> if (!(f.isFile && f.length() == m.mmprojBytes)) enqueue(m.mmprojUrl!!, f, m.title + " (зрение)") }
             prefs.edit().putString(m.id, ids.joinToString(",")).apply(); render()
         }
-        if (m.minRamGb > dev.ramGb) confirm("Для «${m.title}» нужно от %.0f ГБ ОЗУ, а у телефона %.1f. Она может работать очень медленно или закрываться. Всё равно скачать?".format(m.minRamGb, dev.ramGb)) { go() } else go()
+        if (m.minRamGb > dev.ramGb || Models.needGb(m) > dev.ramGb * 0.75) confirm("Для «${m.title}» нужно от %.0f ГБ ОЗУ, а у телефона %.1f. Она может работать очень медленно или закрываться. Всё равно скачать?".format(m.minRamGb, dev.ramGb)) { go() } else go()
+    }
+
+    /** Включить модель; если свободной памяти мало — предупредить (иначе система может закрыть Светлану). */
+    private fun enable(m: Model) {
+        val free = Device.detect(this).availGb
+        val go = { CoreService.start(this, CoreService.ACTION_LLM_START, m.id); toast("Загружаю модель — до пары минут") }
+        if (free + 0.5 < Models.needGb(m)) confirm("Сейчас свободно %.1f ГБ памяти, а модели нужно около %.1f. Закройте лишние приложения или выберите модель полегче. Всё равно включить?".format(free, Models.needGb(m))) { go() } else go()
     }
 
     private fun confirm(text: String, yes: () -> Unit) { AlertDialog.Builder(this).setMessage(text).setPositiveButton("Да") { _, _ -> yes(); render() }.setNegativeButton("Нет", null).show() }

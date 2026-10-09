@@ -38,7 +38,7 @@ class Llama(private val ctx: Context, private val log: (String) -> Unit) {
         Models.mmprojPath(ctx, m)?.let { args += listOf("--mmproj", it.path) }
         val logFile = File(ctx.filesDir, "llama.log")
         CoreConfig.setLlmStatus(ctx, "starting", "Загружаю модель в память…", m.id)
-        log("llama: " + args.joinToString(" "))
+        log("llama: " + args.joinToString(" ") { if (it == apiKey) "***" else it }) // ключ в журнал не пишем
         val pb = ProcessBuilder(args).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
         pb.environment()["LD_LIBRARY_PATH"] = ctx.applicationInfo.nativeLibraryDir
         pb.environment()["HOME"] = ctx.filesDir.path; pb.environment()["TMPDIR"] = ctx.cacheDir.path

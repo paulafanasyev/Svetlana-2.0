@@ -90,7 +90,8 @@ if (keystore == null) println("::warning title=подпись::нет секре
 android {
     namespace = "ru.svetlana.hands"
     compileSdk = 35
-    System.getenv("ANDROID_NDK_LATEST_HOME")?.takeIf { File(it).isDirectory }?.let { ndkPath = it }
+    // NDK раннера GitHub: путь и версия должны совпадать (имя папки = версия NDK)
+    System.getenv("ANDROID_NDK_LATEST_HOME")?.let { File(it) }?.takeIf { it.isDirectory }?.let { ndkPath = it.path; ndkVersion = it.name }
     defaultConfig {
         applicationId = "ru.svetlana.app"
         minSdk = 26; targetSdk = 35
