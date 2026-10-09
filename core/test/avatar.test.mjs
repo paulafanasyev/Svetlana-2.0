@@ -96,3 +96,19 @@ test("say() + мост телефона: губы стартуют по __svSpee
   win.__svSpeechStart(); win.__svRange(8); // не падает и принимает позицию
   A.setState("idle"); win.__svRange(10); // речи уже нет — тихо игнорируем
 });
+
+test("звук сервера: губы идут по времени плеера и молчат на паузе; системные API не подменяются", () => {
+  const { A, win } = load();
+  const play = function () {}; win.HTMLMediaElement = { prototype: { play } };
+  const audio = { paused: true, currentTime: 0, duration: 4, addEventListener(n, f) { this["on_" + n] = f; } };
+  A.setState("speaking"); A.say("Мама мыла раму. А потом отдыхала.");
+  A.voice(audio);
+  const sp = A._test.current();
+  assert.equal(sp.frame(10).o, 0, "до старта рот закрыт");
+  audio.paused = false; audio.currentTime = .1; audio.on_playing();
+  let open = 0; for (let t = .1; t < 4; t += .05) { audio.currentTime = t; open = Math.max(open, sp.frame(1000 + t * 1000).o); }
+  assert.ok(open > .5, "по ходу речи рот открывается");
+  audio.paused = true; assert.equal(sp.frame(9000).o, 0, "пауза — рот закрыт");
+  assert.equal(win.HTMLMediaElement.prototype.play, play, "play не подменён");
+  assert.equal(sp.an, null, "без работающего AudioContext анализатор не подключается — звук не пропадёт");
+});

@@ -1,7 +1,7 @@
 "use strict";
 // Живой аватар Светланы для веба и Android — порт desktop-agent/avatar.py (а тот — svetlanaFace.js из Svetlana-self-employed):
 // моргание, брови, улыбка, румянец, наклоны головы, смех/кивок/подмигивание и кольцо состояния.
-// 1.1: губы под речь (виземы русских звуков по тексту + громкость звука), эмоции по каждой фразе, жесты (кивок на «да»,
+// 1.1: губы под речь (виземы русских звуков по тексту + время плеера/события голоса, на ПК ещё и громкость), эмоции по каждой фразе, жесты (кивок на «да»,
 // покачивание на «нет», наклон на вопрос, вскидывание бровей на «!»), дыхание, микродвижения головы и взгляд за пальцем/курсором.
 // Портрет /svetlana-face.jpg (оснастка в его координатах). Нет портрета — остаётся обычная картинка.
 (() => {
@@ -99,10 +99,12 @@
   // ---------- синхронизация речи ----------
   // Источники: звук сервера (точное время + громкость через WebAudio), голос браузера/телефона (события «начато слово»),
   // иначе — равномерный темп по тексту.
-  let AC = null;
+  let AC = null; const HOOKED = new WeakSet();
+  const UA = typeof navigator === "object" ? String(navigator.userAgent || "") : "";
+  const METER_OK = !window.SvetlanaAndroid && !/iPhone|iPad|iPod/.test(UA) && !(/Macintosh/.test(UA) && typeof navigator === "object" && navigator.maxTouchPoints > 1);
   function audioCtx() { try { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); } catch { AC = null; } return AC; }
   class Speech {
-    constructor(text) { this.text = String(text || ""); this.tl = timeline(this.text); this.ph = phrases(this.text); this.t0 = 0; this.u0 = 0; this.rate = 1 / UNIT_MS; this.started = false; this.ended = false; this.audio = null; this.an = null; this.buf = null; this.peak = .05; this.first = 0; this._n = -1; this._f = null; this.born = performance.now(); }
+    constructor(text) { this.text = String(text || ""); this.tl = timeline(this.text); this.ph = phrases(this.text); this.t0 = 0; this.u0 = 0; this.rate = 1 / UNIT_MS; this.started = false; this.ended = false; this.audio = null; this.an = null; this.buf = null; this.peak = .05; this.first = 0; this._n = -1; this._f = null; }
     start(now = performance.now()) { if (!this.started) { this.started = true; this.t0 = this.first = now; this.u0 = 0; } }
     /** голос сообщил: сейчас произносится символ ci */
     at(ci, now = performance.now()) {
@@ -117,10 +119,10 @@
     /** Подключить звук: время берём из плеера, громкость — из анализатора (если браузер разрешил) */
     attach(audio) {
       this.audio = audio; audio.addEventListener("playing", () => this.start(), { once: true });
-      const ac = audioCtx(); if (!ac) return;
-      const hook = () => { try { const src = ac.createMediaElementSource(audio); const an = ac.createAnalyser(); an.fftSize = 512; src.connect(an); an.connect(ac.destination); this.an = an; this.buf = new Uint8Array(an.fftSize); } catch { /* уже подключён или запрещено — работаем по тексту */ } };
-      if (ac.state === "running") hook(); // если контекст спит, звук через него был бы тихим — не рискуем
-      else ac.resume?.().then(() => { if (ac.state === "running" && this.audio === audio && !this.ended) hook(); }).catch(() => {});
+      // Громкость читаем, только если это безопасно: после createMediaElementSource звук идёт через AudioContext,
+      // и уснувший контекст сделал бы голос немым. Поэтому — только уже работающий контекст и не в WebView/iOS.
+      const ac = AC; if (!ac || ac.state !== "running" || !METER_OK || HOOKED.has(audio)) return;
+      try { const src = ac.createMediaElementSource(audio); const an = ac.createAnalyser(); an.fftSize = 512; src.connect(an); an.connect(ac.destination); HOOKED.add(audio); this.an = an; this.buf = new Uint8Array(an.fftSize); } catch { /* работаем по тексту и времени плеера */ }
     }
     level() {
       if (!this.an) return null; this.an.getByteTimeDomainData(this.buf); let s = 0; for (const x of this.buf) { const d = (x - 128) / 128; s += d * d; }
@@ -130,7 +132,6 @@
     frame(now) {
       if (this._n === now && this._f) return this._f;
       let f;
-      if (!this.started && !this.audio && now - this.born > 1200) this.start(now); // голос не сообщил о старте — идём по тексту
       if (!this.started || this.ended || (this.audio && (this.audio.paused || !this.audio.currentTime))) f = { o: 0, w: 0, ph: null, pi: -1 };
       else {
         const v = visemeAt(this.tl, this.units(now)); const lv = this.level();
@@ -272,24 +273,11 @@
     for (const f of faces) { const r = f.canvas?.getBoundingClientRect?.(); if (!r || !r.width) continue; const dx = (e.clientX - (r.left + r.width / 2)) / Math.max(innerWidth, 1), dy = (e.clientY - (r.top + r.height / 2)) / Math.max(innerHeight, 1); f.anim.look = { x: clamp(dx * 2, -1, 1), y: clamp(dy * 2, -1, 1), t: now }; }
   }, { passive: true });
 
-  // Подхват речи без правок чата: say(text) вызывается прямо перед озвучкой, дальше узнаём, чем она звучит —
-  // звук сервера (play у <audio> с blob:), голос браузера (speechSynthesis.speak) или телефона (мост Android зовёт __svSpeechStart/__svRange).
-  try {
-    const MP = window.HTMLMediaElement?.prototype;
-    if (MP && typeof MP.play === "function" && !MP.play.__sv) {
-      const orig = MP.play; const play = function (...a) { const sp = speech; if (sp && !sp.audio && /^blob:/.test(this.src || "")) sp.attach(this); return orig.apply(this, a); };
-      play.__sv = true; MP.play = play;
-    }
-    const ss = window.speechSynthesis;
-    if (ss && typeof ss.speak === "function" && !ss.speak.__sv) {
-      const orig = ss.speak.bind(ss); const sp2 = (u) => { const sp = speech; if (sp && u && typeof u.addEventListener === "function") { u.addEventListener("start", () => sp.start()); u.addEventListener("boundary", (e) => sp.at(e.charIndex || 0)); } return orig(u); };
-      sp2.__sv = true; ss.speak = sp2;
-    }
-  } catch { /* старый браузер — губы просто двигаются по тексту */ }
+  // Голос телефона: мост Android сообщает старт речи и позицию звучащего слова
   window.__svSpeechStart = () => speech?.start();
   window.__svRange = (i) => speech?.at(Number(i) || 0);
-  // первое касание «будит» звук страницы — тогда губы следуют и за громкостью голоса сервера
-  if (typeof addEventListener === "function") addEventListener("pointerdown", () => { const ac = audioCtx(); if (ac && ac.state !== "running") ac.resume?.().catch?.(() => {}); }, { once: true, passive: true });
+  // контекст звука создаём только по касанию (жест пользователя) — тогда он работает, и губы следуют и за громкостью
+  if (METER_OK && typeof addEventListener === "function") addEventListener("pointerdown", () => { const ac = audioCtx(); if (ac && ac.state !== "running") Promise.resolve(ac.resume?.()).catch(() => {}); }, { once: true, passive: true });
 
   window.SvAvatar = {
     mount(el, size) { if (el) faces.push(mount(el, size)); },
@@ -299,12 +287,18 @@
       const e = emotion(text); for (const f of faces) { f.speechExpr = e; f.speechUntil = Date.now() + 2000 + String(text || "").length / 14 * 1000; }
       speech = new Speech(text); // губы стартуют, когда реально зазвучит голос
     },
+    /** Голос звучит из <audio> (озвучка сервера): время берём из плеера */
+    voice(audio) { if (speech && audio && !speech.audio) speech.attach(audio); },
+    /** голос браузера/телефона начал говорить */
+    started() { speech?.start(); },
+    /** сейчас звучит слово с символа i (событие boundary) */
+    word(i) { speech?.at(Number(i) || 0); },
     /** Начать речь: губы по тексту. Вернёт пульт: attach(audio) | start() | at(charIndex) | end() */
     speech(text) { speech = new Speech(text); const sp = speech; return { attach: (a) => sp.attach(a), start: () => sp.start(), at: (i) => sp.at(i), end: () => { sp.ended = true; if (speech === sp) speech = null; } }; },
     hush() { if (speech) speech.ended = true; speech = null; },
     react(a) { for (const f of faces) f.anim.trigger(a); },
     /** показать эмоцию на несколько секунд (calm, joy, laugh, surprise, question, thinking, sad, fear, shy, wink, angry, tender, tired, proud, sorry) */
     feel(e, ms = 3000) { for (const f of faces) { f.speechExpr = EXPR[e] ? e : "calm"; f.speechUntil = Date.now() + ms; } },
-    _test: { emotion, timeline, phrases, visemeAt, unitsAtChar, Speech, EXPR, ACTION_MS },
+    _test: { emotion, timeline, phrases, visemeAt, unitsAtChar, Speech, EXPR, ACTION_MS, current: () => speech },
   };
 })();
