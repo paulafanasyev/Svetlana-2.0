@@ -18,6 +18,7 @@ import java.util.Locale
 /**
  * Голос телефона для веб-чата: распознавание речи (часто работает и без интернета) и озвучка системным голосом.
  * События уходят в страницу: window.__svVoice(kind, text) и window.__svSpoke().
+ * Для губ аватара: window.__svSpeechStart() — голос зазвучал, window.__svRange(i) — сейчас произносится символ i.
  */
 class VoiceBridge(private val a: Activity, private val web: WebView) {
     private var sr: SpeechRecognizer? = null
@@ -34,9 +35,11 @@ class VoiceBridge(private val a: Activity, private val web: WebView) {
             if (ttsReady) {
                 tts?.setLanguage(Locale("ru", "RU"))
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(id: String?) {}
+                    override fun onStart(id: String?) { js("window.__svSpeechStart&&window.__svSpeechStart()") }
                     override fun onDone(id: String?) { js("window.__svSpoke&&window.__svSpoke()") }
                     @Deprecated("Deprecated in Java") override fun onError(id: String?) { js("window.__svSpoke&&window.__svSpoke()") }
+                    // Android 8+: движок сообщает, какое слово звучит, — по нему губы аватара держат темп голоса
+                    override fun onRangeStart(id: String?, start: Int, end: Int, frame: Int) { js("window.__svRange&&window.__svRange($start)") }
                 })
                 pendingSay?.let { pendingSay = null; say(it) }
             }
@@ -76,7 +79,7 @@ class VoiceBridge(private val a: Activity, private val web: WebView) {
     @JavascriptInterface fun openModels() = a.runOnUiThread { a.startActivity(Intent(a, ModelsActivity::class.java)) }
 
     private fun say(text: String) {
-        if (ttsFailed) { js("window.__svSpoke&&window.__svSpoke()"); return }
+        if (ttsFailed) { js("window.__svSpoke&&window.__svSpoke()") ; return }
         if (!ttsReady) { pendingSay = text; return }
         tts?.speak(text.take(3900), TextToSpeech.QUEUE_FLUSH, null, "sv")
     }
