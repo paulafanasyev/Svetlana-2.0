@@ -2,6 +2,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
+// Что можно запускать по умолчанию. На Windows (локальный режим) нет ls/cat, зато есть python/py, pip, dotnet.
+export const DEFAULT_COMMANDS = process.platform === "win32"
+  ? "node,npm,npx,git,python,python3,py,pip,pytest,tsc,eslint,vitest,dotnet"
+  : "node,npm,npx,git,python3,pytest,ls,cat,tsc,eslint,vitest";
+
 export function loadEnvFile(file) {
   if (!fs.existsSync(file)) return;
   for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
@@ -31,6 +36,6 @@ export function config(env = process.env) {
     runnerSocket: env.SVETLANA_RUNNER_SOCKET || "",
     allowHostExec: env.SVETLANA_ALLOW_HOST_EXEC === "1",
     chromiumNoSandbox: env.CHROMIUM_NO_SANDBOX === "1",
-    commandAllow: (env.SVETLANA_COMMAND_ALLOW || "node,npm,npx,git,python3,pytest,ls,cat,tsc,eslint,vitest").split(",").map((s) => s.trim()).filter(Boolean),
+    commandAllow: (env.SVETLANA_COMMAND_ALLOW || DEFAULT_COMMANDS).split(",").map((s) => s.trim()).filter(Boolean),
   };
 }

@@ -2,12 +2,15 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import net from "node:net";
 import { spawn } from "node:child_process";
 import http from "node:http";
-import { runSandboxed, checkArgs } from "../../runner.mjs";
+import { runSandboxed, checkArgs, spawnSafe, killTree } from "../../runner.mjs";
 
 const MAX_READ = 200_000;
 const SKIP = new Set([".git", "node_modules", ".next", "dist", "build", ".venv", "__pycache__", ".gradle"]);
+const MAX_SERVERS = 3;
+const URL_RE = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d{4,5})(?!\d)/i;
 
 export function safePath(root, rel) {
   if (typeof rel !== "string" || rel.includes("\0")) throw new Error("некорректный путь");
@@ -44,13 +47,50 @@ export function runProcess(cmd, args, { cwd, timeoutMs = 120000, env } = {}) {
   });
 }
 
+const portOpen = (port) => new Promise((resolve) => {
+  const s = net.connect(port, "127.0.0.1"); const done = (v) => { s.destroy(); resolve(v); };
+  s.once("connect", () => done(true)); s.once("error", () => done(false)); s.setTimeout(500, () => done(false));
+});
+
+/** Фоновые dev-серверы проектов (просмотр приложения в браузере). Живут, пока живёт ядро. */
+const servers = new Map(); let nextId = 1; let starting = 0; // starting — места, занятые запусками, которые ещё ждут порт
+const stopAll = () => { for (const s of servers.values()) killTree(s.child); servers.clear(); };
+process.once("exit", stopAll);
+for (const sig of ["SIGINT", "SIGTERM"]) process.once(sig, () => { stopAll(); process.exit(0); });
+
 export function codeTools(cfg) {
   const root = cfg.workspace; fs.mkdirSync(root, { recursive: true });
   const P = (rel) => safePath(root, rel);
+  const allowCmd = (a) => {
+    if (!cfg.commandAllow.includes(a.command)) return `команда «${a.command}» не в списке разрешённых (SVETLANA_COMMAND_ALLOW)`;
+    return checkArgs(a.command, a.args || []);
+  };
+  const list = () => [...servers.values()].map((s) => ({ id: s.id, url: s.url, command: s.title, cwd: s.cwd, running: s.child.exitCode === null }));
+  async function serve(a) {
+    if (a.port && (await portOpen(a.port))) return { ok: false, error: `порт ${a.port} уже занят` };
+    const cwd = P(a.cwd || ".");
+    const sp = spawnSafe({ command: a.command, args: a.args || [], cwd, root: fs.realpathSync(root), env: a.port ? { PORT: String(a.port), BROWSER: "none" } : { BROWSER: "none" } });
+    if (sp.error) return { ok: false, error: sp.error };
+    const child = sp.child; let log = "";
+    const add = (d) => { log = (log + d).slice(-8000); };
+    child.stdout.on("data", add); child.stderr.on("data", add); child.on("error", (e) => add("\n" + e.message));
+    const id = String(nextId++);
+    const rec = { id, child, cwd: path.relative(root, cwd) || ".", title: [a.command, ...(a.args || [])].join(" ").slice(0, 200), url: "" };
+    servers.set(id, rec);
+    const t0 = Date.now();
+    while (Date.now() - t0 < 45_000) {
+      await new Promise((r) => setTimeout(r, 300));
+      if (child.exitCode !== null || child.signalCode) { servers.delete(id); return { ok: false, error: `процесс завершился (код ${child.exitCode})`, data: { log: log.slice(-3000) }, untrusted: true }; }
+      const m = URL_RE.exec(log); const port = a.port || (m && Number(m[1]) <= 65535 && Number(m[1]));
+      if (port && (await portOpen(port))) { rec.url = `http://127.0.0.1:${port}/`; return { data: { id, url: rec.url, log: log.slice(-1500) }, summary: `Запущено: ${rec.url}`, untrusted: true }; }
+    }
+    killTree(child); servers.delete(id);
+    return { ok: false, error: "сервер не открыл порт за 45 секунд — укажите port или проверьте команду", data: { log: log.slice(-3000) }, untrusted: true };
+  }
   return [
-    { name: "code_list", domain: "code", risk: "read", taints: true, description: "Показать файлы и папки в рабочей папке проекта.",
+    { name: "code_list", domain: "code", risk: "read", taints: true, description: `Показать файлы и папки в рабочей папке проектов (${root}).`,
       parameters: { type: "object", properties: { path: { type: "string", maxLength: 500 }, depth: { type: "integer", minimum: 0, maximum: 6 } }, additionalProperties: false },
-      async execute(_c, a) { const out = []; await walk(P(a.path || "."), root, a.depth ?? 2, out, 800); return { data: { files: out, truncated: out.length >= 800 }, summary: `Файлов и папок: ${out.length}`, untrusted: true }; } },
+      async execute(_c, a) { const out = []; await walk(P(a.path || "."), root, a.depth ?? 2, out, 800); return { data: { root, files: out, truncated: out.length >= 800 }, summary: `Файлов и папок: ${out.length}`, untrusted: true }; } },
     { name: "code_read", domain: "code", risk: "read", taints: true, description: "Прочитать файл (с номерами строк). Можно диапазон строк.",
       parameters: { type: "object", properties: { path: { type: "string", maxLength: 500 }, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 1 } }, required: ["path"], additionalProperties: false },
       async execute(_c, a) {
@@ -73,7 +113,23 @@ export function codeTools(cfg) {
         }
         return { data: { hits }, summary: `Совпадений: ${hits.length}`, untrusted: true };
       } },
-    { name: "code_write", domain: "code", risk: "write", description: "Создать или полностью перезаписать файл в проекте.",
+    { name: "code_env", domain: "code", risk: "read", description: "Узнать среду разработки: ОС, рабочая папка проектов, какие программы установлены (node, npm, git, python, dotnet) и их версии, что разрешено запускать. Вызывай перед созданием нового проекта.",
+      async execute() {
+        const tools = {};
+        if (cfg.allowHostExec && !cfg.runnerSocket) {
+          for (const c of ["node", "npm", "git", "python", "dotnet"].filter((x) => cfg.commandAllow.includes(x) || (x === "python" && cfg.commandAllow.includes("python3")))) {
+            const r = await runSandboxed({ command: c === "python" && !cfg.commandAllow.includes("python") ? "python3" : c, args: ["--version"], cwd: root, timeoutMs: 15000, root: fs.realpathSync(root) });
+            tools[c] = r.code === 0 ? (r.stdout || r.stderr).trim().split("\n")[0].slice(0, 80) : "не установлено";
+          }
+        }
+        return { data: { os: process.platform === "win32" ? "Windows" : process.platform, root, allowed: cfg.commandAllow, run: cfg.runnerSocket ? "песочница на сервере" : cfg.allowHostExec ? "на этом компьютере (каждая команда — с подтверждением)" : "выключен", tools,
+          tips: process.platform === "win32" ? "Windows: python вместо python3; пути через \\ или /; без shell-операторов (&&, |, >) — каждую команду отдельным code_run; крупные файлы пиши частями (code_write, затем code_append)." : "крупные файлы пиши частями (code_write, затем code_append)" }, summary: `Среда: ${Object.entries(tools).map(([k, v]) => `${k} ${v}`).join(", ") || "команды не запускаются"}` };
+      } },
+    { name: "code_append", domain: "code", risk: "write", description: "Дописать текст в конец файла (для больших файлов: сначала code_write с первой частью, потом code_append с остальными).",
+      parameters: { type: "object", properties: { path: { type: "string", minLength: 1, maxLength: 500 }, content: { type: "string", minLength: 1, maxLength: 400000 } }, required: ["path", "content"], additionalProperties: false },
+      async execute(_c, a) { const f = P(a.path); if (!fs.existsSync(f)) return { ok: false, error: "файла нет — сначала code_write" }; await fsp.appendFile(f, a.content); const size = (await fsp.stat(f)).size;
+        return { data: { path: a.path, bytes: size }, summary: `Дописано в ${a.path}, теперь ${size} байт` }; } },
+    { name: "code_write", domain: "code", risk: "write", description: "Создать или полностью перезаписать файл в проекте (папки создаются сами). Большой файл — частями через code_append.",
       parameters: { type: "object", properties: { path: { type: "string", minLength: 1, maxLength: 500 }, content: { type: "string", maxLength: 400000 } }, required: ["path", "content"], additionalProperties: false },
       async execute(_c, a) { const f = P(a.path); await fsp.mkdir(path.dirname(f), { recursive: true }); const existed = fs.existsSync(f); await fsp.writeFile(f, a.content); const back = await fsp.readFile(f, "utf8");
         return { ok: back === a.content, data: { path: a.path, bytes: Buffer.byteLength(a.content), created: !existed }, summary: `${existed ? "Перезаписан" : "Создан"} ${a.path} (${Buffer.byteLength(a.content)} байт), проверено чтением` }; } },
@@ -85,12 +141,11 @@ export function codeTools(cfg) {
         const out = s.replace(a.find, () => a.replace); await fsp.writeFile(f, out);
         return { data: { path: a.path }, summary: `Правка в ${a.path} применена` };
       } },
-    { name: "code_run", domain: "code_run", risk: "dangerous", description: `Запустить команду в проекте (без shell). Разрешены: ${cfg.commandAllow.join(", ")}. Таймаут до 10 минут.`,
+    { name: "code_run", domain: "code_run", risk: "dangerous", description: `Запустить команду в проекте (без shell) и дождаться конца: установка зависимостей, сборка, тесты. Разрешены: ${cfg.commandAllow.join(", ")}. Таймаут до 10 минут. Для серверов, которые работают постоянно, — code_serve.`,
       parameters: { type: "object", properties: { command: { type: "string", maxLength: 40 }, args: { type: "array", items: { type: "string", maxLength: 2000 }, maxItems: 60 }, cwd: { type: "string", maxLength: 500 }, timeoutSec: { type: "integer", minimum: 1, maximum: 600 } }, required: ["command"], additionalProperties: false },
       confirm: () => true, // команды — всегда только с подтверждением, без «разрешить на сессию»
       async execute(_c, a) {
-        if (!cfg.commandAllow.includes(a.command)) return { ok: false, error: `команда «${a.command}» не в списке разрешённых (SVETLANA_COMMAND_ALLOW)` };
-        const bad = checkArgs(a.command, a.args || []); if (bad) return { ok: false, error: bad };
+        const bad = allowCmd(a); if (bad) return { ok: false, error: bad };
         const cwd = P(a.cwd || "."); const timeoutMs = (a.timeoutSec || 120) * 1000;
         let r;
         if (cfg.runnerSocket) r = await viaRunner(cfg.runnerSocket, { command: a.command, args: a.args || [], cwd: path.relative(fs.realpathSync(root), cwd), timeoutSec: a.timeoutSec || 120 });
@@ -99,6 +154,26 @@ export function codeTools(cfg) {
         if (r.error) return { ok: false, error: r.error };
         return { ok: r.code === 0, data: r, summary: r.timedOut ? "Остановлено по таймауту" : `Код выхода ${r.code}`, error: r.code === 0 ? undefined : (r.stderr || r.stdout).slice(-2000), untrusted: true };
       } },
+    { name: "code_serve", domain: "code_run", risk: "dangerous", description: `Запустить проект в фоне для просмотра в браузере (dev-сервер: npm run dev, npx vite, python -m http.server 8000…) и вернуть адрес http://127.0.0.1:порт. Не больше ${MAX_SERVERS} одновременно; остановить — code_serve_stop.`,
+      parameters: { type: "object", properties: { command: { type: "string", maxLength: 40 }, args: { type: "array", items: { type: "string", maxLength: 2000 }, maxItems: 60 }, cwd: { type: "string", maxLength: 500 }, port: { type: "integer", minimum: 1024, maximum: 65535 } }, required: ["command"], additionalProperties: false },
+      confirm: () => true,
+      async execute(_c, a) {
+        const bad = allowCmd(a); if (bad) return { ok: false, error: bad };
+        if (!cfg.allowHostExec || cfg.runnerSocket) return { ok: false, error: "фоновый запуск доступен только в локальном режиме на этом компьютере" };
+        for (const s of servers.values()) if (s.child.exitCode !== null) servers.delete(s.id);
+        if (servers.size + starting >= MAX_SERVERS) return { ok: false, error: `уже запущено ${servers.size} — сначала остановите лишнее (code_serve_stop)`, data: { servers: list() } };
+        starting++; // место занято сразу, до первого await: параллельные запуски не обойдут лимит
+        try { return await serve(a); } finally { starting--; }
+      } },
+    { name: "code_serve_stop", domain: "code_run", risk: "write", confirm: false, description: "Остановить фоновый сервер проекта (id из code_serve) или все сразу (id не указывать).",
+      parameters: { type: "object", properties: { id: { type: "string", maxLength: 10 } }, additionalProperties: false },
+      async execute(_c, a) {
+        const ids = a.id ? [a.id] : [...servers.keys()]; let n = 0;
+        for (const i of ids) { const s = servers.get(i); if (s) { killTree(s.child); servers.delete(i); n++; } }
+        return { ok: n > 0 || !a.id, data: { stopped: n }, summary: `Остановлено: ${n}`, error: n || !a.id ? undefined : "нет такого сервера" };
+      } },
+    { name: "code_serve_list", domain: "code_run", risk: "read", description: "Какие фоновые серверы проектов сейчас запущены и их адреса.",
+      async execute() { return { data: { servers: list() }, summary: `Запущено: ${servers.size}` }; } },
   ];
 }
 
