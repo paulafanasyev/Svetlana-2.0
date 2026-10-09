@@ -1,0 +1,42 @@
+name: Build Windows Desktop Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - svetlana-2.0-core-development-0416c
+      - feature/windows-hands-mcp-skeleton
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0.0" --locked
+
+      - name: Build Tauri EXE & Installer
+        run: cargo tauri build --bundles nsis
+
+      - name: Upload Windows Setup EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: SvetlanaSetup-Windows
+          path: src-tauri/target/release/bundle/nsis/*.exe
