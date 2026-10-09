@@ -113,7 +113,7 @@ class App:
         f.pack(fill="both", expand=True)
         head = ttk.Frame(f)
         head.pack(fill="x", padx=12, pady=(8, 4))
-        self.avatar = avatar.AvatarWidget(head, size=88)
+        self.avatar = avatar.AvatarWidget(head, size=96)
         self.avatar.pack(side="left")
         names = ttk.Frame(head)
         names.pack(side="left", padx=12)
@@ -194,6 +194,9 @@ class App:
 
     def log(self, msg):
         logging.info(msg)
+        av = getattr(self, "avatar", None)
+        if av is not None and isinstance(msg, str) and msg.startswith("[Светлана] "):
+            av.say(msg[len("[Светлана] "):])  # лицо под смысл фразы, пока она её говорит
         self.ui.put(("log", msg))
 
     def set_state(self, s):
@@ -333,6 +336,7 @@ class App:
         try:
             models.pull(tag, lambda pct, st: self.ui.put(("progress", (pct, f"Скачиваю {tag}: {pct}% ({st})"))), cancel=cancel)
             self.log(f"Модель {tag} скачана.")
+            self.avatar.react("wink")
             self.ui.put(("dl_done", tag))
         except Exception as e:
             self.log(f"Модель не скачалась: {e}")
