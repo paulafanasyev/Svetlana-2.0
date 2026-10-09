@@ -226,7 +226,7 @@ class LocalCore:
                   "SVETLANA_WORKSPACE": self.workspace, "SVETLANA_ADMIN_TOKEN": self.admin_token,
                   "SVETLANA_SECRET": self.st["secret"], "SVETLANA_MAX_STEPS": str(self.st.get("maxSteps", 40)),
                   # свой компьютер: Светлана-разработчица запускает npm/python/git в папке проектов, каждую команду — после подтверждения
-                  "SVETLANA_ALLOW_HOST_EXEC": "1"})
+                  "SVETLANA_ALLOW_HOST_EXEC": "1", "SVETLANA_MAX_TOKENS": "8000"})
         e.pop("SVETLANA_RUNNER_SOCKET", None)
         node = find_node()
         if node:  # встроенный node + npm/npx из установщика доступны командам Светланы без отдельной установки Node.js
