@@ -11,6 +11,8 @@ const api = async (path, opts = {}) => {
   return data;
 };
 const S = { conv: localStorage.getItem("sv_conv") || null, images: [], talk: false, speaking: false };
+// Приложение Светланы для Android: голос телефона (распознавание и озвучка работают и без интернета) через мост WebView
+const AND = window.SvetlanaAndroid || null;
 // code_* → «режим разработки»: правки и обычные команды в папке проектов без кликов на время (опасные команды всё равно спросит)
 const GRANTABLE = { device_act: "device", code_write: "dev", code_edit: "dev", code_append: "dev", code_run: "dev", code_serve: "dev", image_generate: "media", video_generate: "media", acc_income_add: "accounting", acc_income_cancel: "accounting", aiko_call: "aiko", selfemployed_call: "selfemployed" };
 
@@ -35,7 +37,11 @@ function bubble(role, html) { const d = document.createElement("div"); d.classNa
 // адрес запущенного проекта (code_serve) — сразу ссылка «открыть»; только этот компьютер
 const linkify = (h) => h.replace(/\bhttp:\/\/(?:127\.0\.0\.1|localhost):\d{2,5}(?:\/[\w\-./?=&;%#]*)?/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
 const fmt = (t) => linkify(esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\n/g, "<br>"));
-function setStatus(t, mood) { $("#status").textContent = t; $("#ava").dataset.mood = mood || ""; }
+function setStatus(t, mood) {
+  $("#status").textContent = t; const st = $("#stageStatus"); if (st) st.textContent = t;
+  const a = $("#ava"); if (a) a.dataset.mood = mood || "";
+  window.SvAvatar?.setState({ think: "thinking", listen: "listening", speak: "speaking" }[mood] || "idle");
+}
 
 function render(res) {
   let html = `<div class="txt">${fmt(res.answer)}</div>`;
@@ -61,8 +67,16 @@ async function turn(fn, userText) {
   if (userText) bubble("me", fmt(userText));
   setStatus("думаю…", "think"); $("#send").disabled = true;
   try { const res = await fn(); S.conv = res.conversationId; localStorage.setItem("sv_conv", S.conv); render(res); setStatus("готова"); }
-  catch (e) { bubble("bot err", "Не получилось: " + esc(e.message)); setStatus("ошибка", "sad"); }
+  catch (e) {
+    if (/не настроен ни один провайдер|нет провайдера/.test(e.message)) noBrain(); // первый запуск: Светлане нечем думать — подсказываем, что сделать
+    else bubble("bot err", "Не получилось: " + esc(e.message));
+    setStatus("ошибка", "sad");
+  }
   finally { $("#send").disabled = false; }
+}
+function noBrain() {
+  const d = bubble("bot", `<div class="txt">Мне пока нечем думать 🙂 Выберите ${AND ? "<b>модель на телефоне</b> (без интернета) или " : ""}<b>облачный ИИ со своим ключом</b> (GigaChat, YandexGPT, DeepSeek…).</div><div class="row" style="margin-top:.5rem">${AND ? `<button class="btn primary" data-go="models">Модель на телефоне</button>` : ""}<button class="btn" data-go="providers">Облако с ключом</button></div>`);
+  d.addEventListener("click", (e) => { const g = e.target.dataset?.go; if (g === "models") AND?.openModels(); if (g === "providers") document.querySelector('#tabs button[data-tab="providers"]')?.click(); });
 }
 async function sendText(text) {
   text = text.trim(); if (!text && !S.images.length) return;
@@ -117,8 +131,25 @@ function stopListening() {
   if (V.rec) { try { V.rec.abort(); } catch {} }
   if (V.recorder && V.recorder.state !== "inactive") { try { V.recorder.stop(); } catch {} }
 }
+function listenAndroid() { // распознавание речи телефона: partial/final/error/end приходят из Kotlin
+  let terminal = null; V.mode = "sr"; micUi(true);
+  V.rec = { stop: () => AND.stopListening(), abort: () => AND.stopListening() };
+  window.__svVoice = (kind, text) => {
+    if (kind === "partial" || kind === "final") { $("#text").value = text || ""; return; }
+    if (kind === "error") { if (text === "permission") terminal = "not-allowed"; return; }
+    if (kind !== "end") return;
+    window.__svVoice = null; V.rec = null; V.mode = "idle"; micUi(false);
+    if (terminal) return stopTalk("Нет доступа к микрофону: разрешите его Светлане в настройках телефона.");
+    const t = $("#text").value;
+    if (t.trim()) { V.fails = 0; $("#text").value = ""; sendText(t); return; }
+    V.fails++; if (V.fails >= 5) return stopTalk("Ничего не слышу, режим разговора выключен.");
+    scheduleListen(400 * V.fails);
+  };
+  try { AND.listen(); } catch (e) { window.__svVoice = null; V.rec = null; V.mode = "idle"; micUi(false); stopTalk("Микрофон не запустился: " + (e?.message || e)); }
+}
 function listen() {
   if (S.speaking || V.mode !== "idle") return;
+  if (AND) return listenAndroid();
   if (!SR) return recordFallback();
   let r; try { r = new SR(); } catch { return recordFallback(); }
   r.lang = "ru-RU"; r.interimResults = true; r.continuous = false;
@@ -172,13 +203,14 @@ function stopSpeaking() {
   if (audio) { audio.onended = audio.onerror = null; audio.pause(); audio = null; }
   if (audioUrl) { URL.revokeObjectURL(audioUrl); audioUrl = null; }
   if ("speechSynthesis" in window) speechSynthesis.cancel();
+  if (AND) { window.__svSpoke = null; try { AND.stopSpeaking(); } catch {} }
   S.speaking = false;
 }
 async function speak(text) {
   const clean = String(text || "").replace(/[*`#>|]/g, "").replace(/\(Проверка:[^)]*\)/, "").slice(0, 3000);
   if (!clean.trim() || !(S.talk || localStorage.getItem("sv_voice") === "1")) return;
   stopSpeaking(); const gen = speakGen; const ac = (speakAbort = new AbortController());
-  S.speaking = true; setStatus("говорю…", "speak");
+  S.speaking = true; setStatus("говорю…", "speak"); window.SvAvatar?.say(clean);
   let finished = false;
   const done = () => { if (finished || gen !== speakGen) return; finished = true; S.speaking = false; if (audioUrl) { URL.revokeObjectURL(audioUrl); audioUrl = null; } setStatus("готова"); scheduleListen(300); };
   try {
@@ -186,12 +218,19 @@ async function speak(text) {
     if (gen !== speakGen) return; // пока ждали, пришёл новый ответ или озвучку выключили
     if (blob instanceof Blob) { audioUrl = URL.createObjectURL(blob); audio = new Audio(audioUrl); audio.onended = done; audio.onerror = done; try { await audio.play(); } catch { done(); } return; }
   } catch { if (gen !== speakGen) return; /* озвучим браузером */ }
+  if (AND) { window.__svSpoke = () => { window.__svSpoke = null; done(); }; try { AND.speak(clean); } catch { done(); } return; } // голос телефона
   if (!("speechSynthesis" in window)) return done();
   const u = new SpeechSynthesisUtterance(clean); u.lang = "ru-RU";
   const v = speechSynthesis.getVoices().find((x) => x.lang.startsWith("ru") && /female|жен|irina|alena|milena|svetlana/i.test(x.name)) || speechSynthesis.getVoices().find((x) => x.lang.startsWith("ru"));
   if (v) u.voice = v; u.onend = done; u.onerror = done; speechSynthesis.speak(u);
 }
-$("#ava").addEventListener("click", () => { const on = localStorage.getItem("sv_voice") !== "1"; localStorage.setItem("sv_voice", on ? "1" : "0"); if (!on) stopSpeaking(); setStatus(on ? "озвучка включена" : "озвучка выключена"); });
+// нажатие на лицо Светланы — включить/выключить озвучку (canvas живого аватара заменяет картинку, поэтому слушаем документ)
+document.addEventListener("click", (e) => { if (!e.target.closest?.("#ava")) return; const on = localStorage.getItem("sv_voice") !== "1"; localStorage.setItem("sv_voice", on ? "1" : "0"); if (!on) stopSpeaking(); setStatus(on ? "озвучка включена" : "озвучка выключена"); });
+$("#stage")?.addEventListener("click", () => { $("#stage").classList.add("off"); localStorage.setItem("sv_stage", "0"); });
+if (localStorage.getItem("sv_stage") === "0") $("#stage")?.classList.add("off");
+$(".me b")?.addEventListener("click", () => { const off = $("#stage").classList.toggle("off"); localStorage.setItem("sv_stage", off ? "0" : "1"); }); // имя в шапке — показать/свернуть большое лицо
+if (AND) { $("#shot").hidden = true; if (localStorage.getItem("sv_voice") === null) localStorage.setItem("sv_voice", "1"); } // на телефоне экран видит «Руки», а отвечает она голосом
+window.SvAvatar?.mount($("#ava"), 44); window.SvAvatar?.mount($("#stageAva"), 128);
 
 // ---------- CRM / финансы ----------
 const table = (rows, cols) => rows.length ? `<table><tr>${cols.map(([, h]) => `<th>${esc(h)}</th>`).join("")}</tr>${rows.map((r) => `<tr>${cols.map(([k]) => `<td>${esc(r[k] ?? "")}</td>`).join("")}</tr>`).join("")}</table>` : `<p class="hint">Пока пусто</p>`;

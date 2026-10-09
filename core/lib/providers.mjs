@@ -45,7 +45,8 @@ const strip = (s) => (s || "").replace(/<think>[\s\S]*?<\/think>/g, "").replace(
 
 // ---------- адаптеры ----------
 async function openaiChat(p, { messages, tools, temperature = 0.3, maxTokens = 2048 }, fx) {
-  const body = { model: p.model, messages, temperature, max_tokens: maxTokens, ...(p.extraBody || {}) };
+  // p.maxTokens — потолок ответа для маленьких моделей на телефоне (контекст 4–8 тыс. токенов)
+  const body = { model: p.model, messages, temperature, max_tokens: p.maxTokens ? Math.min(maxTokens, p.maxTokens) : maxTokens, ...(p.extraBody || {}) };
   if (tools?.length) { body.tools = tools; body.tool_choice = "auto"; }
   const auth = p.apiKey ? { Authorization: `${p.authScheme || "Bearer"} ${p.apiKey}` } : {};
   const j = await http(p.baseUrl.replace(/\/$/, "") + "/chat/completions", { headers: { "Content-Type": "application/json", ...auth, ...(p.headers || {}) }, body: JSON.stringify(body), timeoutMs: p.timeoutMs, fetchImpl: fx });
@@ -130,6 +131,8 @@ export class Providers {
   remove(id) { this.list = this.list.filter((p) => p.id !== id); this.save(); }
   /** Публичный вид — без ключей. */
   public() { return this.list.map(({ apiKey, headers, ...p }) => ({ ...p, hasKey: Boolean(apiKey) })); }
+  /** Первая модель для чата с инструментами — «компактная» (маленькая модель на телефоне): агент шлёт ей только нужные инструменты и короткую историю. */
+  compact() { const p = this.for("chat").find((x) => x.capabilities.includes("tools")); return Boolean(p?.compact); }
   for(cap, preferId) {
     const ok = this.list.filter((p) => p.enabled && p.capabilities.includes(cap));
     return preferId ? [...ok.filter((p) => p.id === preferId), ...ok.filter((p) => p.id !== preferId)] : ok;

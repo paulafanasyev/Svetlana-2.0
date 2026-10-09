@@ -36,7 +36,9 @@ export function createServer(app) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://x"); const p = url.pathname;
     try {
-      if (p === "/healthz") return json(res, 200, { ok: true });
+      // busy — идёт ли сейчас работа агента (телефон держит процессор включённым, пока Светлана думает)
+      // proof — HMAC(секрет, nonce): приложение на телефоне убеждается, что на порту наше ядро, прежде чем отдать ему пароль
+      if (p === "/healthz") { const n = url.searchParams.get("nonce"); return json(res, 200, { ok: true, busy: (app.agent?.locks?.size || 0) > 0, ...(n && n.length <= 128 ? { proof: crypto.createHmac("sha256", cfg.secret || cfg.adminToken).update("svetlana-health:" + n).digest("hex") } : {}) }); }
       if (!p.startsWith("/api/")) return serveStatic(res, p, send);
       // Детское приложение «Я-Зарядка» (другой источник: Capacitor/веб): свой токен, только режим Пико, без cookie, поэтому CORS безопасен.
       if (p === "/api/pico/chat") {

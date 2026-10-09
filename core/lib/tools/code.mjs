@@ -5,6 +5,7 @@ import path from "node:path";
 import net from "node:net";
 import { spawn } from "node:child_process";
 import http from "node:http";
+import crypto from "node:crypto";
 import { runSandboxed, checkArgs, spawnSafe, killTree } from "../../runner.mjs";
 
 const MAX_READ = 200_000;
@@ -80,7 +81,33 @@ const portOpen = (port) => new Promise((resolve) => {
 
 /** Фоновые dev-серверы проектов (просмотр приложения в браузере). Живут, пока живёт ядро. */
 const servers = new Map(); let nextId = 1; let starting = 0; // starting — места, занятые запусками, которые ещё ждут порт
-const stopAll = () => { for (const s of servers.values()) killTree(s.child); servers.clear(); };
+/** Просмотр простых веб-проектов (HTML/CSS/JS без сборки) — свой маленький сервер на 127.0.0.1, работает и на телефоне, где команд нет.
+ *  Отдельный порт = отдельный источник: страница проекта не видит API Светланы (cookie HttpOnly, POST без нашего Origin отклоняется). */
+const previews = new Map(); let nextPreview = 1;
+const PMIME = { ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".ico": "image/x-icon", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".mp4": "video/mp4", ".txt": "text/plain; charset=utf-8", ".woff2": "font/woff2" };
+function startPreview(dir, rootReal) {
+  for (const p of previews.values()) if (p.dir === dir) return Promise.resolve(p);
+  if (previews.size >= MAX_SERVERS) { const [oldest] = previews.keys(); previews.get(oldest).server.close(); previews.delete(oldest); }
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      try {
+        const u = new URL(req.url, "http://x"); const parts = u.pathname.split("/"); // /<секрет>/путь
+        if (parts[1] !== rec.key) { res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }); return res.end("Нет такого файла"); }
+        let rel = decodeURIComponent(parts.slice(2).join("/")) || "index.html";
+        let f = path.resolve(dir, rel);
+        if (fs.existsSync(f) && fs.statSync(f).isDirectory()) f = path.join(f, "index.html");
+        const real = fs.existsSync(f) ? fs.realpathSync(f) : "";
+        if (!real || !(real === dir || real.startsWith(dir + path.sep)) || !real.startsWith(rootReal + path.sep) || !fs.statSync(real).isFile()) { res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }); return res.end("Нет такого файла"); }
+        res.writeHead(200, { "Content-Type": PMIME[path.extname(real).toLowerCase()] || "application/octet-stream", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" });
+        fs.createReadStream(real).pipe(res);
+      } catch { res.writeHead(400); res.end(); }
+    });
+    const rec = { id: "p" + nextPreview++, dir, server, port: 0, key: crypto.randomBytes(16).toString("hex") };
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => { rec.port = server.address().port; previews.set(rec.id, rec); resolve(rec); });
+  });
+}
+const stopAll = () => { for (const s of servers.values()) killTree(s.child); servers.clear(); for (const p of previews.values()) p.server.close(); previews.clear(); };
 process.once("exit", stopAll);
 for (const sig of ["SIGINT", "SIGTERM"]) process.once(sig, () => { stopAll(); process.exit(0); });
 
@@ -99,7 +126,8 @@ export function codeTools(cfg) {
     if (!cfg.commandAllow.includes(a.command)) return `команда «${a.command}» не в списке разрешённых (SVETLANA_COMMAND_ALLOW)`;
     return checkArgs(a.command, a.args || []);
   };
-  const list = () => [...servers.values()].map((s) => ({ id: s.id, url: s.url, command: s.title, cwd: s.cwd, running: s.child.exitCode === null }));
+  const list = () => [...servers.values()].map((s) => ({ id: s.id, url: s.url, command: s.title, cwd: s.cwd, running: s.child.exitCode === null }))
+    .concat([...previews.values()].map((p) => ({ id: p.id, url: `http://127.0.0.1:${p.port}/${p.key}/`, command: "просмотр (code_preview)", cwd: path.relative(root, p.dir) || ".", running: true })));
   async function serve(a) {
     if (a.port && (await portOpen(a.port))) return { ok: false, error: `порт ${a.port} уже занят` };
     const cwd = P(a.cwd || ".");
@@ -157,7 +185,7 @@ export function codeTools(cfg) {
           }
         }
         return { data: { os: process.platform === "win32" ? "Windows" : process.platform, root, allowed: cfg.commandAllow, run: cfg.runnerSocket ? "песочница на сервере" : cfg.allowHostExec ? "на этом компьютере (каждая команда — с подтверждением)" : "выключен", tools,
-          tips: process.platform === "win32" ? "Windows: python вместо python3; пути через \\ или /; без shell-операторов (&&, |, >) — каждую команду отдельным code_run; крупные файлы пиши частями (code_write, затем code_append)." : "крупные файлы пиши частями (code_write, затем code_append)" }, summary: `Среда: ${Object.entries(tools).map(([k, v]) => `${k} ${v}`).join(", ") || "команды не запускаются"}` };
+          tips: process.platform === "android" ? "Телефон: команды (npm, python) здесь не запускаются. Делай веб-приложения на чистых HTML/CSS/JS (без сборки, без npm) и показывай их через code_preview — откроются прямо в приложении." : process.platform === "win32" ? "Windows: python вместо python3; пути через \\ или /; без shell-операторов (&&, |, >) — каждую команду отдельным code_run; крупные файлы пиши частями (code_write, затем code_append)." : "крупные файлы пиши частями (code_write, затем code_append)" }, summary: `Среда: ${Object.entries(tools).map(([k, v]) => `${k} ${v}`).join(", ") || "команды не запускаются"}` };
       } },
     { name: "code_append", domain: "code", risk: "write", devAuto: () => true, description: "Дописать текст в конец файла (для больших файлов: сначала code_write с первой частью, потом code_append с остальными).",
       parameters: { type: "object", properties: { path: { type: "string", minLength: 1, maxLength: 500 }, content: { type: "string", minLength: 1, maxLength: 400000 } }, required: ["path", "content"], additionalProperties: false },
@@ -209,15 +237,24 @@ export function codeTools(cfg) {
         starting++; // место занято сразу, до первого await: параллельные запуски не обойдут лимит
         try { return await serve(a); } finally { starting--; }
       } },
+    { name: "code_preview", domain: "code", risk: "read", description: "Показать веб-проект (HTML/CSS/JS без сборки) — вернёт адрес http://127.0.0.1:порт/…, по нему проект открывается прямо в приложении. Работает везде, в том числе на телефоне. В проекте используй относительные пути (app.js, а не /app.js).",
+      parameters: { type: "object", properties: { path: { type: "string", minLength: 1, maxLength: 500, description: "папка проекта, где лежит index.html" }, entry: { type: "string", maxLength: 200, description: "страница, по умолчанию index.html" } }, required: ["path"], additionalProperties: false },
+      async execute(_c, a) {
+        const dir = P(a.path); if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return { ok: false, error: "нет такой папки — сначала создайте проект (code_write)" };
+        const entry = String(a.entry || "index.html").replace(/^\/+/, "");
+        if (!fs.existsSync(safePath(dir, entry))) return { ok: false, error: `в папке нет ${entry}` };
+        const p = await startPreview(dir, fs.realpathSync(root)); const url = `http://127.0.0.1:${p.port}/${p.key}/${entry === "index.html" ? "" : encodeURI(entry)}`;
+        return { data: { id: p.id, url }, summary: `Проект открыт: ${url}` };
+      } },
     { name: "code_serve_stop", domain: "code_run", risk: "write", confirm: false, description: "Остановить фоновый сервер проекта (id из code_serve) или все сразу (id не указывать).",
       parameters: { type: "object", properties: { id: { type: "string", maxLength: 10 } }, additionalProperties: false },
       async execute(_c, a) {
-        const ids = a.id ? [a.id] : [...servers.keys()]; let n = 0;
-        for (const i of ids) { const s = servers.get(i); if (s) { killTree(s.child); servers.delete(i); n++; } }
+        const ids = a.id ? [a.id] : [...servers.keys(), ...previews.keys()]; let n = 0;
+        for (const i of ids) { const s = servers.get(i); if (s) { killTree(s.child); servers.delete(i); n++; } const pv = previews.get(i); if (pv) { pv.server.close(); previews.delete(i); n++; } }
         return { ok: n > 0 || !a.id, data: { stopped: n }, summary: `Остановлено: ${n}`, error: n || !a.id ? undefined : "нет такого сервера" };
       } },
     { name: "code_serve_list", domain: "code_run", risk: "read", description: "Какие фоновые серверы проектов сейчас запущены и их адреса.",
-      async execute() { return { data: { servers: list() }, summary: `Запущено: ${servers.size}` }; } },
+      async execute() { return { data: { servers: list() }, summary: `Запущено: ${servers.size + previews.size}` }; } },
   ];
 }
 

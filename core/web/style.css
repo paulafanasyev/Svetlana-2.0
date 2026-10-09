@@ -23,5 +23,9 @@ table{border-collapse:collapse;width:100%;background:#fff;font-size:.9rem}th,td{
 .kpis div{background:#fff;border:1px solid var(--line);border-radius:14px;padding:.8rem}.kpis b{display:block;font-size:1.3rem}.dev{background:#fff;border:1px solid var(--line);border-radius:12px;padding:.6rem .8rem;margin:.4rem 0}
 .code{background:#151432;color:#e9e8ff;padding:.8rem;border-radius:12px;white-space:pre-wrap;word-break:break-all}.prov{display:grid;gap:.5rem;max-width:560px;margin-top:1rem}fieldset{border:1px solid var(--line);border-radius:12px;display:flex;flex-wrap:wrap;gap:.6rem}
 @media (max-width:640px){.top{padding:.4rem .6rem}.composer{padding:.4rem}.icon{width:2.3rem;height:2.3rem}}
+/* живой аватар (canvas) и «сцена» с большим лицом на телефоне */
+.ava.live{border:0;box-shadow:none;border-radius:50%;object-fit:initial;animation:none!important;transform:none!important}
+.stage{display:none;align-items:center;justify-content:center;gap:.8rem;padding:.4rem 1rem 0;cursor:pointer}.stage small{display:block;color:var(--soft)}.stage .ava.big{margin:0}
+@media (max-width:700px) and (min-height:560px){.stage{display:flex}}.stage.off{display:none!important}
 .composer textarea::placeholder{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:520px){.composer{gap:.3rem}.composer .icon{width:2.3rem;height:2.3rem}}

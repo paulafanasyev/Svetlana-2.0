@@ -10,13 +10,16 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Настройки сопряжения. Ключ устройства шифруется ключом из Android Keystore (AES-GCM), доступы по умолчанию выключены. */
+/** Настройки «Рук». Ключ устройства шифруется ключом из Android Keystore (AES-GCM), доступы по умолчанию выключены. */
 class Prefs(ctx: Context) {
     private val p = ctx.getSharedPreferences("hands", Context.MODE_PRIVATE)
     var url: String get() = p.getString("url", "") ?: ""; set(v) = p.edit().putString("url", v.trim()).apply()
     var token: String
         get() = p.getString("token_enc", null)?.let { runCatching { decrypt(it) }.getOrNull() } ?: ""
         set(v) = p.edit().putString("token_enc", encrypt(v.trim())).apply()
+    var deviceId: String get() = p.getString("device_id", "") ?: ""; set(v) = p.edit().putString("device_id", v).apply()
+    /** «Руки» подключены к другому серверу Светланы (VPS), а не к ядру в этом телефоне. */
+    var remote: Boolean get() = p.getBoolean("remote", false); set(v) = p.edit().putBoolean("remote", v).apply()
     var allowControl: Boolean get() = p.getBoolean("control", false); set(v) = p.edit().putBoolean("control", v).apply()
     var allowScreen: Boolean get() = p.getBoolean("screen", false); set(v) = p.edit().putBoolean("screen", v).apply()
 
@@ -26,7 +29,7 @@ class Prefs(ctx: Context) {
         if (allowControl) add("control") // clipboard.get на Android 10+ недоступен фоновой службе — не объявляем
     }
 
-    /** Только wss://, кроме локальной отладки (эмулятор/USB-проброс). */
+    /** Только wss://, кроме ядра в этом же телефоне и локальной отладки. */
     fun urlError(u: String = url): String? {
         val uri = runCatching { java.net.URI(u.trim()) }.getOrNull() ?: return "неверный адрес"
         val host = uri.host ?: return "в адресе нет сервера"
