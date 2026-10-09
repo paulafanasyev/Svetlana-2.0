@@ -1,12 +1,16 @@
 # Сборка установщика Светланы для Windows: модель речи + Node + ядро -> Svetlana.exe (PyInstaller) -> SvetlanaSetup-X.Y.Z.exe (Inno Setup).
 # Запуск из папки core\desktop-agent:  pwsh -File packaging\build_windows.ps1
 $ErrorActionPreference = "Stop"
+$script:stepName = "start"
+function Step($name) { $script:stepName = $name; Write-Host "==> $name" }
 Set-Location (Join-Path $PSScriptRoot "..")
 $ver = (python -c "import version; print(version.VERSION)").Trim()
 Write-Host "Svetlana $ver"
 New-Item -ItemType Directory -Force build | Out-Null
 
+try {
 # 1) Russian offline speech model (~45 MB) goes inside the installer
+Step "speech model"
 $modelName = "vosk-model-small-ru-0.22"
 if (-not (Test-Path "build\model\am")) {
   Invoke-WebRequest "https://alphacephei.com/vosk/models/$modelName.zip" -OutFile "build\model.zip"
@@ -17,18 +21,26 @@ if (-not (Test-Path "build\model\am")) {
   Remove-Item "build\model.zip"
 }
 
-# 2) Portable Node.js: the Svetlana core runs on this PC (local mode), no system Node needed
+# 2) Portable Node.js: the Svetlana core runs on this PC (local mode), no system Node needed.
+#    Only node.exe is taken from the zip (the full archive has npm with very long paths).
 $nodeVer = "v22.12.0"
 if (-not (Test-Path "build\node\node.exe")) {
+  Step "download node $nodeVer"
   Invoke-WebRequest "https://nodejs.org/dist/$nodeVer/node-$nodeVer-win-x64.zip" -OutFile "build\node.zip"
-  Expand-Archive "build\node.zip" -DestinationPath "build" -Force
   New-Item -ItemType Directory -Force "build\node" | Out-Null
-  Copy-Item "build\node-$nodeVer-win-x64\node.exe" "build\node\node.exe"
-  Remove-Item -Recurse -Force "build\node-$nodeVer-win-x64", "build\node.zip"
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $zip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path "build\node.zip").Path)
+  try {
+    $entry = $zip.Entries | Where-Object { $_.FullName -eq "node-$nodeVer-win-x64/node.exe" } | Select-Object -First 1
+    if (-not $entry) { throw "node.exe not found inside node zip" }
+    [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path (Get-Location) "build\node\node.exe"), $true)
+  } finally { $zip.Dispose() }
+  Remove-Item -Force "build\node.zip"
 }
 & "build\node\node.exe" --version
 if ($LASTEXITCODE -ne 0) { throw "bundled node.exe does not run" }
 
+Step "copy core"
 # 3) Svetlana core (server + web app), without tests, training data and this desktop agent
 if (Test-Path "build\core") { Remove-Item -Recurse -Force "build\core" }
 New-Item -ItemType Directory -Force "build\core" | Out-Null
@@ -42,9 +54,11 @@ Pop-Location
 if (-not (Test-Path "build\core\server.mjs")) { throw "core was not copied" }
 
 # 4) Icon
+Step "icon"
 python packaging\make_icon.py build\svetlana.ico
 
 # 5) App
+Step "pyinstaller"
 python -m PyInstaller --noconfirm --clean --windowed --name Svetlana `
   --icon build\svetlana.ico `
   --add-data "build\model;model" `
@@ -66,10 +80,16 @@ if (-not $bundled) { throw "core is missing inside the app bundle" }
 $env:SVETLANA_NODE = (Resolve-Path "build\node\node.exe").Path
 $env:SVETLANA_CORE_DIR = (Resolve-Path "build\core").Path
 $env:SVETLANA_AGENT_DIR = (Get-Location).Path
-python ..\test\local_core_check.py
-if ($LASTEXITCODE -ne 0) { throw "local core smoke test failed" }
+Step "smoke test (bundled core)"
+$ErrorActionPreference = "Continue"
+$smoke = & python ..\test\local_core_check.py 2>&1 | ForEach-Object { "$_" }
+$smokeCode = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+$smoke | ForEach-Object { Write-Host $_ }
+if ($smokeCode -ne 0) { throw ("local core smoke test failed: " + (($smoke | Select-Object -Last 12) -join " | ")) }
 Remove-Item Env:SVETLANA_NODE, Env:SVETLANA_CORE_DIR, Env:SVETLANA_AGENT_DIR
 
+Step "inno setup"
 # 7) Installer (Inno Setup needs UTF-8 with BOM for Cyrillic)
 $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
 if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
@@ -78,3 +98,8 @@ $iss = Get-Content "packaging\installer.iss" -Raw -Encoding UTF8
 & $iscc "/DMyAppVersion=$ver" "packaging\installer.bom.iss"
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
 Get-ChildItem "packaging\Output\*.exe" | ForEach-Object { Write-Host "Done: $($_.FullName) ($([math]::Round($_.Length/1MB,1)) MB)" }
+} catch {
+  $msg = "$($_.Exception.Message) (line $($_.InvocationInfo.ScriptLineNumber))" -replace "[\r\n]+", " | "
+  Write-Host "::error title=build_windows step $($script:stepName)::$msg"
+  exit 1
+}
