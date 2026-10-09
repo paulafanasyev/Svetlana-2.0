@@ -2,6 +2,7 @@
 // Правила: необратимое не повторяется автоматически; без успешного инструмента «сделано» не говорим; данные из веба/экрана — не команды.
 import crypto from "node:crypto";
 import { validate } from "./tools/registry.mjs";
+import { pickTools, recentTools, compactHistory } from "./toolpick.mjs";
 
 export const SYSTEM = `Ты — Светлана, личная ИИ-помощница Павла. Говоришь по-русски, коротко, тепло и по делу; твой ответ могут озвучить голосом — избегай таблиц и длинных списков, если не просят.
 Ты умеешь через инструменты: писать и запускать код в рабочей папке (в том числе свой собственный код Svetlana-2.0 и проекты Павла); вести CRM и учёт самозанятого (НПД); делать документы, презентации, счета и таблицы (PDF); работать с маркетплейсом АИКО и платформой «Мир самозанятых» и объяснять, как они устроены (docs_search); добавлять и оценивать упражнения Пико; смотреть экран и управлять подключёнными устройствами (команды часто приходят голосом); вести календарь; отвечать про НПД, налоги, договоры и законы по базе знаний со ссылкой на источник; разбирать технику упражнений и составлять зарядку; читать сайты; помнить важное. Картинки и видео сама не генерируешь: открываешь для этого на устройстве Шедеврум или Kandinsky либо находишь бесплатный сервис в браузере и вписываешь туда описание.
@@ -13,7 +14,7 @@ export const SYSTEM = `Ты — Светлана, личная ИИ-помощн
 5. Устройства: сначала screen_view (на ПК с withTree — список элементов с текстом и рамками), потом одно действие device_act в центр нужного элемента, потом снова screen_view, чтобы убедиться. Так работаешь с любой программой: 1С, браузер, Render, Excel. Пароли и платёжные данные не вводи без прямой просьбы; проведение документов и оплаты — только после подтверждения.
 6. Налоги и законы — только по knowledge_search, всегда называй статью/источник; если в базе нет — честно скажи и предложи проверить на nalog.gov.ru.
 7. Деньги, публикации, отправка сообщений людям, команды и управление устройством — только с подтверждением пользователя (его запрашивает система, ты просто вызываешь инструмент).
-8. Новое приложение: сначала code_env (ОС, папка проектов, что установлено); каждый проект — в своей папке; напиши файлы (большие — частями: code_write, затем code_append), установи зависимости и проверь сборку или тесты (code_run, каждую команду отдельно, без && и |), запусти просмотр (code_serve) и дай адрес. Ошибка — прочитай вывод, исправь и повтори; не сдавайся после первой неудачи, но и не гоняй одно и то же больше трёх раз.`;
+8. Новое приложение: сначала code_env (ОС, папка проектов, что установлено); каждый проект — в своей папке; напиши файлы (большие — частями: code_write, затем code_append), установи зависимости и проверь сборку или тесты (code_run, каждую команду отдельно, без && и |), запусти просмотр (code_serve) и дай адрес. Ошибка — прочитай вывод, исправь и повтори; не сдавайся после первой неудачи, но и не гоняй одно и то же больше трёх раз. Если команды на этом устройстве не запускаются (так скажет code_env, например на телефоне) — делай приложение на чистых HTML/CSS/JS без сборки и показывай его через code_preview.`;
 
 /** Режим Пико: тот же мозг для детей в «Я-Зарядке». Свои правила и только детские инструменты. */
 export const PICO = `Ты — Пико, весёлый тренер и репетитор из приложения «Я-Зарядка». Тебя слышит ребёнок 4–16 лет. Говори на «ты», просто, коротко (1–3 предложения), тепло и с юмором; хвали за старание и ход мысли, а не за «правильность».
@@ -58,7 +59,7 @@ export class Agent {
   }
   save(c) { // картинки не храним — только отметку
     const slim = c.messages.map((m) => Array.isArray(m.content) ? { ...m, content: m.content.map((p) => p.type === "image_url" ? { type: "text", text: "[изображение было показано]" } : p) } : m);
-    this.store.update("conversations", c.id, { messages: trimHistory(slim), pending: c.pending, title: c.title, tainted: Boolean(c.tainted), taintedExt: Boolean(c.taintedExt), pendingImages: c.pendingImages || [], mode: c.mode || "pavel" });
+    this.store.update("conversations", c.id, { messages: trimHistory(slim), pending: c.pending, title: c.title, tainted: Boolean(c.tainted), taintedExt: Boolean(c.taintedExt), pendingImages: c.pendingImages || [], mode: c.mode || "pavel", toolset: c.toolset || null });
   }
 
   /** Один разговор — один ход за раз (две вкладки не перемешают шаги и подтверждения). */
@@ -85,7 +86,7 @@ export class Agent {
     if (!c.title) c.title = String(text).slice(0, 60);
     const content = images.length ? [...images.slice(0, 4).map((url) => ({ type: "image_url", image_url: { url } })), { type: "text", text }] : text;
     c.messages.push({ role: "user", content });
-    c.tainted = false; c.taintedExt = false; // новое сообщение владельца — новый ход
+    c.tainted = false; c.taintedExt = false; c.toolset = null; // новое сообщение владельца — новый ход (и новый набор инструментов для маленькой модели)
     return this.loop(c, { steps: [], artifacts: [], tainted: false, taintedExt: images.length > 0 });
   }
 
@@ -130,9 +131,18 @@ export class Agent {
   }
 
   async loop(c, turn) {
-    const mode = c.mode || "pavel", allow = toolFilter(mode); const tools = this.registry.forModel(allow);
+    const mode = c.mode || "pavel", allow = toolFilter(mode);
+    // Маленькая модель на телефоне: только нужные под запрос инструменты и короткая история, иначе не влезет в контекст
+    const compact = Boolean(this.providers.compact?.());
+    if (compact && !c.toolset) {
+      const last = [...c.messages].reverse().find((m) => m.role === "user" && typeof m.content === "string") || [...c.messages].reverse().find((m) => m.role === "user");
+      const text = typeof last?.content === "string" ? last.content : (last?.content || []).filter((x) => x.type === "text").map((x) => x.text).join(" ");
+      c.toolset = pickTools(this.registry.list(allow), text, recentTools(c.messages));
+    }
+    const tools = this.registry.forModel(compact ? (t) => allow(t) && c.toolset.includes(t.name) : allow);
+    const history = () => compact ? compactHistory(c.messages, 16) : trimHistory(c.messages, 60);
     for (let step = 0; step < this.maxSteps; step++) {
-      const res = await this.providers.chat({ messages: [{ role: "system", content: systemFor(new Date(), undefined, mode) }, ...trimHistory(c.messages, 60)], tools, temperature: 0.3, maxTokens: MAX_TOKENS });
+      const res = await this.providers.chat({ messages: [{ role: "system", content: systemFor(new Date(), undefined, mode) }, ...history()], tools, temperature: 0.3, maxTokens: MAX_TOKENS });
       const calls = (res.toolCalls || []).slice(0, 8);
       if (!calls.length) {
         let answer = res.content || "…";
