@@ -7,18 +7,32 @@ on:
       - main
       - svetlana-2.0-core-development-0416c
       - feature/windows-hands-mcp-skeleton
+  pull_request:
+    paths:
+      - "src-tauri/**"
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.*"
+      - ".github/workflows/build-windows.yml"
+      - "ci/build-windows.yml"
+
+permissions:
+  contents: read
 
 jobs:
   build-windows:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'npm'
+          cache: npm
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -32,11 +46,25 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0.0" --locked
 
-      - name: Build Tauri EXE & Installer
+      - name: Build Tauri NSIS installer
         run: cargo tauri build --bundles nsis
+        working-directory: src-tauri
+
+      - name: Verify installer exists
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter "*.exe" -File
+          if (-not $installer) {
+            throw "Tauri build completed without producing an NSIS .exe installer."
+          }
+          $installer | ForEach-Object {
+            Write-Host ("Installer: {0} ({1} bytes)" -f $_.FullName, $_.Length)
+          }
 
       - name: Upload Windows Setup EXE
         uses: actions/upload-artifact@v4
         with:
           name: SvetlanaSetup-Windows
           path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14
