@@ -2,13 +2,20 @@
   "name": "sandbox-workspace",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
+    "predev": "node scripts/ensure-native-deps.mjs",
     "dev": "vite",
-    "build": "npx --yes vite build",
+    "prebuild": "node scripts/ensure-native-deps.mjs",
+    "build": "vite build",
     "typecheck": "tsc --noEmit",
+    "pretest": "node scripts/ensure-native-deps.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "echo 'Lint not configured'"
+    "lint": "echo 'Lint not configured'",
+    "native:check": "node scripts/ensure-native-deps.mjs --dry-run"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.1.0",
@@ -26,7 +33,6 @@
     "uuid": "^9.0.1"
   },
   "devDependencies": {
-    "@rollup/rollup-win32-x64-msvc": "^4.34.8",
     "@tailwindcss/vite": "^4.1.7",
     "@types/canvas-confetti": "^1.6.4",
     "@types/node": "^22.0.0",
@@ -34,13 +40,9 @@
     "@types/react-dom": "^18.2.0",
     "@types/uuid": "^9.0.7",
     "@vitejs/plugin-react": "^4.3.4",
-    "rollup": "^4.34.8",
     "tailwindcss": "^4.1.7",
     "typescript": "^5.9.3",
     "vite": "^6.4.3",
     "vitest": "^5.0.0"
-  },
-  "optionalDependencies": {
-    "@rollup/rollup-win32-x64-msvc": "^4.34.8"
   }
 }
