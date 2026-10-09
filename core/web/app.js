@@ -66,7 +66,7 @@ function grantDomain(pending) { const ds = [...new Set(pending.map((p) => GRANTA
 async function turn(fn, userText) {
   if (userText) bubble("me", fmt(userText));
   setStatus("думаю…", "think"); $("#send").disabled = true;
-  try { const res = await fn(); S.conv = res.conversationId; localStorage.setItem("sv_conv", S.conv); render(res); setStatus("готова"); }
+  try { const res = await fn(); S.conv = res.conversationId; localStorage.setItem("sv_conv", S.conv); render(res); if (!S.speaking) setStatus("готова"); } // озвучка сама вернёт «готова», когда договорит
   catch (e) {
     if (/не настроен ни один провайдер|нет провайдера/.test(e.message)) noBrain(); // первый запуск: Светлане нечем думать — подсказываем, что сделать
     else bubble("bot err", "Не получилось: " + esc(e.message));
@@ -204,7 +204,7 @@ function stopSpeaking() {
   if (audioUrl) { URL.revokeObjectURL(audioUrl); audioUrl = null; }
   if ("speechSynthesis" in window) speechSynthesis.cancel();
   if (AND) { window.__svSpoke = null; try { AND.stopSpeaking(); } catch {} }
-  S.speaking = false;
+  window.SvAvatar?.hush?.(); S.speaking = false;
 }
 async function speak(text) {
   const clean = String(text || "").replace(/[*`#>|]/g, "").replace(/\(Проверка:[^)]*\)/, "").slice(0, 3000);
@@ -216,13 +216,15 @@ async function speak(text) {
   try {
     const blob = await api("/api/tts", { method: "POST", body: JSON.stringify({ text: clean }), signal: ac.signal });
     if (gen !== speakGen) return; // пока ждали, пришёл новый ответ или озвучку выключили
-    if (blob instanceof Blob) { audioUrl = URL.createObjectURL(blob); audio = new Audio(audioUrl); audio.onended = done; audio.onerror = done; try { await audio.play(); } catch { done(); } return; }
+    if (blob instanceof Blob) { audioUrl = URL.createObjectURL(blob); audio = new Audio(audioUrl); window.SvAvatar?.voice?.(audio); audio.onended = done; audio.onerror = done; try { await audio.play(); } catch { done(); } return; }
   } catch { if (gen !== speakGen) return; /* озвучим браузером */ }
   if (AND) { window.__svSpoke = () => { window.__svSpoke = null; done(); }; try { AND.speak(clean); } catch { done(); } return; } // голос телефона
   if (!("speechSynthesis" in window)) return done();
   const u = new SpeechSynthesisUtterance(clean); u.lang = "ru-RU";
   const v = speechSynthesis.getVoices().find((x) => x.lang.startsWith("ru") && /female|жен|irina|alena|milena|svetlana/i.test(x.name)) || speechSynthesis.getVoices().find((x) => x.lang.startsWith("ru"));
-  if (v) u.voice = v; u.onend = done; u.onerror = done; speechSynthesis.speak(u);
+  if (v) u.voice = v; u.onend = done; u.onerror = done;
+  u.onstart = () => window.SvAvatar?.started?.(); u.onboundary = (e) => window.SvAvatar?.word?.(e.charIndex || 0); // губы аватара — в темп голоса
+  speechSynthesis.speak(u);
 }
 // нажатие на лицо Светланы — включить/выключить озвучку (canvas живого аватара заменяет картинку, поэтому слушаем документ)
 document.addEventListener("click", (e) => { if (!e.target.closest?.("#ava")) return; const on = localStorage.getItem("sv_voice") !== "1"; localStorage.setItem("sv_voice", on ? "1" : "0"); if (!on) stopSpeaking(); setStatus(on ? "озвучка включена" : "озвучка выключена"); });

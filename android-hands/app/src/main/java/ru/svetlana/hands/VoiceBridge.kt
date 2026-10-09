@@ -26,6 +26,9 @@ class VoiceBridge(private val a: Activity, private val web: WebView) {
     private var ttsReady = false
     private var ttsFailed = false
     private var pendingSay: String? = null
+    // у каждой фразы свой id: события старой фразы (после QUEUE_FLUSH или stop) не должны завершать или двигать новую
+    @Volatile private var activeId: String? = null
+    private var seq = 0
     var askMic: (() -> Unit)? = null
 
     init {
@@ -35,11 +38,11 @@ class VoiceBridge(private val a: Activity, private val web: WebView) {
             if (ttsReady) {
                 tts?.setLanguage(Locale("ru", "RU"))
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(id: String?) { js("window.__svSpeechStart&&window.__svSpeechStart()") }
-                    override fun onDone(id: String?) { js("window.__svSpoke&&window.__svSpoke()") }
-                    @Deprecated("Deprecated in Java") override fun onError(id: String?) { js("window.__svSpoke&&window.__svSpoke()") }
+                    override fun onStart(id: String?) { if (id == activeId) js("window.__svSpeechStart&&window.__svSpeechStart()") }
+                    override fun onDone(id: String?) { if (id == activeId) { activeId = null; js("window.__svSpoke&&window.__svSpoke()") } }
+                    @Deprecated("Deprecated in Java") override fun onError(id: String?) { if (id == activeId) { activeId = null; js("window.__svSpoke&&window.__svSpoke()") } }
                     // Android 8+: движок сообщает, какое слово звучит, — по нему губы аватара держат темп голоса
-                    override fun onRangeStart(id: String?, start: Int, end: Int, frame: Int) { js("window.__svRange&&window.__svRange($start)") }
+                    override fun onRangeStart(id: String?, start: Int, end: Int, frame: Int) { if (id == activeId) js("window.__svRange&&window.__svRange($start)") }
                 })
                 pendingSay?.let { pendingSay = null; say(it) }
             }
@@ -74,14 +77,15 @@ class VoiceBridge(private val a: Activity, private val web: WebView) {
     }
     @JavascriptInterface fun stopListening() = a.runOnUiThread { sr?.stopListening() }
     @JavascriptInterface fun speak(text: String) = a.runOnUiThread { say(text) }
-    @JavascriptInterface fun stopSpeaking() = a.runOnUiThread { tts?.stop() }
+    @JavascriptInterface fun stopSpeaking() = a.runOnUiThread { activeId = null; pendingSay = null; tts?.stop() }
     /** Из чата: «нет модели и ключа» → экран выбора модели. */
     @JavascriptInterface fun openModels() = a.runOnUiThread { a.startActivity(Intent(a, ModelsActivity::class.java)) }
 
     private fun say(text: String) {
-        if (ttsFailed) { js("window.__svSpoke&&window.__svSpoke()") ; return }
+        if (ttsFailed) { js("window.__svSpoke&&window.__svSpoke()"); return }
         if (!ttsReady) { pendingSay = text; return }
-        tts?.speak(text.take(3900), TextToSpeech.QUEUE_FLUSH, null, "sv")
+        val id = "sv-${++seq}"; activeId = id
+        if (tts?.speak(text.take(3900), TextToSpeech.QUEUE_FLUSH, null, id) != TextToSpeech.SUCCESS) { activeId = null; js("window.__svSpoke&&window.__svSpoke()") } // движок отказал — не висим в «говорю…»
     }
     fun destroy() { sr?.destroy(); tts?.shutdown() }
 }
