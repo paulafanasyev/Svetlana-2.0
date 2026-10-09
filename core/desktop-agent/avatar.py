@@ -266,8 +266,11 @@ class AvatarWidget(tk.Canvas):
 
     def _tick(self):
         try:
-            self._draw(time.monotonic() - self.t0)
-            self.after(40, self._tick)
+            if self.winfo_viewable():  # окно в трее — не рисуем впустую
+                self._draw(time.monotonic() - self.t0)
+                self.after(40, self._tick)
+            else:
+                self.after(500, self._tick)
         except tk.TclError:
             pass  # окно закрыто
 

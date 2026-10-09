@@ -78,7 +78,7 @@ python -m PyInstaller --noconfirm --clean --windowed --name Svetlana `
   --hidden-import pystray._win32 `
   --hidden-import pyttsx3.drivers `
   --hidden-import pyttsx3.drivers.sapi5 `
-  --hidden-import agent --hidden-import commands --hidden-import ui_tree --hidden-import local_core --hidden-import models --hidden-import avatar `
+  --hidden-import agent --hidden-import commands --hidden-import ui_tree --hidden-import local_core --hidden-import models --hidden-import avatar --hidden-import PIL.ImageTk `
   svetlana_desktop.py
 if (-not (Test-Path "dist\Svetlana\Svetlana.exe")) { throw "PyInstaller did not build Svetlana.exe" }
 $bundled = Get-ChildItem -Recurse -Filter "server.mjs" "dist\Svetlana" | Select-Object -First 1

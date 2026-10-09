@@ -196,7 +196,7 @@ class App:
         logging.info(msg)
         av = getattr(self, "avatar", None)
         if av is not None and isinstance(msg, str) and msg.startswith("[Светлана] "):
-            av.say(msg[len("[Светлана] "):])  # лицо под смысл фразы, пока она её говорит
+            self.ui.put(("avatar_say", msg[len("[Светлана] "):]))  # лицо под смысл фразы, пока она её говорит
         self.ui.put(("log", msg))
 
     def set_state(self, s):
@@ -231,6 +231,10 @@ class App:
                     self.refresh_models()
                     if v:
                         self.apply_model(v)
+                elif kind == "avatar_say":
+                    self.avatar.say(v)
+                elif kind == "avatar_react":
+                    self.avatar.react(v)
                 elif kind == "show":
                     self.show()
                 elif kind == "listen":
@@ -336,7 +340,7 @@ class App:
         try:
             models.pull(tag, lambda pct, st: self.ui.put(("progress", (pct, f"Скачиваю {tag}: {pct}% ({st})"))), cancel=cancel)
             self.log(f"Модель {tag} скачана.")
-            self.avatar.react("wink")
+            self.ui.put(("avatar_react", "wink"))
             self.ui.put(("dl_done", tag))
         except Exception as e:
             self.log(f"Модель не скачалась: {e}")
