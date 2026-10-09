@@ -33,16 +33,18 @@ class VoiceBridge(private val a: Activity, private val web: WebView) {
 
     init {
         tts = TextToSpeech(a) { st ->
-            ttsReady = st == TextToSpeech.SUCCESS; ttsFailed = !ttsReady
-            if (ttsFailed && pendingSay != null) { pendingSay = null; js("window.__svSpoke&&window.__svSpoke()") } // нет голосового движка — не зависаем в «говорю…»
+            // нет движка или русского голоса — честно «не умею», а не вечное «говорю…»
+            val lang = if (st == TextToSpeech.SUCCESS) tts?.setLanguage(Locale("ru", "RU")) else null
+            ttsReady = st == TextToSpeech.SUCCESS && lang != TextToSpeech.LANG_MISSING_DATA && lang != TextToSpeech.LANG_NOT_SUPPORTED
+            ttsFailed = !ttsReady
+            if (ttsFailed && pendingSay != null) { pendingSay = null; js("window.__svSpoke&&window.__svSpoke()") }
             if (ttsReady) {
-                tts?.setLanguage(Locale("ru", "RU"))
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(id: String?) { if (id == activeId) js("window.__svSpeechStart&&window.__svSpeechStart()") }
-                    override fun onDone(id: String?) { if (id == activeId) { activeId = null; js("window.__svSpoke&&window.__svSpoke()") } }
-                    @Deprecated("Deprecated in Java") override fun onError(id: String?) { if (id == activeId) { activeId = null; js("window.__svSpoke&&window.__svSpoke()") } }
+                    override fun onStart(id: String?) { event(id, "window.__svSpeechStart&&window.__svSpeechStart()") }
+                    override fun onDone(id: String?) { event(id, "window.__svSpoke&&window.__svSpoke()", last = true) }
+                    @Deprecated("Deprecated in Java") override fun onError(id: String?) { event(id, "window.__svSpoke&&window.__svSpoke()", last = true) }
                     // Android 8+: движок сообщает, какое слово звучит, — по нему губы аватара держат темп голоса
-                    override fun onRangeStart(id: String?, start: Int, end: Int, frame: Int) { if (id == activeId) js("window.__svRange&&window.__svRange($start)") }
+                    override fun onRangeStart(id: String?, start: Int, end: Int, frame: Int) { event(id, "window.__svRange&&window.__svRange($start)") }
                 })
                 pendingSay?.let { pendingSay = null; say(it) }
             }
@@ -50,6 +52,13 @@ class VoiceBridge(private val a: Activity, private val web: WebView) {
     }
 
     private fun js(code: String) = a.runOnUiThread { web.evaluateJavascript(code, null) }
+    /** Событие голоса — только для текущей фразы. Проверяем уже в UI-потоке: там же меняется activeId (say/stopSpeaking),
+     *  поэтому запоздавший onDone старой фразы не завершит новую. */
+    private fun event(id: String?, code: String, last: Boolean = false) = a.runOnUiThread {
+        if (id == null || id != activeId) return@runOnUiThread
+        if (last) activeId = null
+        web.evaluateJavascript(code, null)
+    }
     private fun voice(kind: String, text: String = "") = js("window.__svVoice&&window.__svVoice(${JSONObject.quote(kind)},${JSONObject.quote(text)})")
 
     @JavascriptInterface fun listen() = a.runOnUiThread {

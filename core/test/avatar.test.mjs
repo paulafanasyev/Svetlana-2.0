@@ -112,3 +112,29 @@ test("звук сервера: губы идут по времени плеер�
   assert.equal(win.HTMLMediaElement.prototype.play, play, "play не подменён");
   assert.equal(sp.an, null, "без работающего AudioContext анализатор не подключается — звук не пропадёт");
 });
+
+test("громкость голоса: анализатор подключается один раз при работающем звуке и никогда — в приложении Android", () => {
+  // ПК-браузер: касание создаёт работающий AudioContext
+  const pc = loadWith({});
+  pc.listeners.pointerdown();
+  pc.A.setState("speaking"); pc.A.say("Привет"); const a1 = fakeAudio(); pc.A.voice(a1);
+  assert.equal(pc.ctx.sources, 1, "подключили анализатор");
+  pc.A.say("Ещё раз"); pc.A.voice(a1); // тот же <audio> второй раз подключать нельзя — браузер бросит ошибку
+  assert.equal(pc.ctx.sources, 1);
+  // Android WebView: анализатор не трогаем вообще (звук идёт мимо WebAudio)
+  const and = loadWith({ SvetlanaAndroid: {} });
+  assert.equal(typeof and.listeners.pointerdown, "undefined", "в Android контекст звука даже не создаём");
+  and.A.setState("speaking"); and.A.say("Привет"); and.A.voice(fakeAudio());
+  assert.equal(and.ctx.sources, 0);
+});
+
+function fakeAudio() { return { paused: true, currentTime: 0, duration: 2, addEventListener() {} }; }
+function loadWith(extra) {
+  const ctx = { sources: 0 };
+  const listeners = {};
+  class AudioContext { constructor() { this.state = "running"; this.destination = {}; } resume() { return Promise.resolve(); } createMediaElementSource() { ctx.sources++; return { connect() {} }; } createAnalyser() { return { fftSize: 0, connect() {}, getByteTimeDomainData() {} }; } }
+  const win = { ...extra, AudioContext, innerWidth: 400, innerHeight: 800, addEventListener: (n, f) => { listeners[n] = f; }, requestAnimationFrame() {}, document: { hidden: false, createElement: () => ({}) }, performance: { now: () => 0 }, Image: class {} };
+  win.window = win;
+  vm.runInContext(readFileSync(new URL("../web/avatar.js", import.meta.url), "utf8"), vm.createContext(win));
+  return { A: win.SvAvatar, listeners, ctx };
+}
