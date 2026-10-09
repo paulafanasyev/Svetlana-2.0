@@ -61,3 +61,16 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM Svetlana.exe"; Flags: run
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
+
+[Code]
+// Обновление поверх запущенной Светланы: окно по крестику уходит в трей, поэтому
+// CloseApplications его не закрывает. Перед копированием файлов завершаем процесс
+// (вместе с дочерним node.exe, ядро и так убивается Job Object'ом).
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Code: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM Svetlana.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Sleep(1000);
+  Result := '';
+end;
