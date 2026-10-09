@@ -38,6 +38,10 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "desktopicon"; Description: "Значок на рабочем столе"; GroupDescription: "Дополнительно:"
 Name: "autostart"; Description: "Запускать Светлану при входе в Windows"; GroupDescription: "Дополнительно:"
 
+[InstallDelete]
+; обновление поверх старой версии: библиотеки прошлой сборки не смешиваются с новыми (данные пользователя — в %APPDATA%)
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
 Source: "..\dist\Svetlana\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -53,7 +57,20 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Filename: "{app}\Svetlana.exe"; Description: "Запустить Светлану"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM Svetlana.exe"; Flags: runhidden; RunOnceId: "KillSvetlana"
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM Svetlana.exe"; Flags: runhidden; RunOnceId: "KillSvetlana"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
+
+[Code]
+// Обновление поверх запущенной Светланы: окно по крестику уходит в трей, поэтому
+// CloseApplications его не закрывает. Перед копированием файлов завершаем процесс
+// (вместе с дочерним node.exe, ядро и так убивается Job Object'ом).
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Code: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM Svetlana.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Sleep(1000);
+  Result := '';
+end;
