@@ -69,7 +69,21 @@ export function findChromium(cfg) {
   return cands.find((p) => fs.existsSync(p)) || null;
 }
 
+/** Телефон: PDF печатает само приложение Android (WebView → PrintManager), ядро передаёт пути к файлам. */
+async function pdfViaBridge(bridge, htmlFile, pdfFile) {
+  const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 90000);
+  try {
+    const html = fs.readFileSync(htmlFile, "utf8");
+    const r = await fetch(bridge, { method: "POST", signal: ac.signal, headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.SVETLANA_PDF_TOKEN || ""}` },
+      body: JSON.stringify({ html: htmlFile, pdf: pdfFile, slides: /@page\{size:1280px 720px/.test(html) }) });
+    const ok = r.ok && fs.existsSync(pdfFile) && fs.statSync(pdfFile).size > 500 && fs.readFileSync(pdfFile).subarray(0, 5).toString() === "%PDF-";
+    return ok ? { ok: true } : { ok: false, error: "телефон не смог напечатать PDF: " + (await r.text().catch(() => "")).slice(0, 200) };
+  } catch (e) { return { ok: false, error: "печать PDF на телефоне не ответила: " + String(e.message || e).slice(0, 200) }; }
+  finally { clearTimeout(t); }
+}
+
 export async function htmlToPdf(cfg, htmlFile, pdfFile) {
+  if (process.env.SVETLANA_PDF_BRIDGE) return pdfViaBridge(process.env.SVETLANA_PDF_BRIDGE, htmlFile, pdfFile);
   const chrome = findChromium(cfg);
   if (!chrome) return { ok: false, error: "Chromium не найден (CHROMIUM_PATH) — PDF не создан, HTML готов: откройте и «Печать → PDF»" };
   const r = await runProcess(chrome, ["--headless=new", "--disable-gpu", ...(cfg.chromiumNoSandbox ? ["--no-sandbox"] : []), "--disable-background-networking", "--no-pdf-header-footer", `--print-to-pdf=${pdfFile}`, "file://" + htmlFile], { timeoutMs: 90000 });
