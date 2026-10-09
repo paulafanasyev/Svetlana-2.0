@@ -44,8 +44,8 @@ AI-агент для управления Android устройствами че�
 
 ### Требования
 
-- Node.js 18+ или 20+
-- npm или yarn
+- **Node.js 22.12+** (или 24.x). Node 18/20 не подходят: `vitest@5` и `@supabase/supabase-js` требуют Node 22+.
+- npm 10+
 - Android устройство с установленным Svetlana-App
 
 ### Svetlana 2.0 (Web)
@@ -56,7 +56,7 @@ git clone https://github.com/paulafanasyev/Svetlana-2.0.git
 cd Svetlana-2.0
 
 # Установить зависимости
-npm install
+npm ci
 
 # Запустить dev сервер
 npm run dev
@@ -64,6 +64,20 @@ npm run dev
 # Собрать production версию
 npm run build
 ```
+
+### Windows
+
+Если на Windows `npm run dev`, `npm run build` или `npm test` падают с ошибками вида
+`Cannot find module @rollup/rollup-win32-x64-msvc`, `lightningcss.win32-x64-msvc.node`
+или `You installed esbuild for another platform`, значит lockfile не содержит Windows-бинарников.
+Пересоздайте его один раз (работает на любой ОС):
+
+```bash
+npm run fix:lockfile     # чистая переустановка + проверка
+npm run check:lockfile   # только проверка
+```
+
+После этого закоммитьте новый `package-lock.json`.
 
 ### Svetlana-App (Android)
 
@@ -155,6 +169,7 @@ npm run build
 
 ## 📚 Документация
 
+- [Master Roadmap](SVETLANA_MASTER_ROADMAP.md) — канонический план и статусы
 - [Android Hands Architecture](docs/ANDROID_HANDS.md) — полная документация по архитектуре
 - [MCP Protocol](docs/ANDROID_HANDS.md#mcp-model-context-protocol) — спецификация протокола
 - [Security Model](docs/ANDROID_HANDS.md#security) — модель безопасности
@@ -187,6 +202,8 @@ Svetlana-2.0/
 │   │   ├── verification.test.ts
 │   │   └── integration.test.ts
 │   └── App.tsx             # Главный компонент
+├── scripts/
+│   └── regenerate-lockfile.mjs # Пересоздание lockfile для всех ОС
 ├── docs/                   # Документация
 │   └── ANDROID_HANDS.md
 ├── .github/workflows/      # CI/CD
@@ -250,10 +267,11 @@ GitHub Actions автоматически запускает:
 - Real tools с verification
 - MCP protocol
 - Policy engine
-- Test suite
+- Test suite (Linux CI)
 - CI/CD
 
 ### NOT PROVEN ⚠️
+- Windows/macOS сборка (lockfile до исправления содержал только Linux-бинарники)
 - Real device connection (требует Svetlana-App)
 - Real AccessibilityService integration
 - Real screen capture
@@ -282,4 +300,4 @@ MIT
 
 **Статус**: 🟢 Active Development  
 **Версия**: 2.0.0  
-**Последнее обновление**: 2026-03-10
+**Последнее обновление**: 2026-10-09
