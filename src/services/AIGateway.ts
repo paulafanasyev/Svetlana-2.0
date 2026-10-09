@@ -1,4 +1,5 @@
 // Real AI Gateway - connects to actual LLM providers
+// Defaults to local offline provider (Ollama / Local Svetlana) on Windows/Desktop
 
 export interface AIProvider {
   id: string;
@@ -8,6 +9,7 @@ export interface AIProvider {
   apiKey?: string;
   model: string;
   enabled: boolean;
+  useProxy?: boolean;
 }
 
 export interface ChatMessage {
@@ -34,12 +36,53 @@ export interface StructuredToolCall {
   timestamp: number;
 }
 
+const DEFAULT_OFFLINE_PROVIDERS: AIProvider[] = [
+  {
+    id: 'ollama',
+    name: '★ Светлана Локальная (Ollama / Offline)',
+    type: 'offline',
+    endpoint: 'http://127.0.0.1:11434',
+    model: 'svetlana:latest',
+    enabled: true,
+  },
+  {
+    id: 'lmstudio',
+    name: 'LM Studio (Локальный сервер)',
+    type: 'offline',
+    endpoint: 'http://127.0.0.1:1234',
+    model: 'default',
+    enabled: false,
+  },
+];
+
 class AIGateway {
   private providers: Map<string, AIProvider> = new Map();
   private activeProvider: string | null = null;
+  private proxyUrl: string | null = null;
 
   constructor() {
+    this.initDefaultProviders();
     this.loadFromStorage();
+  }
+
+  private initDefaultProviders() {
+    for (const p of DEFAULT_OFFLINE_PROVIDERS) {
+      this.providers.set(p.id, p);
+    }
+    this.activeProvider = 'ollama';
+  }
+
+  setProxyUrl(url: string | null) {
+    this.proxyUrl = url;
+    if (url) {
+      sessionStorage.setItem('svetlana_ai_proxy', url);
+    } else {
+      sessionStorage.removeItem('svetlana_ai_proxy');
+    }
+  }
+
+  getProxyUrl(): string | null {
+    return this.proxyUrl || sessionStorage.getItem('svetlana_ai_proxy');
   }
 
   private loadFromStorage() {
@@ -49,10 +92,11 @@ class AIGateway {
         const data = JSON.parse(stored);
         data.forEach((p: AIProvider) => {
           this.providers.set(p.id, p);
-          if (p.enabled && !this.activeProvider) {
-            this.activeProvider = p.id;
-          }
         });
+        const savedActive = localStorage.getItem('svetlana_active_provider');
+        if (savedActive && this.providers.has(savedActive)) {
+          this.activeProvider = savedActive;
+        }
       } catch (e) {
         console.error('Failed to load AI providers:', e);
       }
@@ -62,6 +106,9 @@ class AIGateway {
   private saveToStorage() {
     const data = Array.from(this.providers.values());
     localStorage.setItem('svetlana_ai_providers', JSON.stringify(data));
+    if (this.activeProvider) {
+      localStorage.setItem('svetlana_active_provider', this.activeProvider);
+    }
   }
 
   addProvider(provider: AIProvider) {
@@ -76,7 +123,6 @@ class AIGateway {
     this.providers.delete(id);
     if (this.activeProvider === id) {
       this.activeProvider = null;
-      // Find another enabled provider
       for (const [pid, p] of this.providers) {
         if (p.enabled) {
           this.activeProvider = pid;
@@ -119,24 +165,20 @@ class AIGateway {
   }
 
   async chat(messages: ChatMessage[], options?: { temperature?: number; max_tokens?: number }, providerId?: string): Promise<AIResponse> {
-    // Use specified provider or fall back to active provider
     const provider = providerId ? this.providers.get(providerId) : this.getActiveProvider();
     if (!provider) {
       throw new Error('No AI provider configured');
     }
 
     try {
-      const response = await this.callProvider(provider, messages, options);
-      return response;
+      return await this.callProvider(provider, messages, options);
     } catch (error: any) {
-      // Try fallback providers if available
       if (!providerId && this.providers.size > 1) {
         const fallbackProviders = this.getFallbackProviders(provider.id);
         for (const fallback of fallbackProviders) {
           try {
             console.warn(`Provider ${provider.name} failed, trying fallback: ${fallback.name}`);
-            const fallbackResponse = await this.callProvider(fallback, messages, options);
-            return fallbackResponse;
+            return await this.callProvider(fallback, messages, options);
           } catch (fallbackError) {
             console.error(`Fallback ${fallback.name} also failed:`, fallbackError);
             continue;
@@ -148,7 +190,16 @@ class AIGateway {
   }
 
   private async callProvider(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    const proxy = this.getProxyUrl();
+    if ((proxy || provider.useProxy) && provider.type === 'online') {
+      return this.callViaProxy(proxy || '/api/ai-proxy', provider, messages, options);
+    }
+
     switch (provider.id) {
+      case 'ollama':
+        return this.callOllama(provider, messages, options);
+      case 'lmstudio':
+        return this.callLMStudio(provider, messages, options);
       case 'openai':
         return this.callOpenAI(provider, messages, options);
       case 'anthropic':
@@ -163,172 +214,43 @@ class AIGateway {
         return this.callOpenRouter(provider, messages, options);
       case 'deepseek':
         return this.callDeepSeek(provider, messages, options);
-      case 'ollama':
-        return this.callOllama(provider, messages, options);
-      case 'lmstudio':
-        return this.callLMStudio(provider, messages, options);
       default:
+        // Generic offline fallback
+        if (provider.type === 'offline') {
+          return this.callOllama(provider, messages, options);
+        }
         throw new Error(`Provider ${provider.id} not implemented`);
     }
   }
 
+  private async callViaProxy(proxyEndpoint: string, provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    const response = await fetch(proxyEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        provider: provider.id,
+        model: provider.model,
+        messages,
+        options,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(`AI Proxy error: ${err.error || response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
   private getFallbackProviders(excludeId: string): AIProvider[] {
-    const fallbackOrder = ['openai', 'anthropic', 'groq', 'openrouter', 'deepseek', 'ollama'];
+    const fallbackOrder = ['ollama', 'lmstudio', 'groq', 'openai', 'anthropic', 'deepseek'];
     return fallbackOrder
       .filter(id => id !== excludeId && this.providers.has(id))
       .map(id => this.providers.get(id)!)
       .filter(p => p.enabled);
-  }
-
-  private async callOpenAI(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${provider.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        messages,
-        temperature: options?.temperature ?? 0.7,
-        max_tokens: options?.max_tokens ?? 4096,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(`OpenAI API error: ${error.error?.message || response.statusText}`);
-    }
-
-    const data = await response.json();
-    return {
-      content: data.choices[0].message.content,
-      provider: provider.name,
-      model: provider.model,
-      usage: data.usage,
-    };
-  }
-
-  private async callAnthropic(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    // Extract system message
-    const systemMessage = messages.find(m => m.role === 'system');
-    const chatMessages = messages.filter(m => m.role !== 'system');
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': provider.apiKey!,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        max_tokens: options?.max_tokens ?? 4096,
-        system: systemMessage?.content,
-        messages: chatMessages,
-        temperature: options?.temperature ?? 0.7,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(`Anthropic API error: ${error.error?.message || response.statusText}`);
-    }
-
-    const data = await response.json();
-    return {
-      content: data.content[0].text,
-      provider: provider.name,
-      model: provider.model,
-      usage: data.usage,
-    };
-  }
-
-  private async callGroq(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${provider.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        messages,
-        temperature: options?.temperature ?? 0.7,
-        max_tokens: options?.max_tokens ?? 4096,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(`Groq API error: ${error.error?.message || response.statusText}`);
-    }
-
-    const data = await response.json();
-    return {
-      content: data.choices[0].message.content,
-      provider: provider.name,
-      model: provider.model,
-      usage: data.usage,
-    };
-  }
-
-  private async callOpenRouter(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${provider.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        messages,
-        temperature: options?.temperature ?? 0.7,
-        max_tokens: options?.max_tokens ?? 4096,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(`OpenRouter API error: ${error.error?.message || response.statusText}`);
-    }
-
-    const data = await response.json();
-    return {
-      content: data.choices[0].message.content,
-      provider: provider.name,
-      model: provider.model,
-      usage: data.usage,
-    };
-  }
-
-  private async callDeepSeek(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${provider.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        messages,
-        temperature: options?.temperature ?? 0.7,
-        max_tokens: options?.max_tokens ?? 4096,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(`DeepSeek API error: ${error.error?.message || response.statusText}`);
-    }
-
-    const data = await response.json();
-    return {
-      content: data.choices[0].message.content,
-      provider: provider.name,
-      model: provider.model,
-      usage: data.usage,
-    };
   }
 
   private async callOllama(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
@@ -348,19 +270,193 @@ class AIGateway {
     });
 
     if (!response.ok) {
-      throw new Error(`Ollama API error: ${response.statusText}`);
+      throw new Error(`Локальный сервер Ollama не отвечает на ${provider.endpoint}. Запустите Ollama с моделью ${provider.model}`);
     }
 
     const data = await response.json();
     return {
-      content: data.message.content,
+      content: data.message?.content || '',
       provider: provider.name,
       model: provider.model,
     };
   }
 
+  private async callLMStudio(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    const response = await fetch(`${provider.endpoint}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: provider.model,
+        messages,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.max_tokens ?? 4096,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`LM Studio API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return {
+      content: data.choices[0].message.content,
+      provider: provider.name,
+      model: provider.model,
+      usage: data.usage,
+    };
+  }
+
+  private async callOpenAI(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${provider.apiKey || ''}`,
+      },
+      body: JSON.stringify({
+        model: provider.model,
+        messages,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.max_tokens ?? 4096,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(`OpenAI API error: ${error.error?.message || response.statusText}`);
+    }
+
+    const data = await response.json();
+    return {
+      content: data.choices[0].message.content,
+      provider: provider.name,
+      model: provider.model,
+      usage: data.usage,
+    };
+  }
+
+  private async callAnthropic(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    const systemMessage = messages.find(m => m.role === 'system');
+    const chatMessages = messages.filter(m => m.role !== 'system');
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': provider.apiKey || '',
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: provider.model,
+        max_tokens: options?.max_tokens ?? 4096,
+        system: systemMessage?.content,
+        messages: chatMessages,
+        temperature: options?.temperature ?? 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(`Anthropic API error: ${error.error?.message || response.statusText}`);
+    }
+
+    const data = await response.json();
+    return {
+      content: data.content[0].text,
+      provider: provider.name,
+      model: provider.model,
+      usage: data.usage,
+    };
+  }
+
+  private async callGroq(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${provider.apiKey || ''}`,
+      },
+      body: JSON.stringify({
+        model: provider.model,
+        messages,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.max_tokens ?? 4096,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(`Groq API error: ${error.error?.message || response.statusText}`);
+    }
+
+    const data = await response.json();
+    return {
+      content: data.choices[0].message.content,
+      provider: provider.name,
+      model: provider.model,
+      usage: data.usage,
+    };
+  }
+
+  private async callOpenRouter(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${provider.apiKey || ''}`,
+      },
+      body: JSON.stringify({
+        model: provider.model,
+        messages,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.max_tokens ?? 4096,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(`OpenRouter API error: ${error.error?.message || response.statusText}`);
+    }
+
+    const data = await response.json();
+    return {
+      content: data.choices[0].message.content,
+      provider: provider.name,
+      model: provider.model,
+      usage: data.usage,
+    };
+  }
+
+  private async callDeepSeek(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${provider.apiKey || ''}`,
+      },
+      body: JSON.stringify({
+        model: provider.model,
+        messages,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.max_tokens ?? 4096,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(`DeepSeek API error: ${error.error?.message || response.statusText}`);
+    }
+
+    const data = await response.json();
+    return {
+      content: data.choices[0].message.content,
+      provider: provider.name,
+      model: provider.model,
+      usage: data.usage,
+    };
+  }
+
   private async callGoogle(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    // Google Gemini API
     const systemMessage = messages.find(m => m.role === 'system');
     const chatMessages = messages.filter(m => m.role !== 'system');
     
@@ -370,7 +466,7 @@ class AIGateway {
     }));
 
     const response = await fetch(
-      `${provider.endpoint}/models/${provider.model}:generateContent?key=${provider.apiKey}`,
+      `${provider.endpoint}/models/${provider.model}:generateContent?key=${provider.apiKey || ''}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -386,7 +482,7 @@ class AIGateway {
     );
 
     if (!response.ok) {
-      const error = await response.json();
+      const error = await response.json().catch(() => ({}));
       throw new Error(`Google API error: ${error.error?.message || response.statusText}`);
     }
 
@@ -408,7 +504,7 @@ class AIGateway {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${provider.apiKey}`,
+        'Authorization': `Bearer ${provider.apiKey || ''}`,
       },
       body: JSON.stringify({
         model: provider.model,
@@ -419,34 +515,8 @@ class AIGateway {
     });
 
     if (!response.ok) {
-      const error = await response.json();
+      const error = await response.json().catch(() => ({}));
       throw new Error(`Mistral API error: ${error.message || response.statusText}`);
-    }
-
-    const data = await response.json();
-    return {
-      content: data.choices[0].message.content,
-      provider: provider.name,
-      model: provider.model,
-      usage: data.usage,
-    };
-  }
-
-  private async callLMStudio(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    // LM Studio uses OpenAI-compatible API
-    const response = await fetch(`${provider.endpoint}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: provider.model,
-        messages,
-        temperature: options?.temperature ?? 0.7,
-        max_tokens: options?.max_tokens ?? 4096,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`LM Studio API error: ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json();
@@ -474,7 +544,6 @@ class AIGateway {
     }
   }
 
-  // Structured tool calling - LLM returns JSON with tool calls
   async chatWithTools(
     messages: ChatMessage[],
     tools: object[],
@@ -486,11 +555,7 @@ class AIGateway {
       throw new Error('No AI provider configured');
     }
 
-    // For now, use regular chat and parse tool calls from response
-    // In production, this would use native function calling API
     const response = await this.chat(messages, options, providerId);
-    
-    // Try to extract tool calls from response
     const toolCalls = this.extractToolCalls(response.content);
     
     return {
@@ -501,8 +566,6 @@ class AIGateway {
 
   private extractToolCalls(content: string): StructuredToolCall[] {
     const toolCalls: StructuredToolCall[] = [];
-    
-    // Try to find JSON tool calls in the response
     const jsonMatches = content.match(/```json\s*([\s\S]*?)\s*```/g);
     if (jsonMatches) {
       for (const match of jsonMatches) {
@@ -516,12 +579,9 @@ class AIGateway {
               timestamp: Date.now(),
             });
           }
-        } catch (e) {
-          // Ignore invalid JSON
-        }
+        } catch {}
       }
     }
-    
     return toolCalls;
   }
 }
