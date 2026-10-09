@@ -1,7 +1,14 @@
 // Windows Hands implementation conforming to PlatformHands contract
 // Communicates with a local Windows UI Automation MCP server over localhost WebSocket/HTTP
 
-import type { PlatformHands, ActionResult, Observation, ElementBounds, ElementInfo } from './PlatformHands';
+import type {
+  PlatformHands,
+  DeviceInfo,
+  ActionResult,
+  ScreenCapture,
+  AccessibilityTree,
+  UIElement,
+} from './PlatformHands';
 
 export interface WindowsHandsConfig {
   endpoint?: string; // e.g. ws://127.0.0.1:8766
@@ -10,7 +17,6 @@ export interface WindowsHandsConfig {
 }
 
 export class WindowsHands implements PlatformHands {
-  readonly platform = 'windows' as const;
   private endpoint: string;
   private authToken?: string;
   private timeoutMs: number;
@@ -29,11 +35,11 @@ export class WindowsHands implements PlatformHands {
     return this.connected;
   }
 
-  async connect(): Promise<boolean> {
+  async connect(): Promise<void> {
     if (this.connected && this.ws?.readyState === WebSocket.OPEN) {
-      return true;
+      return;
     }
-    return new Promise<boolean>((resolve) => {
+    return new Promise<void>((resolve, reject) => {
       try {
         const url = new URL(this.endpoint);
         if (this.authToken) {
@@ -43,12 +49,12 @@ export class WindowsHands implements PlatformHands {
 
         this.ws.onopen = () => {
           this.connected = true;
-          resolve(true);
+          resolve();
         };
 
-        this.ws.onerror = () => {
+        this.ws.onerror = (err) => {
           this.connected = false;
-          resolve(false);
+          reject(new Error('WebSocket connection error'));
         };
 
         this.ws.onclose = () => {
@@ -73,11 +79,13 @@ export class WindowsHands implements PlatformHands {
         };
 
         setTimeout(() => {
-          if (!this.connected) resolve(false);
+          if (!this.connected) {
+            reject(new Error(`Connection timeout after 3000ms to ${this.endpoint}`));
+          }
         }, 3000);
-      } catch {
+      } catch (err) {
         this.connected = false;
-        resolve(false);
+        reject(err instanceof Error ? err : new Error(String(err)));
       }
     });
   }
@@ -92,8 +100,7 @@ export class WindowsHands implements PlatformHands {
 
   private async callMcp(method: string, params: Record<string, any> = {}): Promise<any> {
     if (!this.connected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      const ok = await this.connect();
-      if (!ok) throw new Error('Windows MCP server is not reachable on ' + this.endpoint);
+      await this.connect();
     }
 
     const id = this.nextId++;
@@ -125,16 +132,48 @@ export class WindowsHands implements PlatformHands {
     });
   }
 
-  async launchApp(appIdentifier: string): Promise<ActionResult> {
+  async getDeviceInfo(): Promise<DeviceInfo> {
     try {
-      const res = await this.callMcp('app.launch', { identifier: appIdentifier });
-      return { success: !!res?.success, data: res };
-    } catch (e: any) {
-      return { success: false, error: e?.message };
+      const res = await this.callMcp('system.getDeviceInfo');
+      return {
+        platform: 'windows',
+        model: res?.model || 'Windows PC',
+        osVersion: res?.osVersion || 'Windows 11',
+        screenWidth: res?.screenWidth || 1920,
+        screenHeight: res?.screenHeight || 1080,
+        density: res?.density || 1.0,
+      };
+    } catch {
+      return {
+        platform: 'windows',
+        model: 'Windows PC',
+        osVersion: 'Windows 11',
+        screenWidth: 1920,
+        screenHeight: 1080,
+        density: 1.0,
+      };
     }
   }
 
-  async getCurrentApp(): Promise<string> {
+  async launchApp(packageName: string): Promise<ActionResult> {
+    try {
+      const res = await this.callMcp('app.launch', { identifier: packageName });
+      return { success: !!res?.success, data: res, timestamp: Date.now() };
+    } catch (e: any) {
+      return { success: false, error: e?.message, timestamp: Date.now() };
+    }
+  }
+
+  async closeApp(packageName: string): Promise<ActionResult> {
+    try {
+      const res = await this.callMcp('app.close', { identifier: packageName });
+      return { success: !!res?.success, data: res, timestamp: Date.now() };
+    } catch (e: any) {
+      return { success: false, error: e?.message, timestamp: Date.now() };
+    }
+  }
+
+  async getCurrentApp(): Promise<string | null> {
     try {
       const res = await this.callMcp('app.getActiveWindow');
       return res?.processName || res?.windowTitle || 'desktop';
@@ -143,97 +182,158 @@ export class WindowsHands implements PlatformHands {
     }
   }
 
-  async tap(bounds: ElementBounds): Promise<ActionResult> {
+  async tap(x: number, y: number): Promise<ActionResult> {
     try {
-      const x = Math.round(bounds.x + bounds.width / 2);
-      const y = Math.round(bounds.y + bounds.height / 2);
       const res = await this.callMcp('input.click', { x, y });
-      return { success: !!res?.success, data: res };
+      return { success: !!res?.success, data: res, timestamp: Date.now() };
     } catch (e: any) {
-      return { success: false, error: e?.message };
+      return { success: false, error: e?.message, timestamp: Date.now() };
+    }
+  }
+
+  async tapElement(elementId: string): Promise<ActionResult> {
+    try {
+      const res = await this.callMcp('ui.clickElement', { id: elementId });
+      return { success: !!res?.success, data: res, timestamp: Date.now() };
+    } catch (e: any) {
+      return { success: false, error: e?.message, timestamp: Date.now() };
+    }
+  }
+
+  async longPress(x: number, y: number, duration: number = 800): Promise<ActionResult> {
+    try {
+      const res = await this.callMcp('input.longClick', { x, y, duration });
+      return { success: !!res?.success, data: res, timestamp: Date.now() };
+    } catch (e: any) {
+      return { success: false, error: e?.message, timestamp: Date.now() };
+    }
+  }
+
+  async swipe(startX: number, startY: number, endX: number, endY: number, duration: number = 300): Promise<ActionResult> {
+    try {
+      const res = await this.callMcp('input.drag', { startX, startY, endX, endY, duration });
+      return { success: !!res?.success, data: res, timestamp: Date.now() };
+    } catch (e: any) {
+      return { success: false, error: e?.message, timestamp: Date.now() };
     }
   }
 
   async type(text: string): Promise<ActionResult> {
     try {
       const res = await this.callMcp('input.type', { text });
-      return { success: !!res?.success, data: res };
+      return { success: !!res?.success, data: res, timestamp: Date.now() };
     } catch (e: any) {
-      return { success: false, error: e?.message };
+      return { success: false, error: e?.message, timestamp: Date.now() };
     }
   }
 
   async clearText(): Promise<ActionResult> {
     try {
       const res = await this.callMcp('input.clearText');
-      return { success: !!res?.success, data: res };
+      return { success: !!res?.success, data: res, timestamp: Date.now() };
     } catch (e: any) {
-      return { success: false, error: e?.message };
+      return { success: false, error: e?.message, timestamp: Date.now() };
     }
   }
 
-  async swipe(direction: 'up' | 'down' | 'left' | 'right'): Promise<ActionResult> {
+  async pressKey(key: string): Promise<ActionResult> {
     try {
-      const res = await this.callMcp('input.scroll', { direction });
-      return { success: !!res?.success, data: res };
+      const res = await this.callMcp('input.key', { key });
+      return { success: !!res?.success, data: res, timestamp: Date.now() };
     } catch (e: any) {
-      return { success: false, error: e?.message };
+      return { success: false, error: e?.message, timestamp: Date.now() };
     }
   }
 
-  async pressBack(): Promise<ActionResult> {
-    try {
-      const res = await this.callMcp('input.key', { key: 'Escape' });
-      return { success: !!res?.success, data: res };
-    } catch (e: any) {
-      return { success: false, error: e?.message };
-    }
+  async goBack(): Promise<ActionResult> {
+    return this.pressKey('Escape');
   }
 
-  async pressHome(): Promise<ActionResult> {
+  async goHome(): Promise<ActionResult> {
     try {
       const res = await this.callMcp('input.keyCombo', { keys: ['Meta', 'd'] });
-      return { success: !!res?.success, data: res };
+      return { success: !!res?.success, data: res, timestamp: Date.now() };
     } catch (e: any) {
-      return { success: false, error: e?.message };
+      return { success: false, error: e?.message, timestamp: Date.now() };
     }
   }
 
-  async getAccessibilityTree(): Promise<Observation> {
+  async openRecents(): Promise<ActionResult> {
     try {
-      const res = await this.callMcp('ui.getAutomationTree');
-      return res || { root: { children: [] } };
-    } catch {
-      return { root: { children: [] } };
+      const res = await this.callMcp('input.keyCombo', { keys: ['Alt', 'Tab'] });
+      return { success: !!res?.success, data: res, timestamp: Date.now() };
+    } catch (e: any) {
+      return { success: false, error: e?.message, timestamp: Date.now() };
     }
   }
 
-  async findElementByText(text: string): Promise<ElementInfo | null> {
-    try {
-      const res = await this.callMcp('ui.findElement', { text });
-      if (!res || !res.bounds) return null;
-      return res;
-    } catch {
-      return null;
-    }
-  }
-
-  async findElementById(id: string): Promise<ElementInfo | null> {
-    try {
-      const res = await this.callMcp('ui.findElement', { automationId: id });
-      if (!res || !res.bounds) return null;
-      return res;
-    } catch {
-      return null;
-    }
-  }
-
-  async takeScreenshot(): Promise<string> {
+  async captureScreen(): Promise<ScreenCapture> {
     try {
       const res = await this.callMcp('screen.capture');
-      return res?.base64Image || '';
+      return {
+        image: res?.base64Image || '',
+        width: res?.width || 1920,
+        height: res?.height || 1080,
+        timestamp: Date.now(),
+      };
     } catch {
-      return '';
+      return {
+        image: '',
+        width: 1920,
+        height: 1080,
+        timestamp: Date.now(),
+      };
+    }
+  }
+
+  async getAccessibilityTree(): Promise<AccessibilityTree> {
+    try {
+      const res = await this.callMcp('ui.getAutomationTree');
+      return {
+        root: res?.root || {
+          id: 'root',
+          type: 'Window',
+          bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+          clickable: false,
+          focusable: false,
+          visible: true,
+          enabled: true,
+          children: [],
+        },
+        timestamp: Date.now(),
+      };
+    } catch {
+      return {
+        root: {
+          id: 'root',
+          type: 'Window',
+          bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+          clickable: false,
+          focusable: false,
+          visible: true,
+          enabled: true,
+          children: [],
+        },
+        timestamp: Date.now(),
+      };
+    }
+  }
+
+  async findElementByText(text: string): Promise<UIElement | null> {
+    try {
+      const res = await this.callMcp('ui.findElement', { text });
+      return res || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async findElementById(id: string): Promise<UIElement | null> {
+    try {
+      const res = await this.callMcp('ui.findElement', { automationId: id });
+      return res || null;
+    } catch {
+      return null;
     }
   }
 }
