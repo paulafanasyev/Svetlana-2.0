@@ -37,6 +37,8 @@ assert len(lc.admin_token) >= 16, "пароль владельца сгенер�
 try:
     assert lc.start(wait=40), "ядро запустилось"
     assert lc.healthy() and lc.ours(), "это наше ядро и оно принимает наш пароль"
+    if sys.platform == "win32":
+        assert lc._job, "ядро привязано к Светлане (Job Object): закроют её — закроется и ядро"
     prov = json.load(open(os.path.join(lc.data, "providers.json"), encoding="utf-8"))
     assert prov[0]["preset"] == "ollama" and "vision" in prov[0]["capabilities"], prov
     assert any(p.get("id") == "local" for p in lc._req("GET", "/api/providers")), "ядро видит локального провайдера"
