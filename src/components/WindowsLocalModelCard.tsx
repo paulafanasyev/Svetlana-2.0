@@ -1,11 +1,5 @@
 import React, { useState, useEffect } from 'react';
 
-interface LocalModelStatus {
-  installed: boolean;
-  modelName: string;
-  backend: string;
-}
-
 export const WindowsLocalModelCard: React.FC = () => {
   const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'running' | 'not_running'>('checking');
   const [models, setModels] = useState<string[]>([]);

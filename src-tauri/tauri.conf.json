@@ -5,8 +5,8 @@
   "identifier": "com.svetlana.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:3000",
+    "beforeBuildCommand": "npx vite build",
     "frontendDist": "../dist"
   },
   "app": {
