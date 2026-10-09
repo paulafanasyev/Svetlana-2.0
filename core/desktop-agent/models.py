@@ -21,13 +21,14 @@ CATALOG = [
     {"tag": "qwen3-vl:30b", "title": "Qwen3-VL 30B — самая умная", "size": "≈19 ГБ", "ram": "24 ГБ видео или 32 ГБ ОЗУ", "screen": True},
     {"tag": "mistral-small3.1:24b", "title": "Mistral Small 3.1 24B", "size": "≈15 ГБ", "ram": "16 ГБ видео или 32 ГБ ОЗУ", "screen": True},
     {"tag": "qwen3:8b", "title": "Qwen3 8B — без зрения", "size": "≈5,2 ГБ", "ram": "16 ГБ ОЗУ", "screen": False},
+    {"tag": "qwen3-coder:30b", "title": "Qwen3-Coder 30B — для программирования", "size": "≈19 ГБ", "ram": "24 ГБ видео или 32 ГБ ОЗУ", "screen": False, "code": True},
     {"tag": "qwen3:14b", "title": "Qwen3 14B — без зрения", "size": "≈9,3 ГБ", "ram": "16 ГБ видео или 32 ГБ ОЗУ", "screen": False},
 ]
 BY_TAG = {m["tag"]: m for m in CATALOG}
 
 
 def label(m):
-    return f"{m['title']} · {m['size']}" + ("" if m["screen"] else " · только разговор")
+    return f"{m['title']} · {m['size']}" + ("" if m["screen"] else " · код, без зрения" if m.get("code") else " · только разговор")
 
 
 def tag_from_label(text):
