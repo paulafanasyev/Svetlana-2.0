@@ -8,9 +8,9 @@ on:
     paths:
       - "android-hands/**"
       - ".github/workflows/svetlana-android.yml"
-      - ".github/workflows/svetlana-android-emulator.yml"
   workflow_dispatch: {}
 
+# Сборка APK для телефона. Проверка на эмуляторе — отдельно, в svetlana-android-emulator.yml (x86_64 + KVM).
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -31,46 +31,6 @@ jobs:
         with:
           gradle-version: "8.9"
       - run: gradle assembleDebug --no-daemon
-      - name: Install and launch on Android emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 35
-          target: google_apis
-          arch: arm64-v8a
-          profile: pixel_6
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
-          script: |
-            set -euxo pipefail
-            adb wait-for-device
-            adb shell getprop sys.boot_completed | grep -q 1
-            APK="android-hands/app/build/outputs/apk/debug/app-universal-debug.apk"
-            test -s "$APK"
-            adb install -r "$APK"
-            adb shell pm path ru.svetlana.app
-            adb shell am force-stop ru.svetlana.app
-            adb shell am start -W -n ru.svetlana.app/.MainActivity
-            sleep 25
-            adb shell pidof ru.svetlana.app
-            adb shell uiautomator dump /sdcard/svetlana-ui.xml
-            adb pull /sdcard/svetlana-ui.xml svetlana-ui.xml
-            test -s svetlana-ui.xml
-            adb logcat -d -t 6000 > emulator-logcat.txt
-            if grep -E "FATAL EXCEPTION|Fatal signal|Process: ru\.svetlana\.app" emulator-logcat.txt; then
-              echo "App crash signatures found in logcat"
-              exit 1
-            fi
-            adb exec-out screencap -p > svetlana-first-launch.png
-      - name: Upload emulator evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: svetlana-emulator-smoke-evidence
-          path: |
-            svetlana-ui.xml
-            emulator-logcat.txt
-            svetlana-first-launch.png
-          if-no-files-found: warn
-          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: svetlana-hands-debug
