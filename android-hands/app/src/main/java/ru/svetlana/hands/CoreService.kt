@@ -58,7 +58,8 @@ class CoreService : Service() {
                 CoreConfig.update(this) { it.put("llm", m.id) }
                 Thread({ startLlm(m) }, "sv-llm").start()
             }
-            ACTION_LLM_STOP -> Thread({ CoreConfig.update(this) { it.remove("llm") }; llama.stop(); CoreApi.removeProvider(this, "local"); CoreConfig.setLlmStatus(this, "off", "Модель на телефоне выключена") }, "sv-llm").start()
+            ACTION_LLM_STOP -> { CoreConfig.update(this) { it.remove("llm") } // желание «выключить» записываем сразу: идущий запуск увидит его и не зарегистрирует модель
+                Thread({ synchronized(this) { llama.stop(); CoreApi.removeProvider(this, "local"); CoreConfig.setLlmStatus(this, "off", "Модель на телефоне выключена") } }, "sv-llm").start() }
         }
         return START_STICKY
     }
@@ -119,10 +120,16 @@ class CoreService : Service() {
 
     private fun portFree(p: Int) = runCatching { ServerSocket(p, 1, InetAddress.getByName("127.0.0.1")).close(); true }.getOrDefault(false)
 
-    private fun startLlm(m: Model) {
+    /** Запуски модели идут по одному (загрузка, мастер, сторож): повторный запрос той же живой модели — без перезапуска. */
+    @Synchronized private fun startLlm(m: Model) {
+        if (llama.model?.id == m.id && llama.alive()) { CoreApi.upsertProvider(this, llama.provider(m)); return } // та же модель уже работает: повторное «Включить» её не перезапускает
         val t0 = System.currentTimeMillis()
         while (CoreApi.health(this) == null && System.currentTimeMillis() - t0 < 60_000) Thread.sleep(500) // провайдера регистрируем в уже запущенном ядре
-        if (llama.start(m)) { if (!CoreApi.upsertProvider(this, llama.provider(m))) CoreConfig.setLlmStatus(this, "error", "Модель работает, но ядро её не приняло", m.id) }
+        if (CoreConfig.load(this).optString("llm", "") != m.id) return // пока ждали ядро, модель выключили или сменили
+        if (llama.start(m)) {
+            if (CoreConfig.load(this).optString("llm", "") != m.id) { llama.stop(); CoreApi.removeProvider(this, "local"); CoreConfig.setLlmStatus(this, "off", "Модель на телефоне выключена"); return }
+            if (!CoreApi.upsertProvider(this, llama.provider(m))) { // ядро не приняло — не оставляем полуживого «local», иначе мастер решит, что думать есть чем
+                CoreApi.removeProvider(this, "local"); llama.stop(); CoreConfig.setLlmStatus(this, "error", "Модель работает, но ядро её не приняло", m.id) } }
         else CoreApi.removeProvider(this, "local")
     }
 

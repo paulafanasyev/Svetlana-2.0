@@ -19,7 +19,7 @@
     <div class="me"><img src="/svetlana.jpg" alt="" class="ava" id="ava"><div><b>Светлана</b><small id="status">готова</small></div></div>
     <nav id="tabs" role="tablist">
       <button data-tab="chat" class="on">Чат</button><button data-tab="crm">CRM</button><button data-tab="money">Финансы</button>
-      <button data-tab="devices">Устройства</button><button data-tab="providers">ИИ-провайдеры</button>
+      <button data-tab="devices">Устройства</button><button data-tab="providers" title="ИИ: модель на телефоне или облако">ИИ</button>
     </nav>
   </header>
   <main>
@@ -48,20 +48,34 @@
       <h3>Этот браузер</h3><p>Можно показать Светлане экран этого компьютера прямо из браузера (только просмотр, без управления).</p>
       <button class="btn" id="shareScreen">Дать Светлане видеть экран</button> <span id="shareState"></span>
     </section>
-    <section id="tab-providers" class="tab"><h2>ИИ-провайдеры</h2>
-      <p>Ключи хранятся только на сервере. Порядок = приоритет; при сбое Светлана переходит к следующему.</p>
+    <section id="tab-providers" class="tab"><h2>Чем Светлана думает</h2>
+      <div class="row"><button class="btn" type="button" id="provBrain">Подобрать под это устройство</button></div>
+      <h3>Подключено</h3>
+      <p class="hint">Порядок = приоритет; при сбое Светлана переходит к следующему. Ключи хранятся только в ядре.</p>
       <div id="provList"></div>
+      <h3>Добавить облачный ИИ</h3>
+      <div id="provCloud"></div><p id="provOk" class="ok" role="status"></p>
+      <details class="adv"><summary>Вручную: свой сервер, vLLM, Ollama, LM Studio</summary>
       <form id="provForm" class="prov">
         <select id="pvPreset"><option value="vllm">Своя модель (vLLM, сервер в РФ)</option><option value="yandex">YandexGPT</option><option value="gigachat">GigaChat</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="gemini">Google Gemini</option><option value="mistral">Mistral</option><option value="groq">Groq</option><option value="ollama">Ollama (локально)</option><option value="lmstudio">LM Studio</option></select>
         <input id="pvId" placeholder="id, напр. qwen-ru" required pattern="[a-z0-9_-]{2,40}">
         <input id="pvUrl" placeholder="Адрес API (пусто = по умолчанию)"><input id="pvModel" placeholder="Модель" required><input id="pvKey" type="password" placeholder="Ключ (пусто = не менять)">
         <fieldset id="pvCaps"><legend>Умеет</legend></fieldset>
         <button class="btn primary">Сохранить</button>
-      </form>
+      </form></details>
     </section>
   </main>
 </div>
+<div id="setup" class="setup" hidden role="dialog" aria-modal="true" aria-label="Первый запуск Светланы">
+  <div class="su-card">
+    <div class="su-hero"><img src="/svetlana.jpg" alt="Светлана" class="ava big" id="suAva"><p class="su-say" id="suSay" aria-live="polite"></p></div>
+    <div id="suBody" class="su-body"></div>
+    <div id="suDots" class="su-dots" aria-hidden="true"></div>
+  </div>
+</div>
 <script src="/avatar.js"></script>
+<script src="/setup-logic.js"></script>
+<script src="/setup.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
