@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Avatar, { VoiceControl, useSpeech } from '../components/Avatar';
 import { aiGateway, type ChatMessage } from '../services/AIGateway';
+import { crmSystemPrompt, detectCRMIntent, parseCRMActions, runCRMActions } from '../services/crm/CRMTools';
 import {
   Mic, Volume2, VolumeX, MessageCircle, Send,
   Sparkles, Heart, Smile, Frown, Laugh, AlertCircle,
@@ -96,14 +97,33 @@ export default function AvatarPage() {
     setError(null);
 
     try {
+      // Local CRM commands work without any AI provider (offline, on device).
+      const crmIntent = detectCRMIntent(text);
+      if (crmIntent) {
+        const lines = await runCRMActions([crmIntent]);
+        const reply = lines.join('\n');
+        const ok = !reply.startsWith('⚠️');
+        setMessages(prev => [...prev, {
+          role: 'svetlana',
+          content: reply,
+          emotion: ok ? 'happy' : 'sad',
+          timestamp: Date.now(),
+          provider: 'CRM',
+        }]);
+        setEmotion(ok ? 'happy' : 'sad');
+        speak(reply);
+        setTimeout(() => setEmotion('neutral'), 6000);
+        return;
+      }
+
       const provider = aiGateway.getActiveProvider();
       if (!provider) {
-        throw new Error('Нет активного AI провайдера. Откройте "AI Providers" и настройте провайдер.');
+        throw new Error('Нет активного AI провайдера. Откройте "AI Providers" и настройте провайдер. CRM-команды («Сводка CRM», «Занеси контакты с телефона в CRM») работают и без него.');
       }
 
       // Build conversation history
       const history: ChatMessage[] = [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: SYSTEM_PROMPT + crmSystemPrompt() },
         ...messages.slice(-10).map(m => ({
           role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
           content: m.content,
@@ -114,7 +134,12 @@ export default function AvatarPage() {
       const response = await aiGateway.chat(history, { temperature: 0.8, max_tokens: 1024 });
 
       const detectedEmotion = detectEmotion(response.content);
-      const cleanContent = cleanEmotionTag(response.content);
+      const { clean, actions } = parseCRMActions(response.content);
+      let cleanContent = cleanEmotionTag(clean);
+      if (actions.length > 0) {
+        const results = await runCRMActions(actions);
+        cleanContent = [cleanContent, ...results].filter(Boolean).join('\n');
+      }
 
       const assistantMessage: Message = {
         role: 'svetlana',
@@ -137,7 +162,7 @@ export default function AvatarPage() {
       setError(err.message || 'Ошибка при обращении к AI');
       setMessages(prev => [...prev, {
         role: 'svetlana',
-        content: `⚠️ ${err.message || 'Произошла ошибка'}. Проверьте настройки AI провайдера.`,
+        content: `⚠️ ${err.message || 'Произошла ошибка'}`,
         emotion: 'sad',
         timestamp: Date.now(),
       }]);
@@ -246,7 +271,7 @@ export default function AvatarPage() {
                   <h3 className="text-sm font-semibold">Светлана</h3>
                   <p className="text-xs text-emerald-400 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    {activeProvider ? `Online via ${activeProvider.name}` : 'Offline'}
+                    {activeProvider ? `Online via ${activeProvider.name}` : 'Offline (CRM доступна)'}
                   </p>
                 </div>
               </div>
@@ -283,7 +308,7 @@ export default function AvatarPage() {
                           {msg.emotion === 'talking' && '💬'}
                         </span>
                       )}
-                      <p className="text-sm">{msg.content}</p>
+                      <p className="text-sm whitespace-pre-line">{msg.content}</p>
                       {msg.provider && (
                         <p className="text-xs text-sv-muted mt-1 opacity-50">{msg.provider}</p>
                       )}
@@ -311,13 +336,13 @@ export default function AvatarPage() {
                   value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && sendMessage(input)}
-                  placeholder={activeProvider ? 'Напишите Светлане...' : 'Сначала настройте AI провайдер'}
+                  placeholder={activeProvider ? 'Напишите Светлане...' : 'CRM-команды работают и без AI провайдера'}
                   className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm focus:outline-none focus:border-indigo-500/50 disabled:opacity-50"
-                  disabled={!activeProvider || isLoading}
+                  disabled={isLoading}
                 />
                 <button
                   onClick={() => sendMessage(input)}
-                  disabled={!input.trim() || !activeProvider || isLoading}
+                  disabled={!input.trim() || isLoading}
                   className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white transition-colors"
                 >
                   <Send className="w-4 h-4" />
@@ -325,11 +350,11 @@ export default function AvatarPage() {
               </div>
 
               <div className="flex flex-wrap gap-2 mt-3">
-                {['Привет!', 'Расскажи шутку', 'Мне грустно', 'Кто ты?', 'Спасибо!'].map(phrase => (
+                {['Привет!', 'Занеси контакты с телефона в CRM', 'Сводка CRM', 'Расскажи шутку', 'Кто ты?'].map(phrase => (
                   <button
                     key={phrase}
                     onClick={() => sendMessage(phrase)}
-                    disabled={!activeProvider || isLoading}
+                    disabled={isLoading}
                     className="px-3 py-1 text-xs rounded-full bg-white/5 border border-white/10 text-sv-muted hover:bg-white/10 transition-colors disabled:opacity-50"
                   >
                     {phrase}
