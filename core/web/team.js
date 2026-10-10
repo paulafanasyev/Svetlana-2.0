@@ -113,8 +113,15 @@
     } catch (e) { out("✘ " + esc(e.message), "bad"); return null; } finally { lock(false); }
   }
   $("#cuLoad").addEventListener("click", () => loadModels(false));
-  $("#cuKey").addEventListener("change", () => { if ($("#cuUrl").value.trim() && !cu.models.length) loadModels(true); });
-  $("#cuUrl").addEventListener("change", () => { cu.models = []; chips(); });
+  // вставили ключ (или адрес локального сервера) — список моделей появляется сам, без кнопки
+  let autoT = 0, autoSig = "";
+  const autoModels = () => { clearTimeout(autoT); autoT = setTimeout(() => {
+    const d = draft(); const local = /^(https?:\/\/)?(localhost|127\.|10\.|192\.168\.)/i.test(d.baseUrl);
+    const sig = d.baseUrl + "|" + d.apiKey; if (!d.baseUrl || (!d.apiKey && !local) || sig === autoSig) return;
+    autoSig = sig; loadModels(true);
+  }, 700); };
+  $("#cuKey").addEventListener("input", autoModels);
+  $("#cuUrl").addEventListener("input", () => { cu.models = []; chips(); autoModels(); });
   $("#cuModel").addEventListener("input", (e) => chips(e.target.value));
   $("#cuChips").addEventListener("click", (e) => { const m = e.target.dataset?.m; if (m) { $("#cuModel").value = m; chips(m); } });
   $("#cuEye").addEventListener("click", () => { const k = $("#cuKey"); k.type = k.type === "password" ? "text" : "password"; });
@@ -175,6 +182,34 @@
   });
   $("#tabs").addEventListener("click", (e) => { const t = e.target.closest("button[data-tab]")?.dataset.tab; if (t === "team" || t === "providers") refresh(); });
 
+  // ---------- приоритет ИИ: ↑↓ в списке «Подключено» ----------
+  const order = () => [...document.querySelectorAll("#provList [data-test]")].map((b) => b.dataset.test);
+  function decorate() {
+    const rows = [...document.querySelectorAll("#provList .dev")].filter((r) => r.querySelector("[data-test]"));
+    rows.forEach((r, i) => {
+      if (r.querySelector(".prio")) { r.querySelector(".prio b").textContent = i + 1; return; }
+      const id = r.querySelector("[data-test]").dataset.test;
+      const box = document.createElement("span"); box.className = "prio";
+      box.innerHTML = `<b>${i + 1}</b><button type="button" class="btn small" data-up="${esc(id)}" aria-label="Выше по приоритету" title="Выше">↑</button><button type="button" class="btn small" data-down="${esc(id)}" aria-label="Ниже по приоритету" title="Ниже">↓</button>`;
+      r.prepend(box);
+    });
+    const t = document.querySelector("#provList [data-test]"); if (t && t.textContent === "Проверить") document.querySelectorAll("#provList [data-test]").forEach((b) => (b.textContent = "Проверить связь"));
+  }
+  new MutationObserver(decorate).observe($("#provList"), { childList: true });
+  $("#provList").addEventListener("click", async (e) => {
+    const up = e.target.dataset?.up, down = e.target.dataset?.down; const id = up || down; if (!id) return;
+    const ids = order(); const i = ids.indexOf(id); const j = up ? i - 1 : i + 1; if (i < 0 || j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    try { await post("/api/providers/order", { ids }); if (typeof loadProviders === "function") await loadProviders(); refresh(); }
+    catch (err) { alert("Порядок не сохранился: " + err.message); }
+  });
+  // версия ядра — видно, что на телефоне именно новая сборка
+  async function version() {
+    try { const v = await api("/api/version"); document.querySelectorAll(".sv-ver").forEach((x) => (x.textContent = `Светлана ${v.version} · инструментов: ${v.tools}`)); } catch {}
+  }
+  for (const sel of ["#tab-providers > h2", "#tab-team > h2"]) { const h = q(sel); if (h) h.insertAdjacentHTML("afterend", `<p class="hint sv-ver"></p>`); }
+  const ph = [...document.querySelectorAll("#tab-providers .hint")].find((x) => /Порядок = приоритет/.test(x.textContent)); if (ph) ph.textContent = "Сверху вниз — порядок: Светлана сначала спрашивает первый ИИ, при сбое — следующий. Меняйте стрелками ↑↓. «Проверить связь» — тест каждого. Ключи хранятся только в ядре.";
+
   // на телефоне экран Светлане показывает «Руки», а не браузер
   if (window.SvetlanaAndroid) { $("#shareScreen").hidden = true; $("#shareState").textContent = "На телефоне экран Светлане показывает кнопка «🖐 Экран и руки» вверху."; }
 
@@ -182,7 +217,7 @@
   new MutationObserver(() => { $("#chatAi").disabled = busy(); }).observe($("#send"), { attributes: true, attributeFilter: ["disabled"] });
 
   // старт: когда вход выполнен (окно приложения видно)
-  const start = () => { if (!$("#app").hidden && !T.loaded) refresh(); };
+  const start = () => { if (!$("#app").hidden && !T.loaded) { refresh(); version(); } };
   new MutationObserver(start).observe($("#app"), { attributes: true, attributeFilter: ["hidden"] }); start();
   window.svTeam = { refresh, newChat, openChat };
 })();
