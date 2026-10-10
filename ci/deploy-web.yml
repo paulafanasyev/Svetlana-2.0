@@ -1,0 +1,45 @@
+# Web version of Svetlana 2.0 -> GitHub Pages (/app, next to the training hub).
+# To activate: move this file to .github/workflows/deploy-web.yml
+# and in repo Settings -> Pages keep "Deploy from branch: gh-pages".
+name: Deploy Web App
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - svetlana-2.0-core-development-0416c
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build web app with relative base
+        run: npm run build
+        env:
+          VITE_BASE: ./
+
+      - name: Publish to gh-pages/app (keeps the training hub)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./dist
+          destination_dir: app
+          keep_files: true
+          commit_message: "web: deploy Svetlana 2.0 app"
