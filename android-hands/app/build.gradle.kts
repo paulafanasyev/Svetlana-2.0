@@ -39,6 +39,8 @@ if (!File(nodeDir, "ok").exists()) {
     copy { from(zipTree(zip)); into(nodeDir) }
     File(nodeDir, "ok").writeText("ok")
 }
+// x86_64 — только для проверки на эмуляторе в CI (SV_X86=1): ядро Node запускается, модели на телефоне нет (llama.cpp только arm64)
+val withX86 = (findProperty("svX86") ?: System.getenv("SV_X86"))?.toString() == "1"
 val nodeRoot: File = nodeDir.walkTopDown().first { File(it, "include/node/node.h").isFile && File(it, "bin/arm64-v8a/libnode.so").isFile }
 
 // llama-server и его библиотеки → jniLibs/arm64-v8a (исполняемый файл кладём как lib*.so: Android 10+ запускает только из папки библиотек)
@@ -56,7 +58,8 @@ run {
     val server = files.firstOrNull { it.name == "llama-server" } ?: throw GradleException("в архиве llama.cpp нет llama-server")
     server.copyTo(File(arm, "libllama_server.so"), overwrite = true)
     for (f in files) if (Regex("^lib.+\\.so$").matches(f.name) && f.name != "libc++_shared.so") f.copyTo(File(arm, f.name), overwrite = true)
-    for (abi in listOf("arm64-v8a", "armeabi-v7a")) File(nodeRoot, "bin/$abi/libnode.so").copyTo(File(jniOut, "$abi/libnode.so").apply { parentFile.mkdirs() }, overwrite = true)
+    if (withX86 && !File(nodeRoot, "bin/x86_64/libnode.so").isFile) throw GradleException("SV_X86=1, но в nodejs-mobile нет bin/x86_64/libnode.so")
+    for (abi in listOf("arm64-v8a", "armeabi-v7a") + (if (withX86) listOf("x86_64") else emptyList())) File(nodeRoot, "bin/$abi/libnode.so").copyTo(File(jniOut, "$abi/libnode.so").apply { parentFile.mkdirs() }, overwrite = true)
 }
 
 // ---------- ядро Светланы (тот же код, что на ПК и сервере) → assets/core.zip ----------
@@ -65,13 +68,29 @@ val genAssets = layout.buildDirectory.dir("generated/svassets").get().asFile
 val genRes = layout.buildDirectory.dir("generated/svres").get().asFile
 val skip = Regex("^(test|desktop-agent|training|node_modules|data|scripts)(/|$)|^(Dockerfile|docker-compose\\.yml|\\.env.*|\\.dockerignore)$")
 val coreFiles = coreSrc.walkTopDown().filter { it.isFile }.map { it to it.relativeTo(coreSrc).invariantSeparatorsPath }.filter { !skip.containsMatchIn(it.second) }.sortedBy { it.second }.toList()
-val coreHash = MessageDigest.getInstance("SHA-256").run { for ((f, rel) in coreFiles) { update(rel.toByteArray()); update(f.readBytes()) }; digest().joinToString("") { "%02x".format(it) }.take(16) }
+// Node на Android (nodejs-mobile) собран без ICU: \p{L} в регулярных выражениях там — SyntaxError, и ядро падает ещё на импорте.
+// При упаковке заменяем \p{L} явными диапазонами (латиница, греческий, кириллица); любой другой \p{…} — ошибка сборки, а не тихое зависание на телефоне.
+val letters = "A-Za-z\\u00AA\\u00B5\\u00BA\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u024F\\u0370-\\u03FF\\u0400-\\u052F"
+fun androidJs(rel: String, src: String): String {
+    if (src.contains("\\\\p{") || src.contains("\\\\P{")) throw GradleException("$rel: \\p{…} в строке для RegExp не работает в Node на Android (нет ICU) — замените явными диапазонами")
+    val sb = StringBuilder(); var i = 0
+    while (true) {
+        val j = src.indexOf("\\p{L}", i); if (j < 0) { sb.append(src, i, src.length); break }
+        var k = j - 1; var inClass = false // внутри [...] — подставляем диапазоны как есть, снаружи — в скобках
+        while (k >= 0 && src[k] != '\n') { val c = src[k]; if ((c == '[' || c == ']') && (k == 0 || src[k - 1] != '\\')) { inClass = c == '['; break }; k-- }
+        sb.append(src, i, j).append(if (inClass) letters else "[$letters]"); i = j + 5
+    }
+    val out = sb.toString()
+    if (Regex("\\\\[pP]\\{").containsMatchIn(out)) throw GradleException("$rel: \\p{…} не работает в Node на Android (нет ICU) — замените явными диапазонами")
+    return out
+}
+val coreHash = MessageDigest.getInstance("SHA-256").run { update("android-js-1".toByteArray()) /* правила androidJs поменялись — телефон распакует ядро заново */; for ((f, rel) in coreFiles) { update(rel.toByteArray()); update(f.readBytes()) }; digest().joinToString("") { "%02x".format(it) }.take(16) }
 run {
     File(genAssets, "core.version").apply { parentFile.mkdirs() }.writeText(coreHash)
     @Suppress("UNCHECKED_CAST") val pics = groovy.json.JsonSlurper().parse(File(coreSrc, "web/assets.b64.json")) as Map<String, String>
     ZipOutputStream(File(genAssets, "core.zip").outputStream()).use { z ->
         fun put(name: String, bytes: ByteArray) { z.putNextEntry(ZipEntry(name)); z.write(bytes); z.closeEntry() }
-        for ((f, rel) in coreFiles) put(rel, f.readBytes())
+        for ((f, rel) in coreFiles) put(rel, if (!rel.startsWith("web/") && (rel.endsWith(".mjs") || rel.endsWith(".js"))) androidJs(rel, f.readText()).toByteArray() else f.readBytes())
         for ((name, b64) in pics) put("web/$name", Base64.getDecoder().decode(b64))  // как scripts/restore-assets.mjs
         val face = rootProject.file("../public/images/avatar/svetlana-master.jpg")  // живой аватар: портрет с оснасткой лица
         if (face.isFile) put("web/svetlana-face.jpg", face.readBytes())
@@ -102,7 +121,7 @@ android {
     buildFeatures { buildConfig = true }
     if (keystore != null) signingConfigs { getByName("debug") { storeFile = keystore; storePassword = System.getenv("SVETLANA_KEYSTORE_PASS") ?: "android"; keyAlias = System.getenv("SVETLANA_KEY_ALIAS") ?: "svetlana"; keyPassword = System.getenv("SVETLANA_KEYSTORE_PASS") ?: "android" } }
     buildTypes { release { isMinifyEnabled = false } }
-    splits { abi { isEnable = true; reset(); include("arm64-v8a", "armeabi-v7a"); isUniversalApk = true } }
+    splits { abi { isEnable = true; reset(); include(*(listOf("arm64-v8a", "armeabi-v7a") + (if (withX86) listOf("x86_64") else emptyList())).toTypedArray()); isUniversalApk = true } }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
     sourceSets["main"].apply { jniLibs.srcDir(jniOut); assets.srcDir(genAssets); res.srcDir(genRes) }
     packaging { jniLibs { useLegacyPackaging = true; pickFirsts += listOf("**/libc++_shared.so", "**/libnode.so") } }

@@ -43,11 +43,25 @@ export function textToolCalls(content) {
 }
 const strip = (s) => (s || "").replace(/<think>[\s\S]*?<\/think>/g, "").replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").trim();
 
+// llama.cpp (модель на телефоне и на ПК) превращает схемы инструментов в грамматику, а повторы больше 2000 там запрещены:
+// maxLength: 400000 у «записать файл» давал «failed to parse grammar». Крупные пределы модели не нужны — реестр всё равно проверяет полную схему.
+const GRAMMAR_LIMIT = 1000;
+export function grammarSafe(s) {
+  if (Array.isArray(s)) return s.map(grammarSafe);
+  if (!s || typeof s !== "object") return s;
+  const o = {};
+  for (const [k, v] of Object.entries(s)) {
+    if ((k === "maxLength" || k === "minLength" || k === "maxItems" || k === "minItems") && typeof v === "number" && v > GRAMMAR_LIMIT) continue;
+    o[k] = grammarSafe(v);
+  }
+  return o;
+}
+
 // ---------- адаптеры ----------
 async function openaiChat(p, { messages, tools, temperature = 0.3, maxTokens = 2048 }, fx) {
   // p.maxTokens — потолок ответа для маленьких моделей на телефоне (контекст 4–8 тыс. токенов)
   const body = { model: p.model, messages, temperature, max_tokens: p.maxTokens ? Math.min(maxTokens, p.maxTokens) : maxTokens, ...(p.extraBody || {}) };
-  if (tools?.length) { body.tools = tools; body.tool_choice = "auto"; }
+  if (tools?.length) { body.tools = grammarSafe(tools); body.tool_choice = "auto"; }
   const auth = p.apiKey ? { Authorization: `${p.authScheme || "Bearer"} ${p.apiKey}` } : {};
   const j = await http(p.baseUrl.replace(/\/$/, "") + "/chat/completions", { headers: { "Content-Type": "application/json", ...auth, ...(p.headers || {}) }, body: JSON.stringify(body), timeoutMs: p.timeoutMs, fetchImpl: fx });
   const msg = j.choices?.[0]?.message || {};

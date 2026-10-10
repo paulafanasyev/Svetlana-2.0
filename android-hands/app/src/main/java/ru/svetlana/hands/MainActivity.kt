@@ -36,6 +36,8 @@ class MainActivity : Activity() {
     private var waitingSince = 0L
     private var restarted = false
     private var onboarded = false
+    private var loggedAt = -100L
+    @Volatile private var destroyed = false
 
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,14 +82,23 @@ class MainActivity : Activity() {
 
     /** Ждём ядро, входим без пароля, подключаем «Руки» этого телефона и открываем чат. */
     private fun waitForCore() {
+        if (destroyed) return // окно закрыто — опрос ядра больше не нужен
         if (waitingSince == 0L) waitingSince = System.currentTimeMillis()
         Thread {
             val ok = CoreApi.health(this) != null
+            if (destroyed) return@Thread
             if (!ok) {
                 val sec = (System.currentTimeMillis() - waitingSince) / 1000
                 if (sec >= 30 && !restarted) { restarted = true; CoreService.start(this) } // служба могла перезапускаться
-                main.post { splashText.text = if (sec < 8) "Светлана просыпается…" else "Первый запуск готовит ядро (до минуты)… $sec с" }
-                main.postDelayed({ waitForCore() }, 700); return@Thread
+                // ядро долго молчит — показываем его журнал прямо на экране (и в logcat), чтобы было видно, что сломалось
+                val tail = if (sec >= 40) coreTail() else ""
+                if (tail.isNotEmpty() && sec - loggedAt >= 10) { loggedAt = sec; android.util.Log.w("SvetlanaCore", "ядро не отвечает $sec с\n$tail") }
+                main.post {
+                    if (destroyed) return@post
+                    if (tail.isEmpty()) splashText.text = if (sec < 8) "Светлана просыпается…" else "Первый запуск готовит ядро (до минуты)… $sec с"
+                    else { splashText.textSize = 12f; splashText.setTextIsSelectable(true); splashText.text = "Ядро не отвечает уже $sec с. Журнал ниже — нажмите и удерживайте, чтобы скопировать, и пришлите разработчику:\n\n$tail" }
+                }
+                main.postDelayed({ if (!destroyed) waitForCore() }, 700); return@Thread
             }
             val cookie = CoreApi.loginCookie(this)
             val prefs = Prefs(this)
@@ -95,15 +106,32 @@ class MainActivity : Activity() {
             // первый запуск: ни модели, ни облачного ключа — чат сразу открывает мастер (аватар, оценка телефона, модель или облако)
             // модель «выбрана», но не запустилась (ошибка/выключена) — думать всё равно нечем, мастер нужен
             val welcome = !onboarded && !ModelStore.skipped(this) && !ModelStore.usable(this) && CoreApi.providersEmpty(this)
+            if (destroyed) return@Thread
             main.post {
+                if (destroyed) return@post
                 val base = CoreConfig.base(this)
                 if (cookie != null) { CookieManager.getInstance().setCookie(base, "$cookie; Path=/"); CookieManager.getInstance().flush() }
                 HandsService.instance?.connect()
                 if (welcome) onboarded = true
+                splashText.textSize = 16f; splashText.setTextIsSelectable(false); loggedAt = -100L
                 web.loadUrl(if (welcome) "$base/#setup" else "$base/"); loaded = true; waitingSince = 0L; restarted = false
             }
         }.start()
     }
+
+    /** Хвосты журналов ядра (Node) и службы — для экрана ожидания и logcat. */
+    private fun coreTail(): String = listOf("core.log" to "ядро", "core-service.log" to "служба").mapNotNull { (f, name) ->
+        tail(java.io.File(filesDir, f), 2048)?.takeLast(700)?.trim()?.takeIf { it.isNotEmpty() }?.let { "— $name —\n$it" }
+    }.joinToString("\n\n").ifEmpty { "журналов нет: служба ядра, похоже, не запустилась (проверьте, не ограничен ли фон для приложения)" }
+
+    /** Последние [max] байт файла — без чтения всего журнала в память. */
+    private fun tail(f: java.io.File, max: Int): String? = runCatching {
+        if (!f.isFile) return@runCatching null
+        java.io.RandomAccessFile(f, "r").use { r ->
+            val start = maxOf(0L, r.length() - max); r.seek(start)
+            val b = ByteArray((r.length() - start).toInt()); r.readFully(b); String(b, Charsets.UTF_8)
+        }
+    }.getOrNull()
 
     /** 🧠: мастер в чате (оценка телефона, модели, облако). Страница ещё грузится и мастера нет — нативный экран моделей. */
     private fun openBrain() {
@@ -161,9 +189,9 @@ class MainActivity : Activity() {
         fileCb?.onReceiveValue(if (uris.isEmpty()) null else uris.toTypedArray()); fileCb = null
     }
 
-    override fun onResume() { super.onResume(); if (loaded) Thread { if (CoreApi.health(this) == null) main.post { loaded = false; splash.visibility = View.VISIBLE; waitForCore() } }.start() }
+    override fun onResume() { super.onResume(); if (loaded) Thread { if (CoreApi.health(this) == null && !destroyed) main.post { if (destroyed) return@post; loaded = false; splash.visibility = View.VISIBLE; waitForCore() } }.start() }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() { if (web.canGoBack()) web.goBack() else super.onBackPressed() }
-    override fun onDestroy() { voice?.destroy(); web.destroy(); super.onDestroy() }
+    override fun onDestroy() { destroyed = true; main.removeCallbacksAndMessages(null); voice?.destroy(); web.destroy(); super.onDestroy() }
 }

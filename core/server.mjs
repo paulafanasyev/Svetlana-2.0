@@ -125,7 +125,12 @@ function serveStatic(res, p, send) {
   send(res, 200, fs.readFileSync(f), { "Content-Type": MIME[path.extname(f)] || "application/octet-stream", "Cache-Control": rel === "sw.js" || rel.endsWith(".html") ? "no-cache" : "public, max-age=3600" });
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Запуск напрямую (node server.mjs). Сравниваем настоящие пути: на Android /data/user/0 — ссылка на /data/data,
+// и без realpath проверка молча не срабатывала — ядро загружалось и сразу выходило, не открыв порт.
+const isMain = (() => { try { return !!process.argv[1] && fs.realpathSync(path.resolve(process.argv[1])) === fs.realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } })();
+if (isMain) {
+  // Node на Android (nodejs-mobile) собран без Intl — подставляем минимум, нужный ядру (дата и время в системном промпте)
+  if (typeof globalThis.Intl === "undefined") globalThis.Intl = (await import("./lib/intl-lite.mjs")).Intl;
   loadEnvFile(path.join(HERE, ".env"));
   const cfg = config(); const app = createApp(cfg);
   createServer(app).listen(cfg.port, cfg.host, () => console.log(`Светлана слушает http://${cfg.host}:${cfg.port} · провайдеров: ${app.providers.list.length} · инструментов: ${app.registry.list().length}`));
