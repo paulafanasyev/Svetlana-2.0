@@ -45,7 +45,8 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Ui.BG) }
         val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(Ui.dp(this@MainActivity, 8), Ui.dp(this@MainActivity, 4), Ui.dp(this@MainActivity, 8), Ui.dp(this@MainActivity, 4)); setBackgroundColor(android.graphics.Color.WHITE) }
         fun gap() = View(this).also { bar.addView(it, LinearLayout.LayoutParams(Ui.dp(this, 6), 1)) }
-        bar.addView(Ui.chip(this, "🧠 Модель ИИ") { startActivity(Intent(this, ModelsActivity::class.java)) }); gap()
+        // «Мозг»: тот же мастер, что при первом запуске (модель на телефоне или облако); пока чат не загрузился — нативный экран
+        bar.addView(Ui.chip(this, "🧠 Модель ИИ") { openBrain() }); gap()
         bar.addView(Ui.chip(this, "🖐 Экран и руки") { startActivity(Intent(this, HandsActivity::class.java)) }); gap()
         bar.addView(Ui.chip(this, "⟳") { if (loaded) web.reload() })
         root.addView(bar, Ui.lp())
@@ -60,6 +61,7 @@ class MainActivity : Activity() {
 
         web.settings.apply { javaScriptEnabled = true; domStorageEnabled = true; mediaPlaybackRequiresUserGesture = false; allowFileAccess = false; allowContentAccess = false; setSupportMultipleWindows(false) }
         voice = VoiceBridge(this, web).also { it.askMic = { requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1) }; web.addJavascriptInterface(it, "SvetlanaAndroid") }
+        web.addJavascriptInterface(SetupBridge(this), "SvetlanaSetup") // мастер первого запуска: оценка телефона, модели, облако
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest): Boolean = route(req.url)
             override fun onPageFinished(view: WebView, url: String?) { splash.visibility = View.GONE }
@@ -90,16 +92,25 @@ class MainActivity : Activity() {
             val cookie = CoreApi.loginCookie(this)
             val prefs = Prefs(this)
             if (!prefs.remote) CoreApi.ensureDevice(this, prefs)
-            // первый запуск: ни модели, ни облачного ключа — сразу показываем выбор (иначе Светлане нечем думать)
-            val welcome = !onboarded && CoreConfig.load(this).optString("llm", "").isBlank() && CoreApi.providersEmpty(this)
+            // первый запуск: ни модели, ни облачного ключа — чат сразу открывает мастер (аватар, оценка телефона, модель или облако)
+            // модель «выбрана», но не запустилась (ошибка/выключена) — думать всё равно нечем, мастер нужен
+            val welcome = !onboarded && !ModelStore.skipped(this) && !ModelStore.usable(this) && CoreApi.providersEmpty(this)
             main.post {
                 val base = CoreConfig.base(this)
                 if (cookie != null) { CookieManager.getInstance().setCookie(base, "$cookie; Path=/"); CookieManager.getInstance().flush() }
                 HandsService.instance?.connect()
-                web.loadUrl("$base/"); loaded = true; waitingSince = 0L; restarted = false
-                if (welcome) { onboarded = true; startActivity(Intent(this, ModelsActivity::class.java).putExtra("welcome", true)) }
+                if (welcome) onboarded = true
+                web.loadUrl(if (welcome) "$base/#setup" else "$base/"); loaded = true; waitingSince = 0L; restarted = false
             }
         }.start()
+    }
+
+    /** 🧠: мастер в чате (оценка телефона, модели, облако). Страница ещё грузится и мастера нет — нативный экран моделей. */
+    private fun openBrain() {
+        if (!loaded) { startActivity(Intent(this, ModelsActivity::class.java)); return }
+        web.evaluateJavascript("(function(){if(window.svSetup){window.svSetup.open('brain');return 'ok'}return 'no'})()") { r ->
+            if (r?.contains("ok") != true) startActivity(Intent(this, ModelsActivity::class.java))
+        }
     }
 
     /** Чат — здесь; запущенные проекты (127.0.0.1:другой порт) — в окне просмотра; файлы — в «Загрузки»; остальное — в браузере. */
