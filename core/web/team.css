@@ -1,0 +1,32 @@
+/* Чаты со своим ИИ, «Свой ИИ по ссылке», «Команда» */
+.chatbar{display:flex;gap:.5rem;align-items:center;padding:.5rem 1rem;background:#fff;border-bottom:1px solid var(--line);flex-shrink:0}
+.chatai{flex:1;min-width:0;display:flex;align-items:center;gap:.4rem;color:var(--soft);font-weight:600;font-size:.85rem}
+.chatai select{flex:1;min-width:0;padding:.35rem .5rem;font-size:.9rem;text-overflow:ellipsis}
+.chatlist{position:relative;z-index:5;max-height:min(55vh,420px);overflow:auto;background:#fff;border-bottom:1px solid var(--line);box-shadow:0 10px 24px #2b287318;padding:.4rem;flex-shrink:0}
+.chatitem{display:flex;align-items:center;gap:.5rem;justify-content:space-between;padding:.55rem .7rem;border-radius:12px;cursor:pointer}
+.chatitem:hover,.chatitem:focus-visible{background:var(--bg);outline:none}.chatitem.on{background:var(--bg);box-shadow:inset 3px 0 0 var(--b)}
+.chatitem span{min-width:0}.chatitem b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.chatitem small{color:var(--soft)}
+.msg.sys{align-self:center;background:transparent;border:1px dashed var(--line);color:var(--soft);font-size:.85rem;padding:.35rem .8rem}
+.cu{display:grid;gap:.7rem;max-width:640px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:1rem;margin:.5rem 0 1rem}
+.cu label{display:grid;gap:.3rem;font-weight:600;font-size:.9rem}.cu label small{color:var(--soft);font-weight:400}
+.cu-row{display:flex;gap:.4rem}.cu-row input{flex:1;min-width:0}
+.cu-caps{border:0;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:.3rem 1rem}.cu-caps legend{font-weight:600;font-size:.9rem;margin-bottom:.3rem}
+.cu-caps label{display:flex;gap:.35rem;align-items:center;font-weight:400}
+.cu-out{margin:0;min-height:1.2em;line-height:1.4}.cu-out.ok{color:#15803d}.cu-out.bad{color:#c62828}
+.chips{display:flex;flex-wrap:wrap;gap:.35rem;max-height:6.2rem;overflow:auto}
+.chip{border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:.25rem .7rem;font-size:.82rem;cursor:pointer;color:var(--ink)}
+.chip.on,.chip:hover{border-color:var(--b);color:var(--b)}
+.member{display:grid;gap:.5rem;background:#fff;border:1px solid var(--line);border-radius:16px;padding:.8rem;margin-bottom:.6rem;max-width:640px}
+.member .row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}.member .role{font-size:1.05rem;min-width:5rem}
+.member select{flex:1;min-width:8rem}.member textarea{width:100%;resize:vertical}.member .err{margin:0}
+#tab-team>p,#tab-team .hint{max-width:640px}
+@media (max-width:520px){.chatbar{padding:.4rem .6rem}.cu{padding:.8rem}}
+.prio{display:inline-flex;align-items:center;gap:.25rem;margin-right:.4rem}.prio b{display:inline-grid;place-items:center;min-width:1.5rem;height:1.5rem;border-radius:999px;background:var(--grad);color:#fff;font-size:.8rem}
+#tab-providers>details.adv{display:none} /* старая ручная форма заменена «Свой ИИ по ссылке» */
+.sv-ver{margin-top:-.4rem;font-size:.8rem}
+.ig{background:#fff;border:1px solid var(--line);border-radius:16px;padding:.8rem 1rem;margin-bottom:.6rem;max-width:640px}.ig.on{border-color:#86efac}
+.ig-head{display:flex;justify-content:space-between;gap:.5rem;align-items:center}.ig-st{color:var(--soft);font-size:.85rem;text-align:right;overflow:hidden;text-overflow:ellipsis}.ig.on .ig-st{color:#15803d}
+.ig details{margin-top:.4rem}.ig summary{cursor:pointer;color:var(--b);font-weight:600}.ig label{display:grid;gap:.25rem;font-weight:600;font-size:.88rem;margin:.4rem 0}
+.ig .row{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.4rem}#tab-integrations>p{max-width:640px}
+.msg.bot{position:relative}.msg .cp{position:absolute;right:.35rem;bottom:.25rem;border:0;background:transparent;color:var(--soft);cursor:pointer;font-size:.9rem;opacity:.55;padding:.1rem .3rem}.msg .cp:hover,.msg .cp:focus-visible{opacity:1}
+.msg.bot:not(.sys){padding-bottom:1.3rem}

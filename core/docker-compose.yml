@@ -1,0 +1,27 @@
+# Сервер в РФ (тот же VPS, что и сайт АИКО, или отдельный 2 vCPU / 4 ГБ):  DOMAIN=svetlana.example docker compose up -d --build
+services:
+  svetlana:
+    build: { context: ., target: core }
+    restart: unless-stopped
+    env_file: .env
+    environment: { HOST: 0.0.0.0, SVETLANA_RUNNER_SOCKET: /sock/runner.sock }
+    volumes: [ "/srv/svetlana/data:/data", "/srv/svetlana/workspace:/workspace", "sock:/sock" ]
+  # Песочница команд: видит только рабочую папку, без ключей и данных ядра, без сети (npm install — включите сеть ниже осознанно).
+  runner:
+    build: { context: ., target: runner }
+    restart: unless-stopped
+    environment: { RUNNER_SOCKET: /sock/runner.sock, RUNNER_ROOT: /workspace }
+    network_mode: "none"
+    read_only: true
+    tmpfs: [ "/tmp" ]
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 2
+    volumes: [ "/srv/svetlana/workspace:/workspace", "sock:/sock" ]
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: [ "80:80", "443:443" ]
+    command: caddy reverse-proxy --from ${DOMAIN:?укажите DOMAIN} --to svetlana:8787
+    volumes: [ "/srv/svetlana/caddy:/data" ]
+volumes: { sock: {} }

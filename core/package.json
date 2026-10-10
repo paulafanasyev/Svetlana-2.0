@@ -1,0 +1,16 @@
+{
+  "name": "svetlana-core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Светлана 2.0 — ядро: один агент для кода, маркетплейса АИКО, Мира самозанятых, CRM, бухгалтерии НПД, документов, медиа, голоса и управления устройствами",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prestart": "node scripts/restore-assets.mjs",
+    "start": "node server.mjs",
+    "pretest": "node scripts/restore-assets.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}

@@ -1,0 +1,27 @@
+name: svetlana-core
+on:
+  push:
+    paths:
+      - "core/**"
+      - ".github/workflows/svetlana-core.yml"
+  pull_request:
+    paths:
+      - "core/**"
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: sudo apt-get update && sudo apt-get install -y python3-pil fonts-dejavu-core
+      - run: npm test
+        env:
+          CHROMIUM_NO_SANDBOX: "1"
+      - run: python3 -m py_compile desktop-agent/agent.py
