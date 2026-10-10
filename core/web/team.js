@@ -89,16 +89,19 @@
     $("#cuModels").innerHTML = cu.models.slice(0, 500).map((m) => `<option value="${esc(m)}">`).join("");
     $("#cuChips").innerHTML = list.map((m) => `<button type="button" class="chip${m === $("#cuModel").value ? " on" : ""}" data-m="${esc(m)}">${esc(m)}</button>`).join("") + (cu.models.length > list.length ? `<small class="hint">…ещё ${cu.models.length - list.length} — начните вводить название</small>` : "");
   }
+  let modelsGen = 0; // ответ на старый адрес/ключ не затирает свежий список
   async function loadModels(quiet) {
     const d = draft(); if (!d.baseUrl) { if (!quiet) out("Сначала вставьте адрес API.", "bad"); return; }
+    const my = ++modelsGen;
     out("Спрашиваю у сервера список моделей…");
     try {
       const r = await post("/api/providers/models", { baseUrl: d.baseUrl, apiKey: d.apiKey });
+      if (my !== modelsGen) return;
       if (!r.ok) { cu.models = []; chips(); return out("✘ Список не получен: " + esc(r.error) + ". Название модели можно вписать вручную.", "bad"); }
       if (r.baseUrl && r.baseUrl !== d.baseUrl) $("#cuUrl").value = r.baseUrl;
       cu.models = r.models; chips($("#cuModel").value);
       out(`Моделей: ${r.models.length}${r.note ? " · " + esc(r.note) : ""}. Выберите нужную.`, "ok");
-    } catch (e) { out("✘ " + esc(e.message), "bad"); }
+    } catch (e) { if (my === modelsGen) out("✘ " + esc(e.message), "bad"); }
   }
   async function probe() {
     const d = draft(); if (!d.baseUrl || !d.model) { out("Нужны адрес API и модель.", "bad"); return null; }
@@ -113,8 +116,15 @@
     } catch (e) { out("✘ " + esc(e.message), "bad"); return null; } finally { lock(false); }
   }
   $("#cuLoad").addEventListener("click", () => loadModels(false));
-  $("#cuKey").addEventListener("change", () => { if ($("#cuUrl").value.trim() && !cu.models.length) loadModels(true); });
-  $("#cuUrl").addEventListener("change", () => { cu.models = []; chips(); });
+  // вставили ключ (или адрес локального сервера) — список моделей появляется сам, без кнопки
+  let autoT = 0, autoSig = "";
+  const autoModels = () => { clearTimeout(autoT); autoT = setTimeout(() => {
+    const d = draft(); const local = /^(https?:\/\/)?(localhost|127\.|10\.|192\.168\.)/i.test(d.baseUrl);
+    const sig = d.baseUrl + "|" + d.apiKey; if (!d.baseUrl || (!d.apiKey && !local) || sig === autoSig) return;
+    autoSig = sig; loadModels(true);
+  }, 700); };
+  $("#cuKey").addEventListener("input", autoModels);
+  $("#cuUrl").addEventListener("input", () => { modelsGen++; cu.models = []; chips(); autoModels(); });
   $("#cuModel").addEventListener("input", (e) => chips(e.target.value));
   $("#cuChips").addEventListener("click", (e) => { const m = e.target.dataset?.m; if (m) { $("#cuModel").value = m; chips(m); } });
   $("#cuEye").addEventListener("click", () => { const k = $("#cuKey"); k.type = k.type === "password" ? "text" : "password"; });
@@ -175,6 +185,41 @@
   });
   $("#tabs").addEventListener("click", (e) => { const t = e.target.closest("button[data-tab]")?.dataset.tab; if (t === "team" || t === "providers") refresh(); });
 
+  // ---------- приоритет ИИ: ↑↓ в списке «Подключено» ----------
+  const order = () => [...document.querySelectorAll("#provList [data-test]")].map((b) => b.dataset.test);
+  function decorate() {
+    const rows = [...document.querySelectorAll("#provList .dev")].filter((r) => r.querySelector("[data-test]"));
+    rows.forEach((r, i) => {
+      if (r.querySelector(".prio")) { r.querySelector(".prio b").textContent = i + 1; return; }
+      const id = r.querySelector("[data-test]").dataset.test;
+      const box = document.createElement("span"); box.className = "prio";
+      box.innerHTML = `<b>${i + 1}</b><button type="button" class="btn small" data-up="${esc(id)}" aria-label="Выше по приоритету" title="Выше">↑</button><button type="button" class="btn small" data-down="${esc(id)}" aria-label="Ниже по приоритету" title="Ниже">↓</button>`;
+      r.prepend(box);
+    });
+    const t = document.querySelector("#provList [data-test]"); if (t && t.textContent === "Проверить") document.querySelectorAll("#provList [data-test]").forEach((b) => (b.textContent = "Проверить связь"));
+  }
+  new MutationObserver(decorate).observe($("#provList"), { childList: true });
+  $("#provList").addEventListener("click", async (e) => {
+    const up = e.target.dataset?.up, down = e.target.dataset?.down; const id = up || down; if (!id) return;
+    const ids = order(); const i = ids.indexOf(id); const j = up ? i - 1 : i + 1; if (i < 0 || j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    try { await post("/api/providers/order", { ids }); if (typeof loadProviders === "function") await loadProviders(); refresh(); }
+    catch (err) { alert("Порядок не сохранился: " + err.message); }
+  });
+  // версия ядра — видно, что на телефоне именно новая сборка
+  async function version() {
+    try { const v = await api("/api/version"); document.querySelectorAll(".sv-ver").forEach((x) => (x.textContent = `Светлана ${v.version} · инструментов: ${v.tools}`)); } catch {}
+  }
+  for (const sel of ["#tab-providers > h2", "#tab-team > h2"]) { const h = q(sel); if (h) h.insertAdjacentHTML("afterend", `<p class="hint sv-ver"></p>`); }
+  const ph = [...document.querySelectorAll("#tab-providers .hint")].find((x) => /Порядок = приоритет/.test(x.textContent)); if (ph) ph.textContent = "Сверху вниз — порядок: Светлана сначала спрашивает первый ИИ, при сбое — следующий. Меняйте стрелками ↑↓. «Проверить связь» — тест каждого. Ключи хранятся только в ядре.";
+
+  // где серверы ИИ: в РФ только у GigaChat и YandexGPT; DeepSeek и OpenRouter — зарубежные, но доступны из РФ
+  for (const p of window.SvSetupLogic?.PRESETS || []) {
+    if (!p.ru) continue; p.ru = false;
+    p.by += p.id === "gigachat" || p.id === "yandex" ? " · серверы в РФ" : " · доступен из РФ";
+  }
+  { const o = q('#pvPreset option[value="vllm"]'); if (o) o.textContent = "Свой сервер (vLLM или любой OpenAI-совместимый, в любой стране)"; }
+
   // на телефоне экран Светлане показывает «Руки», а не браузер
   if (window.SvetlanaAndroid) { $("#shareScreen").hidden = true; $("#shareState").textContent = "На телефоне экран Светлане показывает кнопка «🖐 Экран и руки» вверху."; }
 
@@ -182,7 +227,7 @@
   new MutationObserver(() => { $("#chatAi").disabled = busy(); }).observe($("#send"), { attributes: true, attributeFilter: ["disabled"] });
 
   // старт: когда вход выполнен (окно приложения видно)
-  const start = () => { if (!$("#app").hidden && !T.loaded) refresh(); };
+  const start = () => { if (!$("#app").hidden && !T.loaded) { refresh(); version(); } };
   new MutationObserver(start).observe($("#app"), { attributes: true, attributeFilter: ["hidden"] }); start();
   window.svTeam = { refresh, newChat, openChat };
 })();
