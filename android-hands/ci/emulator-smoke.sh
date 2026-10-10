@@ -70,5 +70,42 @@ if awk -v pkg="$PKG" '
   block { if (index($0, pkg)) hit=1; n++; if (n > 40) { if (hit) found=1; block=0 } }
   END { if (block && hit) found=1; exit found ? 0 : 1 }
 ' "$OUT/logcat.txt"; then fail "падение приложения в logcat"; fi
-if grep -q "Первый запуск Светланы\|Оценить телефон\|Подключить ИИ" "$OUT/ui.xml" 2>/dev/null; then echo "мастер первого запуска на экране ✔"; else echo "::warning::мастер первого запуска не найден в дереве интерфейса (см. screen.png)"; fi
+if grep -q "Первый запуск Светланы\|Оценить телефон\|Подключить ИИ" "$OUT/ui.xml" 2>/dev/null; then echo "мастер первого запуска на экране ✔"
+else
+  echo "::warning::мастер первого запуска не найден в дереве интерфейса (см. screen.png)"
+  # что всё-таки на экране: тексты из дерева интерфейса — видно без скачивания артефакта
+  python3 - "$OUT/ui.xml" > "$OUT/ui-text.txt" <<'PY' || true
+import re, sys, html
+try: x = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+except Exception: x = ""
+seen = []
+for k in ("text", "content-desc"):
+    for v in re.findall(k + r'="([^"]+)"', x):
+        v = html.unescape(v).strip()
+        if v and v not in seen: seen.append(v)
+print("\n".join(seen[:120]) or "(дерево интерфейса пустое)")
+PY
+  annotate "экран (тексты)" "$OUT/ui-text.txt" 1
+fi
+# API ядра на телефоне (Node 18 без ICU): вход, команда, чаты со своим ИИ, список моделей, новые файлы интерфейса
+TOKEN=$( (adb shell run-as $PKG cat files/core.json 2>/dev/null || true) | grep -o '"adminToken":"[^"]*"' | cut -d'"' -f4 || true)
+B=http://127.0.0.1:18787; CJ=$(mktemp); api_ok=1
+check() { if [ "$2" = ok ]; then echo "API ✔ $1"; else echo "::error title=API $1::$3"; api_ok=0; fi; }
+if [ -n "$TOKEN" ]; then
+  code=$(curl -s -o /dev/null -w '%{http_code}' -c "$CJ" -H 'Content-Type: application/json' -d "{\"token\":\"$TOKEN\"}" $B/api/login || true)
+  [ "$code" = 200 ] && check "вход" ok || check "вход" bad "код $code"
+  r=$(curl -s -b "$CJ" $B/api/team || true); grep -q '"presets"' <<<"$r" && grep -q 'CTO' <<<"$r" && check "команда (/api/team)" ok || check "команда (/api/team)" bad "${r:0:300}"
+  r=$(curl -s -b "$CJ" -H 'Content-Type: application/json' -d '{}' $B/api/conversations || true); grep -q '"id":"con_' <<<"$r" && check "новый чат (/api/conversations)" ok || check "новый чат" bad "${r:0:300}"
+  r=$(curl -s -b "$CJ" $B/api/conversations || true); grep -q '"provider"' <<<"$r" && check "список чатов с ИИ" ok || check "список чатов" bad "${r:0:300}"
+  r=$(curl -s -m 30 -b "$CJ" -H 'Content-Type: application/json' -d '{"baseUrl":"http://127.0.0.1:9/v1","apiKey":"sk-test-123456789"}' $B/api/providers/models || true)
+  grep -q '"ok":false' <<<"$r" && ! grep -q 'sk-test-123456789' <<<"$r" && check "свой ИИ: список моделей (недоступный сервер → понятная ошибка)" ok || check "свой ИИ: список моделей" bad "${r:0:300}"
+  r=$(curl -s -m 30 -b "$CJ" -H 'Content-Type: application/json' -d '{"baseUrl":"http://127.0.0.1:9/v1","model":"m"}' $B/api/providers/probe || true)
+  grep -q '"ok":false' <<<"$r" && check "свой ИИ: проверка соединения" ok || check "свой ИИ: проверка соединения" bad "${r:0:300}"
+  r=$(curl -s -b "$CJ" $B/api/tools || true); for t in team_list team_delegate video_edit; do grep -q "\"$t\"" <<<"$r" && check "инструмент $t" ok || check "инструмент $t" bad "нет в /api/tools"; done
+  for p in /team.js /team.css; do code=$(curl -s -o /dev/null -w '%{http_code}' $B$p || true); [ "$code" = 200 ] && check "файл $p" ok || check "файл $p" bad "код $code"; done
+  r=$(curl -s $B/ || true); grep -q 'id="tab-team"' <<<"$r" && check "вкладка «Команда» в интерфейсе" ok || check "вкладка «Команда»" bad "нет в index.html"
+else echo "::error::нет adminToken в core.json — API не проверить"; api_ok=0; fi
+rm -f "$CJ"
+[ $api_ok = 1 ] || fail "API ядра на телефоне отвечает не так, как ожидалось"
+echo "::notice title=API ядра на телефоне::вход, команда, чаты со своим ИИ, свой ИИ (модели и проверка), новые инструменты и вкладка «Команда» — всё отвечает"
 echo "дымовой тест пройден"
