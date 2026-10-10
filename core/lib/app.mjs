@@ -13,6 +13,7 @@ import { lifeTools } from "./tools/life.mjs";
 import { brainTools } from "./tools/brain.mjs";
 import { Confirmations } from "./confirm.mjs";
 import { TeamAgent, teamTools } from "./team.mjs";
+import { installPriority } from "./priority.mjs";
 import { videoTools } from "./tools/video.mjs";
 import { installVoice } from "./voice.mjs";
 
@@ -20,6 +21,7 @@ export function createApp(cfg, { fetchImpl = fetch } = {}) {
   fs.mkdirSync(cfg.dataDir, { recursive: true });
   const store = new Store(path.join(cfg.dataDir, "db"));
   const providers = new Providers(path.join(cfg.dataDir, "providers.json"), fetchImpl);
+  installPriority(store, providers); // порядок ИИ из вкладки «ИИ»: сначала первый, при сбое — следующий
   const hub = new DeviceHub(store);
   // Картинки и видео Светлана сама не генерирует (image_generate/video_generate отключены):
   // открывает для этого приложения на устройстве (Шедеврум, Kandinsky) или бесплатные сервисы в браузере.

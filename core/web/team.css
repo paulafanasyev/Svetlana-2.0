@@ -21,3 +21,6 @@
 .member select{flex:1;min-width:8rem}.member textarea{width:100%;resize:vertical}.member .err{margin:0}
 #tab-team>p,#tab-team .hint{max-width:640px}
 @media (max-width:520px){.chatbar{padding:.4rem .6rem}.cu{padding:.8rem}}
+.prio{display:inline-flex;align-items:center;gap:.25rem;margin-right:.4rem}.prio b{display:inline-grid;place-items:center;min-width:1.5rem;height:1.5rem;border-radius:999px;background:var(--grad);color:#fff;font-size:.8rem}
+#tab-providers>details.adv{display:none} /* старая ручная форма заменена «Свой ИИ по ссылке» */
+.sv-ver{margin-top:-.4rem;font-size:.8rem}
