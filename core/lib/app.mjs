@@ -14,19 +14,21 @@ import { brainTools } from "./tools/brain.mjs";
 import { Confirmations } from "./confirm.mjs";
 import { TeamAgent, teamTools } from "./team.mjs";
 import { installPriority } from "./priority.mjs";
+import { createIntegrations, integrationTools, moreTools } from "./integrations.mjs";
 import { videoTools } from "./tools/video.mjs";
 import { installVoice } from "./voice.mjs";
 
-export function createApp(cfg, { fetchImpl = fetch } = {}) {
+export function createApp(cfg, { fetchImpl = fetch, mailConnect } = {}) {
   fs.mkdirSync(cfg.dataDir, { recursive: true });
   const store = new Store(path.join(cfg.dataDir, "db"));
   const providers = new Providers(path.join(cfg.dataDir, "providers.json"), fetchImpl);
   installPriority(store, providers); // порядок ИИ из вкладки «ИИ»: сначала первый, при сбое — следующий
+  const integrations = createIntegrations(cfg, { fetchImpl, ...(mailConnect || {}) }); // GitHub, Vercel, VK, YouTube, почта — вкладка «Интеграции»
   const hub = new DeviceHub(store);
   // Картинки и видео Светлана сама не генерирует (image_generate/video_generate отключены):
   // открывает для этого приложения на устройстве (Шедеврум, Kandinsky) или бесплатные сервисы в браузере.
   const registry = new Registry().add(
-    ...codeTools(cfg), ...businessTools(store), ...docTools(cfg, providers).filter((t) => t.domain !== "media"), ...webTools(), ...deviceTools(hub), ...lifeTools(store), ...brainTools(store, cfg), ...teamTools(store, providers), ...videoTools(cfg),
+    ...codeTools(cfg), ...businessTools(store), ...docTools(cfg, providers).filter((t) => t.domain !== "media"), ...webTools(), ...deviceTools(hub), ...lifeTools(store), ...brainTools(store, cfg), ...teamTools(store, providers), ...videoTools(cfg), ...integrationTools(integrations), ...moreTools(integrations),
     ...stpConnector({ id: "aiko", title: "Маркетплейс АИКО", base: cfg.aikoUrl, token: cfg.aikoToken, fx: fetchImpl }),
     ...stpConnector({ id: "selfemployed", title: "Мир самозанятых", base: cfg.selfEmployedUrl, token: cfg.selfEmployedToken, fx: fetchImpl }),
   );
@@ -38,5 +40,5 @@ export function createApp(cfg, { fetchImpl = fetch } = {}) {
   if (!cfg.secret) console.warn("⚠ SVETLANA_SECRET не задан: после перезапуска выданные подтверждения станут недействительны");
   const agent = new TeamAgent({ providers, registry, store, confirmations, maxSteps: cfg.maxSteps });
   installVoice(hub, { agent, store }); // «Светлана, …» с компьютера: текст → мозг → ответ для озвучки
-  return { cfg, store, providers, hub, registry, confirmations, agent };
+  return { cfg, store, providers, hub, registry, confirmations, agent, integrations };
 }
