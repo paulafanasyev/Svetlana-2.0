@@ -12,7 +12,8 @@ import { DeviceHub, deviceTools } from "./devices.mjs";
 import { lifeTools } from "./tools/life.mjs";
 import { brainTools } from "./tools/brain.mjs";
 import { Confirmations } from "./confirm.mjs";
-import { Agent } from "./agent.mjs";
+import { TeamAgent, teamTools } from "./team.mjs";
+import { videoTools } from "./tools/video.mjs";
 import { installVoice } from "./voice.mjs";
 
 export function createApp(cfg, { fetchImpl = fetch } = {}) {
@@ -23,7 +24,7 @@ export function createApp(cfg, { fetchImpl = fetch } = {}) {
   // Картинки и видео Светлана сама не генерирует (image_generate/video_generate отключены):
   // открывает для этого приложения на устройстве (Шедеврум, Kandinsky) или бесплатные сервисы в браузере.
   const registry = new Registry().add(
-    ...codeTools(cfg), ...businessTools(store), ...docTools(cfg, providers).filter((t) => t.domain !== "media"), ...webTools(), ...deviceTools(hub), ...lifeTools(store), ...brainTools(store, cfg),
+    ...codeTools(cfg), ...businessTools(store), ...docTools(cfg, providers).filter((t) => t.domain !== "media"), ...webTools(), ...deviceTools(hub), ...lifeTools(store), ...brainTools(store, cfg), ...teamTools(store, providers), ...videoTools(cfg),
     ...stpConnector({ id: "aiko", title: "Маркетплейс АИКО", base: cfg.aikoUrl, token: cfg.aikoToken, fx: fetchImpl }),
     ...stpConnector({ id: "selfemployed", title: "Мир самозанятых", base: cfg.selfEmployedUrl, token: cfg.selfEmployedToken, fx: fetchImpl }),
   );
@@ -33,7 +34,7 @@ export function createApp(cfg, { fetchImpl = fetch } = {}) {
     save: (e) => { const t = nonceFile + ".tmp"; fs.writeFileSync(t, JSON.stringify(e)); fs.renameSync(t, nonceFile); },
   });
   if (!cfg.secret) console.warn("⚠ SVETLANA_SECRET не задан: после перезапуска выданные подтверждения станут недействительны");
-  const agent = new Agent({ providers, registry, store, confirmations, maxSteps: cfg.maxSteps });
+  const agent = new TeamAgent({ providers, registry, store, confirmations, maxSteps: cfg.maxSteps });
   installVoice(hub, { agent, store }); // «Светлана, …» с компьютера: текст → мозг → ответ для озвучки
   return { cfg, store, providers, hub, registry, confirmations, agent };
 }
