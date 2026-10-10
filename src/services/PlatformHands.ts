@@ -88,6 +88,19 @@ export interface UIElement {
   children?: UIElement[];
 }
 
+// Contacts returned by the Svetlana-home bridge (POST /api/contacts/list)
+export interface DeviceContact {
+  id: string;
+  name: string;
+  phones: string[];
+}
+
+export interface ContactsPage {
+  total: number;
+  offset: number;
+  contacts: DeviceContact[];
+}
+
 // Connection status
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -96,4 +109,6 @@ export interface PlatformHandsConfig {
   endpoint: string;
   timeout?: number;
   reconnect?: boolean;
+  /** Pairing code from the Svetlana-home notification (XXXX-XXXX). */
+  token?: string;
 }

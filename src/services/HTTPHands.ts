@@ -1,27 +1,29 @@
-// HTTP Transport - Alternative connection to Android device
-import type { PlatformHands, ActionResult, ScreenCapture, AccessibilityTree, UIElement, DeviceInfo, PlatformHandsConfig } from './PlatformHands';
+// HTTP Transport - connection to the Svetlana-home bridge on the Android phone
+import type { PlatformHands, ActionResult, ScreenCapture, AccessibilityTree, UIElement, DeviceInfo, PlatformHandsConfig, ContactsPage } from './PlatformHands';
 
 export class HTTPHands implements PlatformHands {
   private config: PlatformHandsConfig;
   private connected = false;
 
   constructor(config: PlatformHandsConfig) {
-    this.config = config;
+    this.config = { ...config, endpoint: config.endpoint.replace(/\/+$/, '') };
+  }
+
+  private headers(): Record<string, string> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = this.config.token?.trim();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return headers;
   }
 
   async connect(): Promise<void> {
     try {
-      const response = await fetch(`${this.config.endpoint}/health`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      
-      if (response.ok) {
-        this.connected = true;
-        console.log('[HTTPHands] Connected to', this.config.endpoint);
-      } else {
-        throw new Error('Health check failed');
-      }
+      const response = await fetch(`${this.config.endpoint}/health`, { method: 'GET' });
+      if (!response.ok) throw new Error('Health check failed');
+      this.connected = true;
+      // Verify the pairing code right away so the UI can report a wrong code.
+      await this.sendRequest('device/info');
+      console.log('[HTTPHands] Connected to', this.config.endpoint);
     } catch (error) {
       this.connected = false;
       throw error;
@@ -48,7 +50,7 @@ export class HTTPHands implements PlatformHands {
     try {
       const response = await fetch(`${this.config.endpoint}/api/${method}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.headers(),
         body: JSON.stringify({
           params,
           timestamp: Date.now()
@@ -60,6 +62,9 @@ export class HTTPHands implements PlatformHands {
 
       if (!response.ok) {
         const error = await response.json().catch(() => ({ message: 'Unknown error' }));
+        if (response.status === 401) {
+          throw new Error(error.message || 'Неверный код подключения');
+        }
         throw new Error(error.message || `HTTP ${response.status}`);
       }
 
@@ -77,6 +82,11 @@ export class HTTPHands implements PlatformHands {
   // Device info
   async getDeviceInfo(): Promise<DeviceInfo> {
     return await this.sendRequest('device/info');
+  }
+
+  // Contacts (Svetlana-home bridge)
+  async listContacts(options: { query?: string; limit?: number; offset?: number } = {}): Promise<ContactsPage> {
+    return await this.sendRequest('contacts/list', options);
   }
 
   // App control
