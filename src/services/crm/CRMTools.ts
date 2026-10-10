@@ -7,6 +7,7 @@ import {
   crmStore, CRMStore, DEAL_STAGES, STAGE_LABELS, STATUS_LABELS,
   type ActivityType, type ContactStatus, type CRMContact, type DealStage, type ImportReport,
 } from './CRMStore';
+import { bizSystemPrompt, describeBizResult, detectBizIntent } from '../biz/BizTools';
 
 const STATUSES: ContactStatus[] = ['lead', 'client', 'partner', 'other'];
 const NOTE_TYPES: ActivityType[] = ['note', 'call', 'meeting', 'message'];
@@ -260,7 +261,7 @@ export function parseCRMActions(text: string): { clean: string; actions: CRMActi
   const clean = text.replace(CRM_ACTION_RE, (_m, json: string) => {
     try {
       const parsed = JSON.parse(json);
-      if (parsed && typeof parsed.tool === 'string' && parsed.tool.startsWith('crm_')) {
+      if (parsed && typeof parsed.tool === 'string' && /^(crm|biz)_/.test(parsed.tool)) {
         actions.push({ tool: parsed.tool, args: parsed.args && typeof parsed.args === 'object' ? parsed.args : {} });
       } else {
         invalid++;
@@ -275,6 +276,7 @@ export function parseCRMActions(text: string): { clean: string; actions: CRMActi
 
 /** Human-readable one-liner for a tool result. */
 export function describeResult(tool: string, result: ToolResult): string {
+  if (tool.startsWith('biz_')) return describeBizResult(tool, result);
   if (!result.success) return `⚠️ ${result.error || 'Не получилось'}`;
   const d = result.data ?? {};
   switch (tool) {
@@ -317,7 +319,7 @@ export function detectCRMIntent(text: string): CRMAction | null {
   if (mentionsCRM && /(сводк|статистик|сколько|итог|отчет)/.test(t)) {
     return { tool: 'crm_stats', args: {} };
   }
-  return null;
+  return detectBizIntent(text);
 }
 
 export function crmSystemPrompt(store: CRMStore = crmStore): string {
@@ -340,5 +342,5 @@ ${store.summaryForAI()}
 - crm_add_task {"text": "...", "contact": "имя", "due": "ГГГГ-ММ-ДД"}
 - crm_complete_task {"task": "текст задачи"}
 - crm_stats {}
-Этапы сделок: ${stages}. Не выдумывай данные клиентов — используй только то, что сказал пользователь или что есть в CRM. Результат действия пользователь увидит сам, не пиши, что действие уже выполнено.`;
+Этапы сделок: ${stages}. Не выдумывай данные клиентов — используй только то, что сказал пользователь или что есть в CRM. Результат действия пользователь увидит сам, не пиши, что действие уже выполнено.${bizSystemPrompt()}`;
 }
