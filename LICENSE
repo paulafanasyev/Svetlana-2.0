@@ -1,21 +1,34 @@
-MIT License
+PROPRIETARY SOURCE-AVAILABLE LICENSE
+Copyright (c) 2026 Pavel Afanasyev. All rights reserved.
 
-Copyright (c) 2026 Svetlana 2.0
+1. OWNERSHIP
+The original source code, documentation, designs, visual assets, avatar assets, prompts, datasets, and other materials in this repository that are owned by the copyright holder (the "Materials") are protected by applicable copyright and other laws. Third-party components and materials are excluded from this grant and remain subject to their own licenses.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+2. LIMITED PERMISSION
+You may view the Materials and make a local copy solely for personal, non-commercial evaluation, provided that this notice is retained. This limited permission does not grant any other rights.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+3. PROHIBITED USES WITHOUT PRIOR WRITTEN PERMISSION
+Without a separate written license signed by the copyright holder, you may not:
+(a) use the Materials or any substantial portion of them for commercial purposes, including in a paid product or service;
+(b) sell, sublicense, rent, lease, or otherwise monetize the Materials;
+(c) redistribute, publish, mirror, or provide copies of the Materials or derivative works to third parties;
+(d) modify, adapt, translate, or create derivative works from the Materials for distribution or commercial use;
+(e) incorporate the Materials into another product, repository, model, dataset, or service for distribution or commercial use;
+(f) remove or alter copyright, attribution, or proprietary notices.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+4. NO OPEN-SOURCE GRANT
+The Materials are not licensed under an open-source license. Public availability of this repository does not constitute permission to use, copy, modify, distribute, or commercially exploit the Materials except as expressly stated in Section 2.
+
+5. THIRD-PARTY MATERIALS
+This license does not override licenses for third-party code, models, datasets, fonts, voices, or other assets. Each such component must be used according to its applicable license. No ownership is claimed over third-party materials.
+
+6. NO WARRANTY
+The Materials are provided "AS IS", to the maximum extent permitted by law, without warranties of any kind. Nothing in this license excludes liability that cannot lawfully be excluded.
+
+7. TERMINATION AND ENFORCEMENT
+Any permission granted under this license terminates automatically if you materially breach its terms. All rights not expressly granted are reserved by the copyright holder, subject to applicable law.
+
+8. APPLICABLE LAW
+This notice is intended to be interpreted under applicable copyright law. Governing law and dispute forum, if needed, must be specified in a separate written agreement or determined by applicable law.
+
+For commercial, redistribution, or other licensing requests, obtain written permission from the copyright holder before use.
