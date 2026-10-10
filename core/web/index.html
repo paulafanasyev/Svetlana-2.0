@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#5a5be8"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon-192.png">
-<title>Светлана</title><link rel="stylesheet" href="/style.css">
+<title>Светлана</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/team.css">
 </head>
 <body>
 <div id="login" class="login" hidden>
@@ -19,12 +19,18 @@
     <div class="me"><img src="/svetlana.jpg" alt="" class="ava" id="ava"><div><b>Светлана</b><small id="status">готова</small></div></div>
     <nav id="tabs" role="tablist">
       <button data-tab="chat" class="on">Чат</button><button data-tab="crm">CRM</button><button data-tab="money">Финансы</button>
-      <button data-tab="devices">Устройства</button><button data-tab="providers" title="ИИ: модель на телефоне или облако">ИИ</button>
+      <button data-tab="devices">Устройства</button><button data-tab="team" title="Роли ИИ: CTO, IT, маркетинг…">Команда</button><button data-tab="providers" title="ИИ: модель на телефоне или облако">ИИ</button>
     </nav>
   </header>
   <main>
     <section id="tab-chat" class="tab on">
       <div id="stage" class="stage" title="Нажмите, чтобы свернуть"><img src="/svetlana.jpg" alt="" class="ava big" id="stageAva"><div><b>Светлана</b><small id="stageStatus">готова</small></div></div>
+      <div id="chatBar" class="chatbar">
+        <button type="button" id="chatsBtn" class="btn small" aria-expanded="false" aria-controls="chatList">☰ Чаты</button>
+        <label class="chatai"><span>ИИ:</span><select id="chatAi" aria-label="Кто отвечает в этом чате"><option value="">✨ Светлана (авто)</option></select></label>
+        <button type="button" id="newChat" class="btn small" title="Новый чат">＋ Новый</button>
+      </div>
+      <div id="chatList" class="chatlist" hidden></div>
       <div id="log" class="log" aria-live="polite"></div>
       <div id="attach" class="attach"></div>
       <form id="composer" class="composer">
@@ -48,6 +54,24 @@
       <h3>Этот браузер</h3><p>Можно показать Светлане экран этого компьютера прямо из браузера (только просмотр, без управления).</p>
       <button class="btn" id="shareScreen">Дать Светлане видеть экран</button> <span id="shareState"></span>
     </section>
+    <section id="tab-team" class="tab"><h2>Команда</h2>
+      <p>Вы — CEO. Дайте подключённым ИИ роли — Светлана будет поручать им задачи и сводить ответы. С каждым можно говорить и напрямую: кнопка «💬 Чат».</p>
+      <p id="teamEmpty" class="hint" hidden>Сначала подключите хотя бы один ИИ во вкладке «ИИ» — готовый сервис или свой по ссылке.</p>
+      <div id="teamList"></div>
+      <h3>Добавить роль</h3>
+      <div id="teamPresets" class="chips"></div>
+      <form id="teamForm" class="cu">
+        <label>Роль<input id="tmRole" required maxlength="60" placeholder="напр. CTO"></label>
+        <label>ИИ<select id="tmAi" required><option value="">— выберите ИИ —</option></select></label>
+        <label>Задачи роли<textarea id="tmIns" rows="3" maxlength="2000" placeholder="Чем занимается: архитектура, реклама, договоры…"></textarea></label>
+        <div class="row"><button class="btn primary">Добавить роль</button></div><p id="tmOut" role="status"></p>
+      </form>
+      <p class="hint">В обычном чате: «Светлана, поручи CTO оценить архитектуру, а маркетингу — придумать три ролика». Ответы других ИИ Светлана проверяет и сводит; любые изменения после них — только с вашим подтверждением.</p>
+      <details class="adv"><summary>Видео: монтаж и генерация</summary>
+        <p><b>Монтаж — бесплатно на ПК</b> (нужен ffmpeg, Светлана подскажет установку): обрезать, склеить, сделать вертикальным для Reels/Shorts/Клипов, наложить музыку, вшить субтитры. Просто попросите в чате: «склей intro.mp4 и demo.mp4 и сделай вертикальным».</p>
+        <p><b>Генерация роликов</b> — во внешнем сервисе (Higgsfield, Kling, Runway…): роль «Маркетинг и видео» пишет сценарий, раскадровку и промпты, а готовые клипы Светлана смонтирует. На телефоне генерация и монтаж видео не поддерживаются — не хватит мощности.</p>
+      </details>
+    </section>
     <section id="tab-providers" class="tab"><h2>Чем Светлана думает</h2>
       <div class="row"><button class="btn" type="button" id="provBrain">Подобрать под это устройство</button></div>
       <h3>Подключено</h3>
@@ -55,6 +79,18 @@
       <div id="provList"></div>
       <h3>Добавить облачный ИИ</h3>
       <div id="provCloud"></div><p id="provOk" class="ok" role="status"></p>
+      <h3>Свой ИИ по ссылке</h3>
+      <p class="hint">Любой сервис с API как у OpenAI (DeepSeek, Qwen, OpenRouter, Together, свой сервер, Ollama), а также Anthropic и GigaChat: адрес, модель, ключ — и проверка.</p>
+      <form id="cuForm" class="cu" autocomplete="off">
+        <label>Адрес API<input id="cuUrl" inputmode="url" spellcheck="false" placeholder="https://api.example.com/v1" required></label>
+        <label>Модель<span class="cu-row"><input id="cuModel" list="cuModels" spellcheck="false" placeholder="впишите или выберите из списка" required><button type="button" class="btn small" id="cuLoad">Список моделей</button></span></label>
+        <datalist id="cuModels"></datalist><div id="cuChips" class="chips"></div>
+        <label>API-ключ<span class="cu-row"><input id="cuKey" type="password" spellcheck="false" autocomplete="new-password" placeholder="sk-…  (для локального сервера можно пусто)"><button type="button" class="btn small" id="cuEye" aria-label="Показать или скрыть ключ">👁</button></span></label>
+        <label>Название <small>(необязательно)</small><input id="cuName" maxlength="60" placeholder="напр. DeepSeek для кода"></label>
+        <fieldset id="cuCaps" class="cu-caps"><legend>Умеет</legend></fieldset>
+        <div class="row"><button type="button" class="btn" id="cuTest">Проверить соединение</button><button class="btn primary" id="cuSave">Сохранить</button><button type="button" class="btn" id="cuChat" hidden>💬 Открыть чат с ним</button></div>
+        <p id="cuOut" class="cu-out" role="status" aria-live="polite"></p>
+      </form>
       <details class="adv"><summary>Вручную: свой сервер, vLLM, Ollama, LM Studio</summary>
       <form id="provForm" class="prov">
         <select id="pvPreset"><option value="vllm">Своя модель (vLLM, сервер в РФ)</option><option value="yandex">YandexGPT</option><option value="gigachat">GigaChat</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="gemini">Google Gemini</option><option value="mistral">Mistral</option><option value="groq">Groq</option><option value="ollama">Ollama (локально)</option><option value="lmstudio">LM Studio</option></select>
@@ -77,5 +113,6 @@
 <script src="/setup-logic.js"></script>
 <script src="/setup.js"></script>
 <script src="/app.js"></script>
+<script src="/team.js"></script>
 </body>
 </html>
