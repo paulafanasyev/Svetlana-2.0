@@ -39,6 +39,8 @@ if (!File(nodeDir, "ok").exists()) {
     copy { from(zipTree(zip)); into(nodeDir) }
     File(nodeDir, "ok").writeText("ok")
 }
+// x86_64 — только для проверки на эмуляторе в CI (SV_X86=1): ядро Node запускается, модели на телефоне нет (llama.cpp только arm64)
+val withX86 = (findProperty("svX86") ?: System.getenv("SV_X86"))?.toString() == "1"
 val nodeRoot: File = nodeDir.walkTopDown().first { File(it, "include/node/node.h").isFile && File(it, "bin/arm64-v8a/libnode.so").isFile }
 
 // llama-server и его библиотеки → jniLibs/arm64-v8a (исполняемый файл кладём как lib*.so: Android 10+ запускает только из папки библиотек)
@@ -56,7 +58,8 @@ run {
     val server = files.firstOrNull { it.name == "llama-server" } ?: throw GradleException("в архиве llama.cpp нет llama-server")
     server.copyTo(File(arm, "libllama_server.so"), overwrite = true)
     for (f in files) if (Regex("^lib.+\\.so$").matches(f.name) && f.name != "libc++_shared.so") f.copyTo(File(arm, f.name), overwrite = true)
-    for (abi in listOf("arm64-v8a", "armeabi-v7a")) File(nodeRoot, "bin/$abi/libnode.so").copyTo(File(jniOut, "$abi/libnode.so").apply { parentFile.mkdirs() }, overwrite = true)
+    if (withX86 && !File(nodeRoot, "bin/x86_64/libnode.so").isFile) throw GradleException("SV_X86=1, но в nodejs-mobile нет bin/x86_64/libnode.so")
+    for (abi in listOf("arm64-v8a", "armeabi-v7a") + (if (withX86) listOf("x86_64") else emptyList())) File(nodeRoot, "bin/$abi/libnode.so").copyTo(File(jniOut, "$abi/libnode.so").apply { parentFile.mkdirs() }, overwrite = true)
 }
 
 // ---------- ядро Светланы (тот же код, что на ПК и сервере) → assets/core.zip ----------
@@ -102,7 +105,7 @@ android {
     buildFeatures { buildConfig = true }
     if (keystore != null) signingConfigs { getByName("debug") { storeFile = keystore; storePassword = System.getenv("SVETLANA_KEYSTORE_PASS") ?: "android"; keyAlias = System.getenv("SVETLANA_KEY_ALIAS") ?: "svetlana"; keyPassword = System.getenv("SVETLANA_KEYSTORE_PASS") ?: "android" } }
     buildTypes { release { isMinifyEnabled = false } }
-    splits { abi { isEnable = true; reset(); include("arm64-v8a", "armeabi-v7a"); isUniversalApk = true } }
+    splits { abi { isEnable = true; reset(); include(*(listOf("arm64-v8a", "armeabi-v7a") + (if (withX86) listOf("x86_64") else emptyList())).toTypedArray()); isUniversalApk = true } }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
     sourceSets["main"].apply { jniLibs.srcDir(jniOut); assets.srcDir(genAssets); res.srcDir(genRes) }
     packaging { jniLibs { useLegacyPackaging = true; pickFirsts += listOf("**/libc++_shared.so", "**/libnode.so") } }
