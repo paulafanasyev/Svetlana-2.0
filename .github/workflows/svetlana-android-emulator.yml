@@ -5,6 +5,10 @@ on:
     paths:
       - "android-hands/**"
       - ".github/workflows/svetlana-android-emulator.yml"
+  pull_request:
+    paths:
+      - "android-hands/**"
+      - ".github/workflows/svetlana-android-emulator.yml"
   workflow_dispatch: {}
 
 permissions:
