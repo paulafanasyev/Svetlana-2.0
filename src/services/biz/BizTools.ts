@@ -181,7 +181,7 @@ export function createBizTools(store: BizStore = bizStore): Tool[] {
         const prof = store.getProfile();
         const deadlines = store.deadlines(60).slice(0, 3).map(d => ({ date: new Date(d.date).toLocaleDateString('ru-RU'), title: d.title }));
         if (prof.regime === 'npd') return ok({ regime: 'npd', ...store.npdSummary(), deadlines });
-        if (prof.regime === 'usn6' || prof.regime === 'usn15') return ok({ regime: prof.regime, ...store.usnSummary(), deadlines });
+        if (prof.regime === 'usn6' || prof.regime === 'usn15') return ok({ ...store.usnSummary(), deadlines });
         return ok({ regime: prof.regime, deadlines, note: 'Выберите налоговый режим в профиле, чтобы я считала налог.' });
       },
       isAvailable: always,
