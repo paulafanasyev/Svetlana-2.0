@@ -9,6 +9,7 @@ import { config, loadEnvFile } from "./lib/config.mjs";
 import { createApp } from "./lib/app.mjs";
 import { acceptUpgrade } from "./lib/ws.mjs";
 import { artifacts } from "./lib/tools/docs.mjs";
+import { teamApi } from "./lib/team.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".webmanifest": "application/manifest+json", ".png": "image/png", ".svg": "image/svg+xml", ".jpg": "image/jpeg", ".webp": "image/webp",
@@ -69,6 +70,7 @@ export function createServer(app) {
       }
       if (!authed(req)) return json(res, 401, { error: "нужен вход" });
       if (p === "/api/logout") { sessions.delete(cookie(req).sv); return json(res, 200, { ok: true }); }
+      { const t = await teamApi(app, req, p, url, readJson); if (t) return json(res, t[0], t[1]); } // свой ИИ, чаты со своим ИИ, команда
       if (p === "/api/chat" && req.method === "POST") {
         const b = await readJson(req);
         const text = String(b.text || "").slice(0, 20000); if (!text.trim()) return json(res, 400, { error: "пустое сообщение" });
