@@ -89,16 +89,19 @@
     $("#cuModels").innerHTML = cu.models.slice(0, 500).map((m) => `<option value="${esc(m)}">`).join("");
     $("#cuChips").innerHTML = list.map((m) => `<button type="button" class="chip${m === $("#cuModel").value ? " on" : ""}" data-m="${esc(m)}">${esc(m)}</button>`).join("") + (cu.models.length > list.length ? `<small class="hint">…ещё ${cu.models.length - list.length} — начните вводить название</small>` : "");
   }
+  let modelsGen = 0; // ответ на старый адрес/ключ не затирает свежий список
   async function loadModels(quiet) {
     const d = draft(); if (!d.baseUrl) { if (!quiet) out("Сначала вставьте адрес API.", "bad"); return; }
+    const my = ++modelsGen;
     out("Спрашиваю у сервера список моделей…");
     try {
       const r = await post("/api/providers/models", { baseUrl: d.baseUrl, apiKey: d.apiKey });
+      if (my !== modelsGen) return;
       if (!r.ok) { cu.models = []; chips(); return out("✘ Список не получен: " + esc(r.error) + ". Название модели можно вписать вручную.", "bad"); }
       if (r.baseUrl && r.baseUrl !== d.baseUrl) $("#cuUrl").value = r.baseUrl;
       cu.models = r.models; chips($("#cuModel").value);
       out(`Моделей: ${r.models.length}${r.note ? " · " + esc(r.note) : ""}. Выберите нужную.`, "ok");
-    } catch (e) { out("✘ " + esc(e.message), "bad"); }
+    } catch (e) { if (my === modelsGen) out("✘ " + esc(e.message), "bad"); }
   }
   async function probe() {
     const d = draft(); if (!d.baseUrl || !d.model) { out("Нужны адрес API и модель.", "bad"); return null; }
@@ -121,7 +124,7 @@
     autoSig = sig; loadModels(true);
   }, 700); };
   $("#cuKey").addEventListener("input", autoModels);
-  $("#cuUrl").addEventListener("input", () => { cu.models = []; chips(); autoModels(); });
+  $("#cuUrl").addEventListener("input", () => { modelsGen++; cu.models = []; chips(); autoModels(); });
   $("#cuModel").addEventListener("input", (e) => chips(e.target.value));
   $("#cuChips").addEventListener("click", (e) => { const m = e.target.dataset?.m; if (m) { $("#cuModel").value = m; chips(m); } });
   $("#cuEye").addEventListener("click", () => { const k = $("#cuKey"); k.type = k.type === "password" ? "text" : "password"; });
@@ -209,6 +212,13 @@
   }
   for (const sel of ["#tab-providers > h2", "#tab-team > h2"]) { const h = q(sel); if (h) h.insertAdjacentHTML("afterend", `<p class="hint sv-ver"></p>`); }
   const ph = [...document.querySelectorAll("#tab-providers .hint")].find((x) => /Порядок = приоритет/.test(x.textContent)); if (ph) ph.textContent = "Сверху вниз — порядок: Светлана сначала спрашивает первый ИИ, при сбое — следующий. Меняйте стрелками ↑↓. «Проверить связь» — тест каждого. Ключи хранятся только в ядре.";
+
+  // где серверы ИИ: в РФ только у GigaChat и YandexGPT; DeepSeek и OpenRouter — зарубежные, но доступны из РФ
+  for (const p of window.SvSetupLogic?.PRESETS || []) {
+    if (!p.ru) continue; p.ru = false;
+    p.by += p.id === "gigachat" || p.id === "yandex" ? " · серверы в РФ" : " · доступен из РФ";
+  }
+  { const o = q('#pvPreset option[value="vllm"]'); if (o) o.textContent = "Свой сервер (vLLM или любой OpenAI-совместимый, в любой стране)"; }
 
   // на телефоне экран Светлане показывает «Руки», а не браузер
   if (window.SvetlanaAndroid) { $("#shareScreen").hidden = true; $("#shareState").textContent = "На телефоне экран Светлане показывает кнопка «🖐 Экран и руки» вверху."; }

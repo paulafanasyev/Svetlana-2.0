@@ -7,8 +7,21 @@ function applyPriority(providers, ids) {
   const pos = (p) => { const i = ids.indexOf(p.id); return i < 0 ? ids.length : i; };
   providers.list = providers.list.map((p, i) => [p, i]).sort((a, b) => pos(a[0]) - pos(b[0]) || a[1] - b[1]).map(([p]) => p);
 }
+/** Провайдеры из SVETLANA_PROVIDERS помечаются fromEnv — их ключи не попадают в providers.json при сохранении порядка;
+ *  если такой же id есть и в файле (пользователь его правил) — остаётся одна запись, из файла, на месте первой. */
+function tidyEnv(providers) {
+  let env = []; try { env = JSON.parse(process.env.SVETLANA_PROVIDERS || "[]"); } catch {}
+  const envIds = new Set((Array.isArray(env) ? env : []).map((p) => p && p.id).filter(Boolean));
+  const out = [], at = new Map();
+  providers.list.forEach((p, i) => {
+    if (at.has(p.id)) { const { fromEnv, ...q } = { ...out[at.get(p.id)], ...p }; out[at.get(p.id)] = q; return; }
+    at.set(p.id, out.length); out.push(i < envIds.size && envIds.has(p.id) ? { ...p, fromEnv: true } : p);
+  });
+  providers.list = out;
+}
 /** Порядок сохраняется отдельно: модель телефона («local») при каждом запуске регистрируется заново — и встаёт на своё место. */
 export function installPriority(store, providers) {
+  tidyEnv(providers);
   const up = providers.upsert.bind(providers);
   providers.upsert = (p) => { const n = up(p); const ids = prioIds(store); if (ids.length) { applyPriority(providers, ids); providers.save(); } return n; };
   applyPriority(providers, prioIds(store));
