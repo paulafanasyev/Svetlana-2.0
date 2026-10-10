@@ -1,6 +1,7 @@
 // Real Tool Registry - Uses actual PlatformHands for device control
 import type { Tool, ToolResult } from './ToolRegistry';
 import { handsManager } from './HandsManager';
+import { HTTPHands } from './HTTPHands';
 
 async function requireHands(): Promise<void> {
   const connected = await handsManager.isConnected();
@@ -20,6 +21,33 @@ export const openAppTool: Tool = {
     return { success: false, error: `Verification failed: expected ${params.packageName}, got ${currentApp}` };
   },
   async verify(params, result) { return !!result.success && result.data?.verified === true && result.data?.currentApp === params.packageName; },
+  async isAvailable() { return await handsManager.isConnected(); },
+};
+
+/**
+ * Contacts from the phone (Svetlana-home bridge, POST /api/contacts/list).
+ * Read-only, so medium risk: no confirmation, but the data is personal.
+ */
+export const readContactsTool: Tool = {
+  id: 'read_contacts', name: 'Read Contacts',
+  description: 'Read contacts (name and phone numbers) from the connected Android phone. Use query to filter by name; page with limit/offset.',
+  category: 'data', riskLevel: 'medium',
+  inputSchema: { type: 'object', properties: {
+    query: { type: 'string', description: 'Part of the contact name (optional)' },
+    limit: { type: 'number', description: 'Max contacts to return, default 500, max 5000' },
+    offset: { type: 'number', description: 'Skip this many contacts (paging)' },
+  } },
+  async execute(params: Record<string, any>): Promise<ToolResult> {
+    await requireHands();
+    const hands = handsManager.getHands();
+    if (!(hands instanceof HTTPHands)) {
+      return { success: false, error: 'Contacts are available only over the Svetlana-home HTTP bridge. Connect the phone on the Android Connection page.' };
+    }
+    const page = await hands.listContacts({ query: params.query, limit: params.limit, offset: params.offset });
+    if (!page || !Array.isArray(page.contacts)) return { success: false, error: 'Unexpected response from the phone' };
+    return { success: true, data: { total: page.total, offset: page.offset, count: page.contacts.length, contacts: page.contacts, timestamp: Date.now() } };
+  },
+  async verify(_params, result) { return !!result.success && Array.isArray(result.data?.contacts) && result.data.count === result.data.contacts.length; },
   async isAvailable() { return await handsManager.isConnected(); },
 };
 
@@ -102,5 +130,5 @@ export const goBackTool: Tool = { id:'go_back', name:'Go Back', description:'Nav
 export const searchWebTool: Tool = { id:'search_web', name:'Search Web', description:'Search the web using default browser', category:'data', riskLevel:'low', inputSchema:{type:'object',properties:{query:{type:'string',description:'Search query'}},required:['query']}, async execute(p){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const url=`https://www.google.com/search?q=${encodeURIComponent(p.query)}`;const l=await h.launchApp('com.android.chrome');if(!l.success)return{success:false,error:'Failed to open browser'};await new Promise(r=>setTimeout(r,1000));const t=await h.type(url);if(!t.success)return{success:false,error:'Failed to type search query'};const e=await h.pressKey('enter');return e.success?{success:true,data:{query:p.query,url,browser:'com.android.chrome'}}:{success:false,error:'Failed to submit search'};},async verify(_p,r){return r.success},async isAvailable(){return await handsManager.isConnected();}};
 
 import { toolRegistry } from './ToolRegistry';
-export function registerRealTools(){[openAppTool,tapElementTool,typeTextTool,captureScreenTool,sendMessageTool,swipeTool,pressKeyTool,goHomeTool,goBackTool,searchWebTool].forEach(t=>toolRegistry.registerTool(t));}
+export function registerRealTools(){[openAppTool,readContactsTool,tapElementTool,typeTextTool,captureScreenTool,sendMessageTool,swipeTool,pressKeyTool,goHomeTool,goBackTool,searchWebTool].forEach(t=>toolRegistry.registerTool(t));}
 registerRealTools();
