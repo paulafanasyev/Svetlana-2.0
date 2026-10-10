@@ -14,21 +14,23 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import org.json.JSONObject
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Голос телефона для веб-чата: распознавание речи (часто работает и без интернета) и озвучка системным голосом.
  * События уходят в страницу: window.__svVoice(kind, text) и window.__svSpoke().
- * Для губ аватара: window.__svSpeechStart() — голос зазвучал, window.__svRange(i) — сейчас произносится символ i.
+ * Для губ аватара: window.__svSpeechStart(id) — голос зазвучал, window.__svRange(id, i) — сейчас произносится символ i.
+ * id фразы возвращает speak(): страница игнорирует события чужой (старой) фразы.
  */
 class VoiceBridge(private val a: Activity, private val web: WebView) {
     private var sr: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var ttsFailed = false
-    private var pendingSay: String? = null
+    private var pendingSay: Pair<String, String>? = null
     // у каждой фразы свой id: события старой фразы (после QUEUE_FLUSH или stop) не должны завершать или двигать новую
     @Volatile private var activeId: String? = null
-    private var seq = 0
+    private val seq = AtomicInteger()
     var askMic: (() -> Unit)? = null
 
     init {
@@ -40,24 +42,24 @@ class VoiceBridge(private val a: Activity, private val web: WebView) {
             if (ttsFailed && pendingSay != null) { pendingSay = null; js("window.__svSpoke&&window.__svSpoke()") }
             if (ttsReady) {
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(id: String?) { event(id, "window.__svSpeechStart&&window.__svSpeechStart()") }
-                    override fun onDone(id: String?) { event(id, "window.__svSpoke&&window.__svSpoke()", last = true) }
-                    @Deprecated("Deprecated in Java") override fun onError(id: String?) { event(id, "window.__svSpoke&&window.__svSpoke()", last = true) }
+                    override fun onStart(id: String?) { event(id, "__svSpeechStart") }
+                    override fun onDone(id: String?) { event(id, "__svSpoke", last = true) }
+                    @Deprecated("Deprecated in Java") override fun onError(id: String?) { event(id, "__svSpoke", last = true) }
                     // Android 8+: движок сообщает, какое слово звучит, — по нему губы аватара держат темп голоса
-                    override fun onRangeStart(id: String?, start: Int, end: Int, frame: Int) { event(id, "window.__svRange&&window.__svRange($start)") }
+                    override fun onRangeStart(id: String?, start: Int, end: Int, frame: Int) { event(id, "__svRange", ",$start") }
                 })
-                pendingSay?.let { pendingSay = null; say(it) }
+                pendingSay?.let { pendingSay = null; say(it.first, it.second) }
             }
         }
     }
 
     private fun js(code: String) = a.runOnUiThread { web.evaluateJavascript(code, null) }
-    /** Событие голоса — только для текущей фразы. Проверяем уже в UI-потоке: там же меняется activeId (say/stopSpeaking),
-     *  поэтому запоздавший onDone старой фразы не завершит новую. */
-    private fun event(id: String?, code: String, last: Boolean = false) = a.runOnUiThread {
+    /** Событие голоса — только для текущей фразы. Проверяем в UI-потоке (там же меняется activeId в say/stopSpeaking)
+     *  и передаём id в страницу: если скрипт дойдёт уже после начала новой фразы, страница его отбросит. */
+    private fun event(id: String?, fn: String, extra: String = "", last: Boolean = false) = a.runOnUiThread {
         if (id == null || id != activeId) return@runOnUiThread
         if (last) activeId = null
-        web.evaluateJavascript(code, null)
+        web.evaluateJavascript("window.$fn&&window.$fn(${JSONObject.quote(id)}$extra)", null)
     }
     private fun voice(kind: String, text: String = "") = js("window.__svVoice&&window.__svVoice(${JSONObject.quote(kind)},${JSONObject.quote(text)})")
 
@@ -85,16 +87,18 @@ class VoiceBridge(private val a: Activity, private val web: WebView) {
             .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true))
     }
     @JavascriptInterface fun stopListening() = a.runOnUiThread { sr?.stopListening() }
-    @JavascriptInterface fun speak(text: String) = a.runOnUiThread { say(text) }
+    /** Озвучить текст; возвращает id фразы — с ним придут __svSpeechStart/__svRange/__svSpoke. */
+    @JavascriptInterface fun speak(text: String): String { val id = "sv-${seq.incrementAndGet()}"; a.runOnUiThread { say(text, id) }; return id }
     @JavascriptInterface fun stopSpeaking() = a.runOnUiThread { activeId = null; pendingSay = null; tts?.stop() }
     /** Из чата: «нет модели и ключа» → экран выбора модели. */
     @JavascriptInterface fun openModels() = a.runOnUiThread { a.startActivity(Intent(a, ModelsActivity::class.java)) }
 
-    private fun say(text: String) {
-        if (ttsFailed) { js("window.__svSpoke&&window.__svSpoke()"); return }
-        if (!ttsReady) { pendingSay = text; return }
-        val id = "sv-${++seq}"; activeId = id
-        if (tts?.speak(text.take(3900), TextToSpeech.QUEUE_FLUSH, null, id) != TextToSpeech.SUCCESS) { activeId = null; js("window.__svSpoke&&window.__svSpoke()") } // движок отказал — не висим в «говорю…»
+    private fun say(text: String, id: String) {
+        val spoke = "window.__svSpoke&&window.__svSpoke(${JSONObject.quote(id)})"
+        if (ttsFailed) { js(spoke); return }
+        if (!ttsReady) { pendingSay = text to id; return }
+        activeId = id
+        if (tts?.speak(text.take(3900), TextToSpeech.QUEUE_FLUSH, null, id) != TextToSpeech.SUCCESS) { activeId = null; js(spoke) } // движок отказал — не висим в «говорю…»
     }
     fun destroy() { sr?.destroy(); tts?.shutdown() }
 }

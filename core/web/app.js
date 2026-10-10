@@ -218,7 +218,10 @@ async function speak(text) {
     if (gen !== speakGen) return; // пока ждали, пришёл новый ответ или озвучку выключили
     if (blob instanceof Blob) { audioUrl = URL.createObjectURL(blob); audio = new Audio(audioUrl); window.SvAvatar?.voice?.(audio); audio.onended = done; audio.onerror = done; try { await audio.play(); } catch { done(); } return; }
   } catch { if (gen !== speakGen) return; /* озвучим браузером */ }
-  if (AND) { window.__svSpoke = () => { window.__svSpoke = null; done(); }; try { AND.speak(clean); } catch { done(); } return; } // голос телефона
+  if (AND) { // голос телефона; id фразы отсекает запоздавшие события прошлой
+    let id = ""; window.__svSpoke = (t) => { if (t && id && t !== id) return; window.__svSpoke = null; done(); };
+    try { id = String(AND.speak(clean) || ""); window.SvAvatar?.tag?.(id); } catch { done(); } return;
+  }
   if (!("speechSynthesis" in window)) return done();
   const u = new SpeechSynthesisUtterance(clean); u.lang = "ru-RU";
   const v = speechSynthesis.getVoices().find((x) => x.lang.startsWith("ru") && /female|жен|irina|alena|milena|svetlana/i.test(x.name)) || speechSynthesis.getVoices().find((x) => x.lang.startsWith("ru"));
