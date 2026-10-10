@@ -74,9 +74,9 @@ async function turn(fn, userText) {
   }
   finally { $("#send").disabled = false; }
 }
-function noBrain() {
-  const d = bubble("bot", `<div class="txt">Мне пока нечем думать 🙂 Выберите ${AND ? "<b>модель на телефоне</b> (без интернета) или " : ""}<b>облачный ИИ со своим ключом</b> (GigaChat, YandexGPT, DeepSeek…).</div><div class="row" style="margin-top:.5rem">${AND ? `<button class="btn primary" data-go="models">Модель на телефоне</button>` : ""}<button class="btn" data-go="providers">Облако с ключом</button></div>`);
-  d.addEventListener("click", (e) => { const g = e.target.dataset?.go; if (g === "models") AND?.openModels(); if (g === "providers") document.querySelector('#tabs button[data-tab="providers"]')?.click(); });
+function noBrain() { // нечем думать → тот же мастер, что при первом запуске: оценит телефон и предложит модель или облако
+  const d = bubble("bot", `<div class="txt">Мне пока нечем думать 🙂 ${AND ? "Могу оценить телефон и подобрать <b>модель без интернета</b> — или подключите <b>облачный ИИ своим ключом</b>." : "Подключите <b>облачный ИИ своим ключом</b> (GigaChat, YandexGPT, DeepSeek…)."}</div><div class="row" style="margin-top:.5rem">${AND ? `<button class="btn primary" data-go="brain">Подобрать под телефон</button>` : ""}<button class="btn${AND ? "" : " primary"}" data-go="cloud">Облако с ключом</button></div>`);
+  d.addEventListener("click", (e) => { const g = e.target.dataset?.go; if (g) window.svSetup?.open(g); });
 }
 async function sendText(text) {
   text = text.trim(); if (!text && !S.images.length) return;
@@ -295,9 +295,12 @@ $("#shareScreen").addEventListener("click", async () => {
 // ---------- провайдеры ----------
 const CAP_RU = { chat: "чат", tools: "инструменты", vision: "зрение", image: "картинки", video: "видео", tts: "озвучка", stt: "распознавание речи" };
 $("#pvCaps").innerHTML += Object.entries(CAP_RU).map(([k, v]) => `<label><input type="checkbox" value="${k}" ${["chat", "tools"].includes(k) ? "checked" : ""}> ${v}</label>`).join("");
+let cloudMounted = false;
+$("#provBrain")?.addEventListener("click", () => window.svSetup?.open("brain"));
 async function loadProviders() {
+  if (!cloudMounted && window.svSetup) { cloudMounted = true; window.svSetup.cloudForm($("#provCloud"), (p, answer) => { $("#provOk").textContent = `✔ ${p.name} подключён${answer ? ": «" + answer + "»" : ""}`; loadProviders(); }); }
   const list = await api("/api/providers");
-  $("#provList").innerHTML = list.length ? list.map((p) => `<div class="dev"><b>${esc(p.id)}</b> · ${esc(p.type)} · ${esc(p.model)} · ${esc(p.capabilities.map((c) => CAP_RU[c] || c).join(", "))} ${p.hasKey ? "🔑" : ""} <button class="btn small" data-test="${esc(p.id)}">Проверить</button> <button class="btn small" data-rm="${esc(p.id)}">Удалить</button> <span data-res="${esc(p.id)}"></span></div>`).join("") : `<p class="hint">Добавьте хотя бы одного провайдера.</p>`;
+  $("#provList").innerHTML = list.length ? list.map((p) => `<div class="dev"><b>${esc(p.id)}</b> · ${esc(p.type)} · ${esc(p.model)} · ${esc(p.capabilities.map((c) => CAP_RU[c] || c).join(", "))} ${p.hasKey ? "🔑" : ""} <button class="btn small" data-test="${esc(p.id)}">Проверить</button> <button class="btn small" data-rm="${esc(p.id)}">Удалить</button> <span data-res="${esc(p.id)}"></span></div>`).join("") : `<p class="hint">Пока ничего не подключено — выберите сервис ниже.</p>`;
 }
 $("#provList").addEventListener("click", async (e) => {
   const t = e.target.dataset?.test, rm = e.target.dataset?.rm;
@@ -317,6 +320,7 @@ $("#provForm").addEventListener("submit", async (e) => {
 async function boot() {
   try { await api("/api/tools"); showApp(); } catch { return; }
   if (S.conv) { try { const c = await api("/api/conversations/" + S.conv); c.messages.slice(-30).forEach((m) => bubble(m.role === "user" ? "me" : "bot", fmt(m.content))); } catch { S.conv = null; } }
+  window.svSetup?.auto(); // первый запуск: аватар, оценка телефона, модель или облако
   if (!$("#log").children.length) bubble("bot", "Привет, Павел! Я Светлана. Могу писать код, вести CRM и учёт НПД, делать документы и презентации, работать с АИКО и «Миром самозанятых», смотреть экран и управлять устройствами. Нажмите 🗣 — и поговорим голосом.");
 }
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
