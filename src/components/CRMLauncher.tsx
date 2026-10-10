@@ -1,15 +1,17 @@
 // Floating button + full-screen overlay with Svetlana's CRM and Business tools, available on every page.
-// Also opens with the URL hash: #crm or #biz (e.g. http://tauri.localhost/#biz).
+// Also opens with the URL hash: #crm, #biz or #bank (e.g. http://tauri.localhost/#biz).
 import { useEffect, useState } from 'react';
-import { Users, Briefcase, X } from 'lucide-react';
+import { Users, Briefcase, ShieldCheck, X } from 'lucide-react';
 import CRMPage from '../pages/CRMPage';
 import BizPage from '../pages/BizPage';
+import BankInnPage from '../pages/BankInnPage';
 
-type Section = 'crm' | 'biz';
+type Section = 'crm' | 'biz' | 'bank';
 
 function sectionFromHash(): Section | null {
   if (typeof window === 'undefined') return null;
-  return window.location.hash === '#crm' ? 'crm' : window.location.hash === '#biz' ? 'biz' : null;
+  const h = window.location.hash;
+  return h === '#crm' ? 'crm' : h === '#biz' ? 'biz' : h === '#bank' ? 'bank' : null;
 }
 
 export default function CRMLauncher() {
@@ -28,7 +30,7 @@ export default function CRMLauncher() {
 
   function close() {
     setSection(null);
-    if (window.location.hash === '#crm' || window.location.hash === '#biz') {
+    if (sectionFromHash()) {
       history.replaceState(null, '', window.location.pathname + window.location.search);
     }
   }
@@ -58,10 +60,10 @@ export default function CRMLauncher() {
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/95 backdrop-blur-sm p-4 md:p-8" role="dialog" aria-modal="true" aria-label="CRM и бизнес">
           <div className="max-w-7xl mx-auto space-y-5">
             <div className="flex items-center justify-between gap-3">
-              <div className="flex gap-2">{tab('crm', 'CRM', Users)}{tab('biz', 'Бизнес', Briefcase)}</div>
+              <div className="flex gap-2">{tab('crm', 'CRM', Users)}{tab('biz', 'Бизнес', Briefcase)}{tab('bank', 'Банк и ИНН', ShieldCheck)}</div>
               <button onClick={close} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10" aria-label="Закрыть"><X className="w-4 h-4" />Закрыть</button>
             </div>
-            {section === 'crm' ? <CRMPage /> : <BizPage />}
+            {section === 'crm' ? <CRMPage /> : section === 'biz' ? <BizPage /> : <BankInnPage />}
           </div>
         </div>
       )}
