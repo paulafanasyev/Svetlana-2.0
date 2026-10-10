@@ -89,12 +89,16 @@ test("кадр рисуется без ошибок во всех состоян
   assert.ok(calls.includes("ellipse") && calls.includes("drawImage"));
 });
 
-test("say() + мост телефона: губы стартуют по __svSpeechStart/__svRange, «готова» их останавливает", () => {
+test("say() + мост телефона: губы стартуют по __svSpeechStart/__svRange своей фразы, чужие события отброшены", () => {
   const { A, win } = load();
-  A.setState("speaking"); A.say("Привет! Как дела?");
-  assert.equal(typeof win.__svRange, "function");
-  win.__svSpeechStart(); win.__svRange(8); // не падает и принимает позицию
-  A.setState("idle"); win.__svRange(10); // речи уже нет — тихо игнорируем
+  A.setState("speaking"); A.say("Привет! Как дела у тебя сегодня?"); A.tag("sv-2");
+  const sp = A._test.current();
+  win.__svSpeechStart("sv-1"); assert.equal(sp.started, false, "старт старой фразы не запускает новую");
+  win.__svSpeechStart("sv-2"); assert.equal(sp.started, true);
+  const before = sp.units(sp.first);
+  win.__svRange("sv-1", 25); assert.equal(sp.units(sp.first), before, "позиция старой фразы не двигает губы");
+  win.__svRange("sv-2", 8); // своя — принимаем
+  A.setState("idle"); win.__svRange("sv-2", 10); // речи уже нет — тихо игнорируем
 });
 
 test("звук сервера: губы идут по времени плеера и молчат на паузе; системные API не подменяются", () => {

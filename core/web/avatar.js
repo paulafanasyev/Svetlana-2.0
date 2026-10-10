@@ -104,7 +104,7 @@
   const METER_OK = !window.SvetlanaAndroid && !/iPhone|iPad|iPod/.test(UA) && !(/Macintosh/.test(UA) && typeof navigator === "object" && navigator.maxTouchPoints > 1);
   function audioCtx() { try { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); } catch { AC = null; } return AC; }
   class Speech {
-    constructor(text) { this.text = String(text || ""); this.tl = timeline(this.text); this.ph = phrases(this.text); this.t0 = 0; this.u0 = 0; this.rate = 1 / UNIT_MS; this.started = false; this.ended = false; this.audio = null; this.an = null; this.buf = null; this.peak = .05; this.first = 0; this._n = -1; this._f = null; }
+    constructor(text) { this.text = String(text || ""); this.tl = timeline(this.text); this.ph = phrases(this.text); this.t0 = 0; this.u0 = 0; this.rate = 1 / UNIT_MS; this.started = false; this.ended = false; this.audio = null; this.an = null; this.buf = null; this.peak = .05; this.first = 0; this._n = -1; this._f = null; this.id = ""; }
     start(now = performance.now()) { if (!this.started) { this.started = true; this.t0 = this.first = now; this.u0 = 0; } }
     /** голос сообщил: сейчас произносится символ ci */
     at(ci, now = performance.now()) {
@@ -273,9 +273,10 @@
     for (const f of faces) { const r = f.canvas?.getBoundingClientRect?.(); if (!r || !r.width) continue; const dx = (e.clientX - (r.left + r.width / 2)) / Math.max(innerWidth, 1), dy = (e.clientY - (r.top + r.height / 2)) / Math.max(innerHeight, 1); f.anim.look = { x: clamp(dx * 2, -1, 1), y: clamp(dy * 2, -1, 1), t: now }; }
   }, { passive: true });
 
-  // Голос телефона: мост Android сообщает старт речи и позицию звучащего слова
-  window.__svSpeechStart = () => speech?.start();
-  window.__svRange = (i) => speech?.at(Number(i) || 0);
+  // Голос телефона: мост Android сообщает старт речи и позицию звучащего слова (с id фразы — чужие отбрасываем)
+  const mine = (id) => speech && (!id || !speech.id || String(id) === speech.id);
+  window.__svSpeechStart = (id) => { if (mine(id)) speech.start(); };
+  window.__svRange = (id, i) => { if (mine(id)) speech.at(Number(i) || 0); };
   // контекст звука создаём только по касанию (жест пользователя) — тогда он работает, и губы следуют и за громкостью
   if (METER_OK && typeof addEventListener === "function") addEventListener("pointerdown", () => { const ac = audioCtx(); if (ac && ac.state !== "running") Promise.resolve(ac.resume?.()).catch(() => {}); }, { once: true, passive: true });
 
@@ -289,6 +290,8 @@
     },
     /** Голос звучит из <audio> (озвучка сервера): время берём из плеера */
     voice(audio) { if (speech && audio && !speech.audio) speech.attach(audio); },
+    /** id фразы голоса телефона (из моста Android) */
+    tag(id) { if (speech) speech.id = String(id || ""); },
     /** голос браузера/телефона начал говорить */
     started() { speech?.start(); },
     /** сейчас звучит слово с символа i (событие boundary) */
