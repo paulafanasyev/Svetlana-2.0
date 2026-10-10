@@ -230,4 +230,52 @@
   const start = () => { if (!$("#app").hidden && !T.loaded) { refresh(); version(); } };
   new MutationObserver(start).observe($("#app"), { attributes: true, attributeFilter: ["hidden"] }); start();
   window.svTeam = { refresh, newChat, openChat };
+  // ---------- поделиться чатом, копировать ответ, файлы в папку чата ----------
+  async function copyText(t) {
+    try { await navigator.clipboard.writeText(t); return true; } catch {}
+    const ta = document.createElement("textarea"); ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand("copy"); } catch {} ta.remove(); return ok;
+  }
+  const share = document.createElement("button"); share.type = "button"; share.className = "btn small"; share.id = "shareChat"; share.textContent = "📤"; share.title = "Поделиться чатом"; share.setAttribute("aria-label", "Поделиться чатом");
+  $("#newChat").after(share);
+  share.addEventListener("click", async () => {
+    if (!S.conv) return note("Чат пока пустой — делиться нечем.");
+    let c; try { c = await api("/api/conversations/" + S.conv); } catch (e) { return bubble("bot err", esc(e.message)); }
+    const text = (c.messages || []).map((m) => `${m.role === "user" ? "Я" : "Светлана"}: ${m.content}`).join("\n\n");
+    if (!text) return note("Чат пока пустой — делиться нечем.");
+    const title = c.title || "Чат со Светланой";
+    if (navigator.share) { try { await navigator.share({ title, text }); return; } catch (e) { if (e.name === "AbortError") return; } }
+    note((await copyText(`${title}\n\n${text}`)) ? "Чат скопирован — вставьте его в мессенджер или письмо." : "Не получилось скопировать.");
+  });
+  new MutationObserver(() => {
+    for (const m of document.querySelectorAll("#log .msg.bot:not(.sys):not(.err):not([data-cp])")) {
+      m.dataset.cp = "1"; const b = document.createElement("button"); b.type = "button"; b.className = "cp"; b.textContent = "⧉"; b.title = "Копировать ответ"; b.setAttribute("aria-label", "Копировать ответ"); m.appendChild(b);
+    }
+  }).observe($("#log"), { childList: true });
+  $("#log").addEventListener("click", async (e) => {
+    const b = e.target.closest(".cp"); if (!b) return;
+    const m = b.parentElement; const t = (m.querySelector(".txt") || m).innerText.replace(/⧉\s*$/, "").trim();
+    b.textContent = (await copyText(t)) ? "✓" : "✕"; setTimeout(() => (b.textContent = "⧉"), 1500);
+  });
+  { // 📄 любой файл → папка этого чата (chats/<id>/): Светлана читает, правит, пушит и деплоит его как файлы проекта
+    const lab = document.createElement("label"); lab.className = "icon"; lab.title = "Файл в папку чата (документ, код, архив)"; lab.setAttribute("aria-label", "Загрузить файл в папку чата");
+    lab.innerHTML = `📄<input id="chatFile" type="file" hidden multiple>`;
+    const clip = $("#file")?.closest("label"); clip ? clip.after(lab) : $("#composer").prepend(lab);
+    $("#chatFile").addEventListener("change", async (e) => {
+      const files = [...e.target.files]; e.target.value = ""; if (!files.length) return;
+      if (!S.conv) { try { const c = await post("/api/conversations", body($("#chatAi").value)); S.conv = c.id; localStorage.setItem("sv_conv", c.id); } catch (err) { return bubble("bot err", "Чат не создался: " + esc(err.message)); } }
+      for (const f of files) {
+        if (f.size > 25 * 1024 * 1024) { note(`«${esc(f.name)}» больше 25 МБ — не загружаю.`); continue; }
+        try {
+          const r = await fetch(`/api/chats/${encodeURIComponent(S.conv)}/files?name=${encodeURIComponent(f.name)}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: f, credentials: "same-origin" });
+          const j = await r.json(); if (!r.ok || !j.ok) throw new Error(j.error || "ошибка " + r.status);
+          const t = $("#text"); t.value = (t.value ? t.value + "\n" : "") + `[файл в папке чата: ${j.path}]`; t.dispatchEvent(new Event("input"));
+          note(`📄 «${esc(j.name)}» в папке чата (${(j.size / 1024).toFixed(0)} КБ). Напишите, что с ним сделать.`);
+        } catch (err) { bubble("bot err", `«${esc(f.name)}» не загрузился: ` + esc(err.message)); }
+      }
+    });
+  }
+
+  // вкладка «Интеграции» (GitHub, Vercel, ВК, YouTube, почта) — отдельным файлом
+  { const sc = document.createElement("script"); sc.src = "/integrations.js"; document.body.appendChild(sc); }
 })();
