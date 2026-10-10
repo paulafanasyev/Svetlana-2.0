@@ -39,6 +39,8 @@ for c in android-hands/app/build/outputs/apk/debug/app-x86_64-debug.apk android-
 done
 [ -n "$APK" ] || fail "APK не найден"
 echo "APK: $APK"
+# APK для телефона (arm64) кладём в итоги теста — его можно сразу ставить на устройство
+cp android-hands/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk "$OUT/svetlana-phone-arm64.apk" 2>/dev/null || echo "::warning::нет app-arm64-v8a-debug.apk"
 adb wait-for-device
 for i in $(seq 1 60); do if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" = 1 ]; then break; fi; sleep 5; done
 adb shell getprop ro.product.cpu.abilist || true
