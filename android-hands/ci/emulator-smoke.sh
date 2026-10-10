@@ -16,6 +16,22 @@ collect() {
   echo "---- core.log (хвост) ----"; tail -n 60 "$OUT/core.log" 2>/dev/null || true
   echo "---- core-service.log ----"; tail -n 30 "$OUT/core-service.log" 2>/dev/null || true
   echo "---- logcat: Svetlana / падения ----"; grep -E "SvetlanaCore|FATAL EXCEPTION|Fatal signal|AndroidRuntime|$PKG" "$OUT/logcat.txt" | tail -n 80 || true
+  grep -E "SvetlanaCore|FATAL EXCEPTION|Fatal signal|AndroidRuntime|DEBUG|nodejs|libnode|svbridge|$PKG" "$OUT/logcat.txt" | tail -n 60 > "$OUT/logcat-app.txt" 2>/dev/null || true
+  # журналы — в аннотации: их видно в API без входа, по ним разбираем падение
+  annotate "core.log" "$OUT/core.log" 3; annotate "core-service.log" "$OUT/core-service.log" 1; annotate "logcat" "$OUT/logcat-app.txt" 2
+}
+# хвост файла → до N аннотаций по 3000 символов (переводы строк кодируются по правилам GitHub)
+annotate() {
+  local title=$1 f=$2 n=$3
+  [ -s "$f" ] || { echo "::warning title=$title::(пусто)"; return 0; }
+  python3 - "$title" "$f" "$n" <<'PY' || true
+import sys
+t, f, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+d = open(f, encoding="utf-8", errors="replace").read()[-3000 * n:]
+for i in range(0, len(d), 3000):
+    c = d[i:i + 3000].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    print(f"::warning title={t} {i // 3000 + 1}::{c}")
+PY
 }
 APK=""
 for c in android-hands/app/build/outputs/apk/debug/app-x86_64-debug.apk android-hands/app/build/outputs/apk/debug/app-universal-debug.apk; do
