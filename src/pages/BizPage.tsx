@@ -5,7 +5,7 @@ import {
   Copy, Check, ExternalLink, Send, Receipt,
 } from 'lucide-react';
 import {
-  bizStore, REGIME_LABELS, DOC_LABELS, DOC_STATUS_LABELS, NPD_LIMIT, formatRub,
+  bizStore, REGIME_LABELS, DOC_LABELS, DOC_STATUS_LABELS, NPD_LIMIT, formatRub, isTaxable,
   type TaxRegime, type DocType, type PayerType, type EntryKind, type BizProfile,
 } from '../services/biz/BizStore';
 import { renderDocumentHTML, paymentString } from '../services/biz/DocTemplates';
@@ -125,8 +125,11 @@ function MoneyTab() {
         {entries.map(e => (
           <div key={e.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
             <span className="w-24 text-slate-400">{date(e.date)}</span>
-            <span className="flex-1 min-w-0 truncate">{e.description}{e.counterparty ? ` · ${e.counterparty}` : ''}</span>
-            {e.kind === 'income' && profile.regime === 'npd' && (
+            <span className={`flex-1 min-w-0 truncate ${isTaxable(e) ? '' : 'text-slate-500 line-through'}`}>{e.description}{e.counterparty ? ` · ${e.counterparty}` : ''}</span>
+            <button className="text-xs text-slate-400 hover:underline" title="Перевод себе, займ, возврат и т.п. не учитываются в налоге" onClick={() => bizStore.setTaxable(e.id, !isTaxable(e))}>
+              {isTaxable(e) ? (e.kind === 'income' ? 'не доход?' : 'не расход?') : 'учитывать'}
+            </button>
+            {e.kind === 'income' && isTaxable(e) && profile.regime === 'npd' && (
               e.receipt === 'issued'
                 ? <span className="text-xs text-emerald-300">чек {e.receiptNumber ?? '✓'}</span>
                 : <button className="text-xs text-amber-300 hover:underline" onClick={() => {
@@ -191,7 +194,7 @@ function DocsTab() {
         {error && <p className="md:col-span-4 text-sm text-red-400">{error}</p>}
       </form>
       <div className={`${card} divide-y divide-white/5`}>
-        {docs.length === 0 && <p className="p-4 text-sm text-slate-500">Документов нет. Скажите Светлане: «Выстави счёт Иванову на 15000 за дизайн».</p>}
+        {docs.length === 0 && <p className="p-4 text-sm text-slate-500">Документов нет. Скажите Светлане: «Выставь счёт Иванову на 15000 за дизайн».</p>}
         {docs.map(d => {
           const html = () => renderDocumentHTML(d, bizStore.getProfile());
           return (
@@ -202,9 +205,9 @@ function DocsTab() {
               </div>
               <button className={btnGhost} onClick={() => printHTML(html())}><Printer className="w-4 h-4" />Печать / PDF</button>
               <button className={btnGhost} onClick={() => download(`${DOC_LABELS[d.type]}-${d.number}.html`, html(), 'text/html;charset=utf-8')}><Download className="w-4 h-4" />Файл</button>
-              {d.type === 'invoice' && profile.account && <CopyButton text={paymentString(profile, d.total, `Оплата по счёту № ${d.number} от ${date(d.date)}`)} label="Строка для QR" />}
+              {d.type === 'invoice' && d.status !== 'cancelled' && profile.account && (() => { try { return <CopyButton text={paymentString(profile, d.total, `Оплата по счёту № ${d.number} от ${date(d.date)}`)} label="Строка для QR" />; } catch (err: any) { return <span className="text-xs text-amber-300">{err?.message}</span>; } })()}
               {d.type === 'invoice' && d.status === 'draft' && <button className={btnGhost} onClick={() => bizStore.setDocumentStatus(d.id, 'sent')}><Send className="w-4 h-4" />Отправлен</button>}
-              {d.type === 'invoice' && d.status !== 'paid' && <button className={btnPrimary} onClick={() => bizStore.markPaid(d.id)}><Check className="w-4 h-4" />Оплачен</button>}
+              {d.type === 'invoice' && d.status !== 'paid' && d.status !== 'cancelled' && <button className={btnPrimary} onClick={() => bizStore.markPaid(d.id)}><Check className="w-4 h-4" />Оплачен</button>}
               <button onClick={() => { if (window.confirm('Удалить документ?')) bizStore.deleteDocument(d.id); }} className="p-1 text-slate-500 hover:text-red-300" aria-label="Удалить"><Trash2 className="w-4 h-4" /></button>
             </div>
           );
@@ -273,7 +276,8 @@ function TaxesTab() {
             <div className={`${card} p-4`}>
               <p className="text-sm mb-2">Лимит дохода НПД: {formatRub(n.income)} из {formatRub(NPD_LIMIT)}</p>
               <div className="h-2.5 rounded-full bg-white/5 overflow-hidden"><div className={`h-full ${n.income > NPD_LIMIT * 0.85 ? 'bg-red-400' : 'bg-emerald-400/70'}`} style={{ width: `${Math.min(100, (n.income / NPD_LIMIT) * 100)}%` }} /></div>
-              {n.limitExceeded && <p className="text-sm text-red-300 mt-2">Лимит превышен: нужно перейти на другой режим (например, ИП на УСН) в течение 20 дней.</p>}
+              {n.limitExceeded && <p className="text-sm text-red-300 mt-2">Доход превысил 2,4 млн ₽: право на НПД утрачено с даты превышения. {/^\d{12}$/.test(profile.inn) && profile.ogrn ? 'ИП может в течение 20 дней подать уведомление о переходе на УСН, иначе — общий режим.' : 'Без статуса ИП дальше доход облагается НДФЛ 13%; чтобы работать на УСН, зарегистрируйте ИП.'}</p>}
+              {!n.limitExceeded && n.income === NPD_LIMIT && <p className="text-sm text-amber-300 mt-2">Лимит исчерпан ровно: любой следующий доход в этом году лишит права на НПД.</p>}
             </div>
             <div className={`${card} divide-y divide-white/5`}>
               {n.months.map(m => (
@@ -300,9 +304,12 @@ function TaxesTab() {
               <Stat label="Налог к уплате (оценка)" value={formatRub(u.taxAfterContributions)} tone="text-amber-300" />
             </div>
             <div className={`${card} p-4 text-sm space-y-1`}>
-              <p>Фиксированные взносы: {formatRub(u.contributionsFixed)} (сумму на текущий год проверьте на nalog.gov.ru), 1% с дохода свыше 300 000 ₽: {formatRub(u.contributionsExtra)}.</p>
-              {u.regime === 'usn6' ? <p className="text-slate-400">ИП без работников уменьшает налог УСН 6% на всю сумму взносов.</p> : <p className="text-slate-400">На УСН 15% взносы учитываются в расходах; минимальный налог — 1% дохода ({formatRub(u.minTax)}).</p>}
-              {u.quarters.map(q => <p key={q.quarter} className="text-slate-300">{q.quarter === 4 ? 'Год' : `${q.quarter * 3} мес.`}: доход {formatRub(q.income)}, налог нарастающим итогом {formatRub(q.taxCumulative)}</p>)}
+              <p>Фиксированные взносы {u.year}: {formatRub(u.contributionsFixed)}, 1% с дохода свыше 300 000 ₽ за {u.year}: {formatRub(u.contributionsExtra)} (срок — 1 июля {u.year + 1}).</p>
+              {u.regime === 'usn6'
+                ? <p className="text-slate-400">Налог УСН 6% уменьшается на взносы, уплачиваемые в {u.year} году: фиксированные {formatRub(u.contributionsFixed)}{u.contributionsPrevExtra ? ` + 1% за ${u.year - 1} год ${formatRub(u.contributionsPrevExtra)}` : ''}. {u.hasEmployees ? 'Есть работники: уменьшить можно не более чем на 50% налога.' : 'ИП без работников уменьшает налог на всю сумму.'} Уменьшено на {formatRub(u.contributionsDeducted)}.</p>
+                : <p className="text-slate-400">На УСН 15% взносы за себя ({formatRub(u.contributionsDeducted)}) входят в расходы; минимальный налог 1% дохода ({formatRub(u.minTax)}) платится, если он больше обычного.</p>}
+              <p className={u.vat.status === 'exempt' ? 'text-slate-400' : 'text-amber-300'}>НДС: {u.vat.text}</p>
+              {u.quarters.map(q => <p key={q.quarter} className="text-slate-300">{q.quarter === 4 ? 'Год' : `${q.quarter * 3} мес.`}: доход {formatRub(q.income)}, налог нарастающим итогом до вычета взносов {formatRub(q.taxCumulative)}</p>)}
             </div>
           </>
         );
@@ -380,6 +387,7 @@ function ProfileTab() {
         birthYear: draft.birthYear ? Number(draft.birthYear) : undefined,
         fixedContributions: Number(draft.fixedContributions) || 0,
         contributionsPaid: Number(draft.contributionsPaid) || 0,
+        patentCost: Number(draft.patentCost) || 0,
       });
       setMsg('Сохранено');
     } catch (err: any) { setMsg(err?.message || 'Ошибка'); }
@@ -409,7 +417,31 @@ function ProfileTab() {
         <input className={input} placeholder="Корр. счёт" inputMode="numeric" value={draft.corrAccount} onChange={set('corrAccount')} />
         <input className={input} placeholder="Год рождения (для молодёжных грантов)" inputMode="numeric" value={draft.birthYear ?? ''} onChange={e => setDraft(d => ({ ...d, birthYear: e.target.value ? Number(e.target.value) : undefined }))} />
         {(draft.regime === 'usn6' || draft.regime === 'usn15' || draft.regime === 'patent') && (
-          <input className={input} placeholder="Фиксированные взносы ИП за год, ₽" inputMode="numeric" value={draft.fixedContributions} onChange={e => setDraft(d => ({ ...d, fixedContributions: Number(e.target.value) || 0 }))} />
+          <>
+            <label className="text-sm space-y-1"><span className="text-slate-400">Фиксированные взносы ИП за год, ₽</span>
+              <input className={input} inputMode="numeric" value={draft.fixedContributions} onChange={e => setDraft(d => ({ ...d, fixedContributions: Number(e.target.value) || 0 }))} /></label>
+            <label className="text-sm space-y-1"><span className="text-slate-400">Уже уплачено взносов в этом году, ₽</span>
+              <input className={input} inputMode="numeric" value={draft.contributionsPaid} onChange={e => setDraft(d => ({ ...d, contributionsPaid: Number(e.target.value) || 0 }))} /></label>
+          </>
+        )}
+        {(draft.regime === 'usn6' || draft.regime === 'usn15' || draft.regime === 'patent' || draft.regime === 'ooo') && (
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.hasEmployees} onChange={e => setDraft(d => ({ ...d, hasEmployees: e.target.checked }))} />Есть работники</label>
+        )}
+        {(draft.regime === 'usn6' || draft.regime === 'usn15') && (
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.vatGeneralRate} onChange={e => setDraft(d => ({ ...d, vatGeneralRate: e.target.checked }))} />НДС по общей ставке 22% (с вычетами) вместо 5%/7%</label>
+        )}
+        {(draft.regime === 'usn6' || draft.regime === 'usn15' || draft.regime === 'ooo') && (
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.orgOnUsn} onChange={e => setDraft(d => ({ ...d, orgOnUsn: e.target.checked }))} />Это организация (ООО) на УСН</label>
+        )}
+        {draft.regime === 'patent' && (
+          <>
+            <label className="text-sm space-y-1"><span className="text-slate-400">Патент действует с</span>
+              <input className={input} type="date" value={draft.patentStart} onChange={set('patentStart')} /></label>
+            <label className="text-sm space-y-1"><span className="text-slate-400">по</span>
+              <input className={input} type="date" value={draft.patentEnd} onChange={set('patentEnd')} /></label>
+            <label className="text-sm space-y-1"><span className="text-slate-400">Стоимость патента, ₽ (калькулятор на patent.nalog.ru)</span>
+              <input className={input} inputMode="numeric" value={draft.patentCost} onChange={e => setDraft(d => ({ ...d, patentCost: Number(e.target.value) || 0 }))} /></label>
+          </>
         )}
       </div>
       <div className={`${card} p-4`}>
