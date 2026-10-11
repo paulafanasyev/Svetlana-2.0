@@ -1,4 +1,5 @@
 // Svetlana Business — запись клиентов: услуги, рабочие часы, свободные окна, записи, напоминания. Local-first.
+import { safeJsonParse, stripControl, MAX_BYTES } from '../security/SafeData';
 import type { KeyValueStorage } from '../crm/CRMStore';
 
 export type BookingStatus = 'booked' | 'done' | 'cancelled' | 'noshow';
@@ -191,7 +192,7 @@ export class BookingStore {
     this.clock = clock;
     try {
       const raw = this.storage.getItem(STORAGE_KEY);
-      this.data = raw ? sanitize(JSON.parse(raw)) : emptyData();
+      this.data = raw ? sanitize(safeJsonParse(raw, MAX_BYTES.storage)) : emptyData();
     } catch {
       this.data = emptyData();
     }
@@ -395,13 +396,30 @@ export class BookingStore {
 }
 
 /** iCalendar-событие, чтобы добавить запись в календарь телефона. */
+/** Свёртка строки iCalendar по 75 октетов UTF-8 (RFC 5545, 3.1). */
+function foldIcsLine(line: string): string {
+  const enc = new TextEncoder();
+  const out: string[] = [];
+  let cur = '';
+  let bytes = 0;
+  for (const ch of line) {
+    const b = enc.encode(ch).length;
+    if (bytes + b > (out.length ? 74 : 75)) { out.push(cur); cur = ''; bytes = 0; }
+    cur += ch; bytes += b;
+  }
+  out.push(cur);
+  return out.join('\r\n ');
+}
+
 export function toICS(a: Appointment): string {
   const f = (t: number) => new Date(t).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-  const esc = (s: string) => s.replace(/[\\;,]/g, m => `\\${m}`).replace(/\n/g, '\\n');
-  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Svetlana//Booking//RU', 'BEGIN:VEVENT', `UID:${a.id}@svetlana`, `DTSTAMP:${f(a.createdAt)}`,
+  // Экранирование RFC 5545: \\ ; , и переводы строк (CR и LF); прочие управляющие символы удаляются.
+  const esc = (s: string) => stripControl(s).replace(/[\\;,]/g, m => `\\${m}`).replace(/\r\n|\r|\n/g, '\\n');
+  const uid = String(a.id).replace(/[^A-Za-z0-9_-]/g, '');
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Svetlana//Booking//RU', 'BEGIN:VEVENT', `UID:${uid}@svetlana`, `DTSTAMP:${f(a.createdAt)}`,
     `DTSTART:${f(a.start)}`, `DTEND:${f(a.end)}`, `SUMMARY:${esc(`${a.serviceName}: ${a.clientName}`)}`,
     `DESCRIPTION:${esc([a.phone, a.note].filter(Boolean).join('\n'))}`,
-    'BEGIN:VALARM', 'TRIGGER:-PT1H', 'ACTION:DISPLAY', 'DESCRIPTION:Запись через час', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+    'BEGIN:VALARM', 'TRIGGER:-PT1H', 'ACTION:DISPLAY', 'DESCRIPTION:Запись через час', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].map(foldIcsLine).join('\r\n');
 }
 
 export const bookingStore = new BookingStore();

@@ -1,4 +1,5 @@
 // Импорт банковской выписки в формате 1С (1CClientBankExchange) — его выгружают почти все банки.
+import { safeJsonParse, MAX_BYTES } from '../security/SafeData';
 import type { KeyValueStorage } from '../crm/CRMStore';
 import { bizStore, BizStore, type PayerType } from './BizStore';
 
@@ -39,12 +40,14 @@ function parseRuDate(v: string | undefined): number | undefined {
 /** Байты файла → текст. 1С-выписки обычно в Windows-1251, иногда в UTF-8. */
 export function decodeStatement(bytes: ArrayBuffer | Uint8Array): string {
   const buf = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (buf.byteLength > MAX_BYTES.statement) throw new Error(`Выписка слишком большая (${(buf.byteLength / 1048576).toFixed(1)} МБ). Выгрузите период поменьше.`);
   const utf8 = new TextDecoder('utf-8').decode(buf);
   if (utf8.includes('СекцияДокумент') || utf8.includes('РасчСчет')) return utf8;
   try { return new TextDecoder('windows-1251').decode(buf); } catch { return utf8; }
 }
 
 export function parse1C(text: string): ParsedStatement {
+  if (text.length > MAX_BYTES.statement) throw new Error('Выписка слишком большая. Выгрузите период поменьше.');
   if (!text.includes('1CClientBankExchange')) throw new Error('Это не выписка 1С (нет заголовка 1CClientBankExchange). В интернет-банке выберите экспорт «в 1С».');
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
   const head: Record<string, string> = {};
@@ -90,7 +93,7 @@ function cleanName(name: string): string {
 }
 
 function loadImported(storage: KeyValueStorage | null): Set<string> {
-  try { return new Set(JSON.parse(storage?.getItem(IMPORTED_KEY) ?? '[]') as string[]); } catch { return new Set(); }
+  try { const v = safeJsonParse(storage?.getItem(IMPORTED_KEY) ?? '[]', MAX_BYTES.storage); return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []); } catch { return new Set(); }
 }
 
 function defaultStorage(): KeyValueStorage | null {
