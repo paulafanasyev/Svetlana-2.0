@@ -1,7 +1,8 @@
 // Real Tool Registry - Uses actual PlatformHands for device control
 // Безопасность: действия на экране «прикалываются» к приложению, которое было на экране в начале,
 // и перед самим нажатием/вводом/свайпом/клавишей проверяется, что оно всё ещё на экране (оверлей/подмена = отказ).
-// Проверка результата (verify) тоже считает доказательством только экран того же приложения.
+// Перед нажатием элемент ищется ещё раз и сравнивается (id, текст, границы): подмена кнопки внутри того же
+// приложения = отказ. Проверка результата (verify) тоже считает доказательством только экран того же приложения.
 import type { Tool, ToolResult } from './ToolRegistry';
 import { handsManager } from './HandsManager';
 import { HTTPHands } from './HTTPHands';
@@ -21,8 +22,19 @@ async function pinApp(hands: { getCurrentApp(): Promise<unknown> }): Promise<str
   try { const app = await hands.getCurrentApp(); return typeof app === 'string' && app ? app : null; } catch { return null; }
 }
 
+interface ElementLike { id?: unknown; text?: unknown; bounds?: { x: number; y: number; width: number; height: number } }
+
+/** Тот же самый элемент: совпадают id, текст и границы. */
+function sameElement(a: ElementLike | null | undefined, b: ElementLike | null | undefined): boolean {
+  if (!a || !b || !a.bounds || !b.bounds) return false;
+  return a.id === b.id && a.text === b.text
+    && a.bounds.x === b.bounds.x && a.bounds.y === b.bounds.y
+    && a.bounds.width === b.bounds.width && a.bounds.height === b.bounds.height;
+}
+
 const UNKNOWN_APP: ToolResult = { success: false, error: 'Cannot determine which app is on screen. Stopped for safety.' };
 const movedFrom = (app: string): ToolResult => ({ success: false, error: `Another app is on screen instead of ${app}. Stopped for safety.` });
+const ELEMENT_CHANGED: ToolResult = { success: false, error: 'The element changed right before the tap. Stopped for safety.' };
 
 export const openAppTool: Tool = {
   id: 'open_app', name: 'Open Application', description: 'Launch an Android application by package name', category: 'navigation', riskLevel: 'low',
@@ -69,12 +81,15 @@ export const tapElementTool: Tool = {
   async execute(params: { elementText?: string; elementId?: string }): Promise<ToolResult> {
     await requireHands(); const hands = handsManager.getHands(); if (!hands) return { success: false, error: 'Hands not available' };
     const pinned = await pinApp(hands); if (!pinned) return UNKNOWN_APP;
-    let element;
-    if (params.elementText) element = await hands.findElementByText(params.elementText);
-    else if (params.elementId) element = await hands.findElementById(params.elementId);
+    const find = async () => params.elementText ? await hands.findElementByText(params.elementText)
+      : params.elementId ? await hands.findElementById(params.elementId) : undefined;
+    const element = await find();
     if (!element) return { success: false, error: `Element not found: ${params.elementText || params.elementId}` };
-    const beforeTree = await hands.getAccessibilityTree(); const beforeApp = await hands.getCurrentApp();
-    // Проверка непосредственно перед нажатием: элемент найден в том же приложении, что и сейчас на экране.
+    const beforeTree = await hands.getAccessibilityTree();
+    // Элемент ищем ещё раз непосредственно перед нажатием: другая кнопка на том же месте или сдвиг = отказ.
+    if (!sameElement(element, await find())) return ELEMENT_CHANGED;
+    const beforeApp = await hands.getCurrentApp();
+    // И сразу перед нажатием: на экране то же приложение.
     if (beforeApp !== pinned) return movedFrom(pinned);
     const centerX = element.bounds.x + element.bounds.width / 2; const centerY = element.bounds.y + element.bounds.height / 2;
     const tapResult = await hands.tap(centerX, centerY);
