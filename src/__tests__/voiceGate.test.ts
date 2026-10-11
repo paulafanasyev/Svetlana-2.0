@@ -1,8 +1,8 @@
 // Голос — не согласие: даже проверенная голосом команда (или запись голоса владельца, воспроизведённая
-// в доверенной сессии) не меняет данные без явного нажатия «Выполнить» в окне подтверждения.
+// в доверенной сессии) не меняет и не показывает данные без явного нажатия в окне подтверждения.
 import { describe, it, expect, afterEach, beforeAll } from 'vitest';
 import { runCRMActions } from '../services/crm/CRMTools';
-import { setActionConfirmer, resetActionGate, type ActionRequest } from '../services/security/ActionGate';
+import { setActionConfirmer, resetActionGate, needsConfirmation, type ActionRequest } from '../services/security/ActionGate';
 import { VoiceTrust } from '../services/voice/Liveness';
 
 function memoryStorage(): Storage {
@@ -35,19 +35,22 @@ describe('voice-originated actions', () => {
   it('a voice command cannot claim to be a user click', async () => {
     const asked: ActionRequest[] = [];
     setActionConfirmer(async req => { asked.push(req); return false; });
-    // source 'user' без настоящего жеста понижается до 'unknown' и тоже требует подтверждения
     const lines = await runCRMActions([{ tool: 'crm_add_note', args: { name: 'X', text: 'y' } } as any], 'user');
     expect(asked).toHaveLength(1);
     expect(asked[0].source).not.toBe('user');
     expect(lines.join('\n')).toContain('Не выполнено без вашего подтверждения');
   });
 
-  it('read-only lookups by voice do not need a confirmation window', async () => {
-    let asked = 0;
-    setActionConfirmer(async () => { asked++; return false; });
+  it('even a read-only lookup by voice is shown only after a click (a replayed recording learns nothing)', async () => {
+    const asked: ActionRequest[] = [];
+    setActionConfirmer(async req => { asked.push(req); return false; });
     const lines = await runCRMActions([{ tool: 'crm_stats', args: {} } as any], 'voice');
-    expect(asked).toBe(0);
-    expect(lines.join('\n')).not.toContain('Не выполнено без вашего подтверждения');
+    expect(asked).toHaveLength(1);
+    expect(asked[0].source).toBe('voice');
+    expect(lines.join('\n')).toContain('Не выполнено без вашего подтверждения');
+    expect(needsConfirmation('crm_find_contacts', 'voice')).toBe(true);
+    expect(needsConfirmation('crm_find_contacts', 'unknown')).toBe(false);
+    expect(needsConfirmation('crm_add_contact', 'user')).toBe(false);
   });
 
   it('trusted voice session ends after at most 5 minutes even with constant activity', () => {

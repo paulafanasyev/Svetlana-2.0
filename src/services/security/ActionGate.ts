@@ -1,6 +1,8 @@
 // Шлюз разрешений для действий, которые предлагает модель (LLM) или распознаёт голос.
 // Принцип: текст модели — не согласие пользователя. Любое изменение данных из ответа модели
 // или по голосу выполняется только после явного подтверждения с показом точных параметров.
+// Голос строже: запись голоса владельца можно воспроизвести, поэтому по голосу даже чтение данных
+// (контакты, финансы, записи) показывается только после нажатия — воспроизведённая запись ничего не узнает.
 
 import { safeJsonParse, stripControl } from './SafeData';
 
@@ -54,6 +56,7 @@ const LABELS: Record<string, string> = {
   crm_add_contact: 'Добавить контакт', crm_update_contact: 'Изменить контакт', crm_add_note: 'Добавить заметку',
   crm_add_task: 'Создать задачу', crm_complete_task: 'Закрыть задачу', crm_create_deal: 'Создать сделку',
   crm_move_deal: 'Перевести сделку', crm_import_phone_contacts: 'Импортировать контакты с телефона',
+  crm_find_contacts: 'Показать контакты', crm_stats: 'Показать сводку CRM',
   biz_set_profile: 'Изменить бизнес-профиль', biz_add_income: 'Записать доход', biz_add_expense: 'Записать расход',
   biz_create_document: 'Создать документ', biz_mark_paid: 'Отметить счёт оплаченным',
   biz_book: 'Записать клиента', biz_cancel_booking: 'Отменить запись', biz_complete_booking: 'Отметить визит',
@@ -69,8 +72,14 @@ export function isReadOnlyTool(tool: string): boolean {
   return READ_ONLY.has(tool);
 }
 
+/**
+ * Нужно ли явное подтверждение. Команда пользователя (настоящий жест) — нет. Голос — всегда, даже для чтения
+ * (запись голоса можно воспроизвести). Остальные источники — для всего, что меняет данные.
+ */
 export function needsConfirmation(tool: string, source: ActionSource): boolean {
-  return source !== 'user' && !READ_ONLY.has(tool);
+  if (source === 'user') return false;
+  if (source === 'voice') return true;
+  return !READ_ONLY.has(tool);
 }
 
 export interface ActionRequest { tool: string; args: Record<string, unknown>; source: ActionSource; gesture?: UserGesture }
