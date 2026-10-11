@@ -126,10 +126,10 @@ export function importStatement(parsed: ParsedStatement, opts: { store?: BizStor
       const invNo = d.purpose.match(/сч[её]т[ауе]?\s*(?:на оплату\s*)?(?:№|N|#)?\s*(\d+)/i)?.[1];
       const invoice = invNo ? store.receivables().map(r => r.document).find(x => x.number === invNo && Math.abs(x.total - d.amount) < 0.01) : undefined;
       if (invoice) {
-        store.markPaid(invoice.id, { date, payerType });
+        store.markPaid(invoice.id, { date, payerType, payMethod: 'transfer' });
         report.invoicesPaid++;
       } else {
-        store.addEntry({ kind: 'income', amount: d.amount, description: d.purpose || 'Поступление на счёт', date, payerType, counterparty: name || undefined, category: 'bank' });
+        store.addEntry({ kind: 'income', amount: d.amount, description: d.purpose || 'Поступление на счёт', date, payerType, counterparty: name || undefined, category: 'bank', payMethod: 'transfer' });
       }
       report.incomes++;
     } else {

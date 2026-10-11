@@ -1,6 +1,6 @@
 // Svetlana Business — финансовая аналитика: динамика по месяцам, клиенты, расходы, прогноз до конца года и подсказки.
 import { bizStore, BizStore, NPD_LIMIT, formatRub, round2, isTaxable, type LedgerEntry } from './BizStore';
-import { onePercent, NPD_RECEIPT_FINE } from './TaxRules';
+import { onePercent, usnRate, NPD_RECEIPT_FINE } from './TaxRules';
 
 export interface MonthStat { month: string; label: string; income: number; expenses: number; profit: number; tax: number; payments: number }
 export interface ClientStat { name: string; amount: number; share: number; payments: number; lastPaid: number; contactId?: string }
@@ -48,10 +48,10 @@ function npdTaxByMonth(store: BizStore, years: number[]): Map<string, number> {
   return map;
 }
 
-function monthTax(regime: string, income: number, expenses: number, npd: Map<string, number>, month: string): number {
+function monthTax(regime: string, income: number, expenses: number, npd: Map<string, number>, month: string, rate: number): number {
   if (regime === 'npd') return npd.get(month) ?? 0;
-  if (regime === 'usn6') return round2(income * 0.06);
-  if (regime === 'usn15') return round2(Math.max((income - expenses) * 0.15, income * 0.01, 0));
+  if (regime === 'usn6') return round2(income * rate / 100);
+  if (regime === 'usn15') return round2(Math.max((income - expenses) * rate / 100, income * 0.01, 0));
   return 0;
 }
 
@@ -68,6 +68,7 @@ export function computeAnalytics(store: BizStore = bizStore): Analytics {
   // Переводы себе, займы и возвраты (taxable = false) — не выручка: в аналитике их не считаем.
   const all = store.listEntries().filter(isTaxable);
   const npd = regime === 'npd' ? npdTaxByMonth(store, [year - 1, year]) : new Map<string, number>();
+  const rate = regime === 'usn6' || regime === 'usn15' ? usnRate(regime, profile.usnRate) : 0;
 
   // 13 месяцев: нужен позапрошлый для сравнения; год назад считаем отдельно.
   const keys = Array.from({ length: 13 }, (_, i) => ym(shiftMonth(now, i - 12)));
@@ -75,7 +76,8 @@ export function computeAnalytics(store: BizStore = bizStore): Analytics {
     const list = all.filter(e => ym(e.date) === month);
     const income = round2(list.filter(e => e.kind === 'income').reduce((s, e) => s + e.amount, 0));
     const expenses = round2(list.filter(e => e.kind === 'expense').reduce((s, e) => s + e.amount, 0));
-    return { month, label: monthLabel(month), income, expenses, profit: round2(income - expenses), tax: monthTax(regime, income, expenses, npd, month), payments: list.filter(e => e.kind === 'income').length };
+    const deductible = round2(list.filter(e => e.kind === 'expense' && !e.noDocs).reduce((s, e) => s + e.amount, 0));
+    return { month, label: monthLabel(month), income, expenses, profit: round2(income - expenses), tax: monthTax(regime, income, deductible, npd, month, rate), payments: list.filter(e => e.kind === 'income').length };
   };
   const stats = keys.map(stat);
   const months = stats.slice(1);
@@ -145,11 +147,14 @@ export function computeAnalytics(store: BizStore = bizStore): Analytics {
   if (regime === 'usn6' || regime === 'usn15') {
     const u = store.usnSummary(year);
     if (regime === 'usn6') {
-      const gross = forecastIncome * 0.06;
+      const gross = forecastIncome * u.rate / 100;
       forecastTax = round2(gross - Math.min(u.contributionsFixed + u.contributionsPrevExtra, profile.hasEmployees ? gross * 0.5 : gross));
     } else {
-      const extra = profile.usn15OnePercentTiming === 'next' ? u.contributionsPrevExtra : onePercent(forecastIncome - forecastExpenses, year);
-      forecastTax = round2(Math.max((forecastIncome - forecastExpenses - u.contributionsFixed - extra) * 0.15, forecastIncome * 0.01, 0));
+      // В базу идут только расходы с документами: переносим их долю за год на прогноз.
+      const allExp = u.expenses + u.expensesNoDocs;
+      const deductible = allExp > 0 ? forecastExpenses * (u.expenses / allExp) : forecastExpenses;
+      const extra = profile.usn15OnePercentTiming === 'next' ? u.contributionsPrevExtra : onePercent(forecastIncome - deductible, year);
+      forecastTax = round2(Math.max((forecastIncome - deductible - u.contributionsFixed - extra) * u.rate / 100, forecastIncome * 0.01, 0));
     }
   }
   let npdLimitDate: number | undefined;
