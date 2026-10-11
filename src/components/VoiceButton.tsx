@@ -1,7 +1,9 @@
 // Глобальная кнопка «Голос»: команды бизнеса и CRM голосом с любого экрана + настройки распознавания и озвучки.
 import { useEffect, useRef, useState } from 'react';
 import { Mic, MicOff, Settings2, X, Volume2, VolumeX } from 'lucide-react';
-import { listen, sttSupport, getCloudStt, setCloudStt, resetWebStt, STT_PRESETS, type Listener } from '../services/voice/SpeechEngine';
+import { sttSupport, getCloudStt, setCloudStt, resetWebStt, STT_PRESETS, type Listener } from '../services/voice/SpeechEngine';
+import { listenVerified } from '../services/voice/VoiceGuard';
+import VoiceEnroll from './VoiceEnroll';
 import { normalizeSpoken } from '../services/voice/VoiceText';
 import { speakText, stopSpeaking, isMuted, setMuted, ttsAvailable } from '../services/voice/Tts';
 import { detectCRMIntent, runCRMActions } from '../services/crm/CRMTools';
@@ -52,7 +54,7 @@ export default function VoiceButton() {
     if (listenerRef.current) { listenerRef.current.stop(); return; }
     stopSpeaking();
     show({ heard: 'Слушаю…' }, 30000);
-    const l = listen({
+    const l = listenVerified({
       onPartial: t => show({ heard: t }, 30000),
       onFinal: t => { void handle(t); },
       onError: m => show({ error: m }),
@@ -107,6 +109,7 @@ function VoiceSettings({ onClose }: { onClose: () => void }) {
         <h3 className="font-semibold">Голос Светланы</h3>
         <button onClick={onClose} className="text-slate-400 hover:text-white" aria-label="Закрыть"><X className="w-4 h-4" /></button>
       </div>
+      <VoiceEnroll />
       <p className="text-xs text-slate-400">
         Сейчас: {s.mode === 'web' ? 'встроенное распознавание' : s.mode === 'cloud' ? 'облачное распознавание' : 'распознавание не настроено'}.
         В браузере Chrome/Edge работает встроенное. В приложении на Windows и Android обычно нужно облачное — ключ Groq бесплатный.
