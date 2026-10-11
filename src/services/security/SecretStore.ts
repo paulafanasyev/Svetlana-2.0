@@ -85,17 +85,20 @@ export async function getSecret(name: string, kv: KV | null = storage()): Promis
 
 export async function deleteSecret(name: string, kv: KV | null = storage()): Promise<void> { await setSecret(name, null, kv); }
 
-/** Где реально лежат секреты на этом устройстве: зашифрованы на диске или только в памяти. */
+/**
+ * Где реально лежат секреты на этом устройстве. «Зашифрованы» — только если есть и ключ шифрования,
+ * и постоянное хранилище (иначе секреты живут только в памяти до закрытия приложения).
+ */
 export async function secretStorageMode(): Promise<'encrypted' | 'memory'> {
-  return (await masterKey()) ? 'encrypted' : 'memory';
+  return (await masterKey()) && storage() ? 'encrypted' : 'memory';
 }
 
 /**
  * Удалить все секреты (кнопка «Удалить все данные»): шифротексты из localStorage, копии в памяти
- * и сам ключ шифрования в IndexedDB. После этого старые шифротексты (например, из резервной копии)
- * расшифровать уже нельзя: ключ уничтожен.
+ * и сам ключ шифрования в IndexedDB. Даже если удаление базы задержится (другое окно приложения),
+ * шифротекстов уже нет. Возвращает true, если база с ключом точно удалена.
  */
-export function clearAllSecrets(kv: KV | null = storage()): Promise<void> {
+export function clearAllSecrets(kv: KV | null = storage()): Promise<boolean> {
   memory.clear();
   keyPromise = null;
   if (kv && 'length' in (kv as any)) {
@@ -103,11 +106,17 @@ export function clearAllSecrets(kv: KV | null = storage()): Promise<void> {
     for (let i = s.length - 1; i >= 0; i--) { const k = s.key(i); if (k?.startsWith(PREFIX)) s.removeItem(k); }
   }
   const idb = (globalThis as any).indexedDB as IDBFactory | undefined;
-  if (!idb || keyProvider !== idbKey) return Promise.resolve();
+  if (!idb || keyProvider !== idbKey) return Promise.resolve(true);
   return new Promise(resolve => {
+    let settled = false;
+    const finish = (ok: boolean) => { if (!settled) { settled = true; resolve(ok); } };
     try {
       const req = idb.deleteDatabase('svetlana_secrets');
-      req.onsuccess = req.onerror = (req as any).onblocked = () => resolve();
-    } catch { resolve(); }
+      req.onsuccess = () => finish(true);
+      req.onerror = () => finish(false);
+      // Заблокировано другим соединением: браузер удалит базу, как только оно закроется.
+      // Ждём до 3 секунд и честно сообщаем, если не успело.
+      (req as any).onblocked = () => { setTimeout(() => finish(false), 3000); };
+    } catch { finish(false); }
   });
 }
