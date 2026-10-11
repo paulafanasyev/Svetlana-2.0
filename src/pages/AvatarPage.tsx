@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import Avatar, { VoiceControl, useSpeech } from '../components/Avatar';
 import { aiGateway, type ChatMessage } from '../services/AIGateway';
 import { crmSystemPrompt, detectCRMIntent, parseCRMActions, runCRMActions } from '../services/crm/CRMTools';
+import { toModelHistory } from '../services/security/History';
 import {
   Mic, Volume2, VolumeX, MessageCircle, Send,
   Sparkles, Heart, Smile, Frown, Laugh, AlertCircle,
@@ -17,6 +18,8 @@ interface Message {
   emotion?: Emotion;
   timestamp: number;
   provider?: string;
+  /** В реплике есть результаты инструментов (CRM): модели она вернётся только как данные. */
+  hasData?: boolean;
 }
 
 const SYSTEM_PROMPT = `Ты — Светлана 2.0, AI-ассистент с эмоциями и характером. Ты общаешься на русском языке.
@@ -109,6 +112,7 @@ export default function AvatarPage() {
           emotion: ok ? 'happy' : 'sad',
           timestamp: Date.now(),
           provider: 'CRM',
+          hasData: true,
         }]);
         setEmotion(ok ? 'happy' : 'sad');
         speak(reply);
@@ -121,13 +125,10 @@ export default function AvatarPage() {
         throw new Error('Нет активного AI провайдера. Откройте "AI Providers" и настройте провайдер. CRM-команды («Сводка CRM», «Занеси контакты с телефона в CRM») работают и без него.');
       }
 
-      // Build conversation history
+      // История для модели: результаты инструментов — только как данные, блоки действий обезврежены.
       const history: ChatMessage[] = [
         { role: 'system', content: SYSTEM_PROMPT + crmSystemPrompt() },
-        ...messages.slice(-10).map(m => ({
-          role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
-          content: m.content,
-        })),
+        ...toModelHistory(messages.slice(-10)),
         { role: 'user', content: text },
       ];
 
@@ -147,15 +148,14 @@ export default function AvatarPage() {
         emotion: detectedEmotion,
         timestamp: Date.now(),
         provider: `${response.provider} (${response.model})`,
+        hasData: actions.length > 0,
       };
 
       setMessages(prev => [...prev, assistantMessage]);
       setEmotion(detectedEmotion);
 
-      // Speak the response
       speak(cleanContent);
 
-      // Reset emotion after delay
       setTimeout(() => setEmotion('neutral'), 6000);
     } catch (err: any) {
       console.error('AI Error:', err);
