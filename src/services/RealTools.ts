@@ -8,6 +8,11 @@ async function requireHands(): Promise<void> {
   if (!connected) throw new Error('Android device not connected. Please connect via Settings → Android Connection.');
 }
 
+/** На экране всё ещё то приложение, в котором мы действуем (а не подменённое окно или оверлей). */
+async function stillIn(hands: { getCurrentApp(): Promise<string> }, pkg: string): Promise<boolean> {
+  try { return (await hands.getCurrentApp()) === pkg; } catch { return false; }
+}
+
 export const openAppTool: Tool = {
   id: 'open_app', name: 'Open Application', description: 'Launch an Android application by package name', category: 'navigation', riskLevel: 'low',
   inputSchema: { type: 'object', properties: { packageName: { type: 'string', description: 'Android package name' } }, required: ['packageName'] },
@@ -95,22 +100,44 @@ export const typeTextTool: Tool = {
   async isAvailable() { return await handsManager.isConnected(); },
 };
 
+/**
+ * Снимок экрана — только через защищённый мост Svetlana-home (HTTP v2): телефон сам применяет
+ * политику приватности (банки и пароли не снимаются, поля паролей закрашиваются).
+ * Отладочный WebSocket-путь сырые снимки не отдаёт.
+ */
 export const captureScreenTool: Tool = {
   id: 'capture_screen', name: 'Capture Screen', description: 'Take a screenshot of the current screen', category: 'system', riskLevel: 'medium', inputSchema: { type: 'object', properties: {} },
-  async execute(): Promise<ToolResult> { await requireHands(); const hands = handsManager.getHands(); if (!hands) return { success: false, error: 'Hands not available' }; const capture = await hands.captureScreen(); return { success: true, data: { image: capture.image, width: capture.width, height: capture.height, timestamp: capture.timestamp } }; },
+  async execute(): Promise<ToolResult> {
+    await requireHands(); const hands = handsManager.getHands(); if (!hands) return { success: false, error: 'Hands not available' };
+    if (!(hands instanceof HTTPHands)) return { success: false, error: 'Screenshots are available only over the protected Svetlana-home bridge.' };
+    const capture = await hands.captureScreen();
+    if (!capture?.image) return { success: false, error: 'The phone refused the screenshot (privacy policy) or it failed.' };
+    return { success: true, data: { image: capture.image, width: capture.width, height: capture.height, timestamp: capture.timestamp } };
+  },
   async verify(_params, result) { return !!result.success && !!result.data?.image; }, async isAvailable() { return await handsManager.isConnected(); },
 };
 
+/**
+ * Отправка сообщения. Перед КАЖДЫМ шагом (выбор контакта, ввод, «Отправить») проверяем,
+ * что на экране всё ещё выбранный мессенджер: оверлей или переключение приложения останавливает цепочку.
+ */
 export const sendMessageTool: Tool = {
   id: 'send_message', name: 'Send Message', description: 'Send a message via a messaging app (requires confirmation)', category: 'communication', riskLevel: 'high',
   inputSchema: { type: 'object', properties: { app: { type: 'string', description: 'Messaging app package name', enum: ['org.telegram.messenger', 'com.whatsapp', 'com.viber.voip'] }, contact: { type: 'string', description: 'Contact name or phone number' }, message: { type: 'string', description: 'Message text to send' } }, required: ['app', 'contact', 'message'] },
   async execute(params: { app: string; contact: string; message: string }): Promise<ToolResult> {
     await requireHands(); const hands = handsManager.getHands(); if (!hands) return { success: false, error: 'Hands not available' };
+    const moved = () => ({ success: false, error: `Another app is on screen instead of ${params.app}. Stopped for safety.` });
     const launch = await hands.launchApp(params.app); if (!launch.success) return { success: false, error: `Failed to launch ${params.app}` };
-    await new Promise(r => setTimeout(r, 2000)); const contact = await hands.findElementByText(params.contact); if (!contact) return { success: false, error: `Contact not found: ${params.contact}` };
+    await new Promise(r => setTimeout(r, 2000));
+    if (!(await stillIn(hands, params.app))) return moved();
+    const contact = await hands.findElementByText(params.contact); if (!contact) return { success: false, error: `Contact not found: ${params.contact}` };
+    if (!(await stillIn(hands, params.app))) return moved();
     const tap = await hands.tap(contact.bounds.x + contact.bounds.width / 2, contact.bounds.y + contact.bounds.height / 2); if (!tap.success) return { success: false, error: 'Failed to tap contact' };
-    await new Promise(r => setTimeout(r, 1000)); const type = await hands.type(params.message); if (!type.success) return { success: false, error: 'Failed to type message' };
+    await new Promise(r => setTimeout(r, 1000));
+    if (!(await stillIn(hands, params.app))) return moved();
+    const type = await hands.type(params.message); if (!type.success) return { success: false, error: 'Failed to type message' };
     await new Promise(r => setTimeout(r, 500)); const send = await hands.findElementByText('Send') || await hands.findElementByText('Отправить'); if (!send) return { success: false, error: 'Send button not found. Message typed but not sent.', data: { messageTyped: true, sent: false } };
+    if (!(await stillIn(hands, params.app))) return moved();
     const sent = await hands.tap(send.bounds.x + send.bounds.width / 2, send.bounds.y + send.bounds.height / 2); if (!sent.success) return { success: false, error: 'Failed to tap send button' };
     await new Promise(r => setTimeout(r, 500)); const tree = await hands.getAccessibilityTree();
     return { success: true, data: { app: params.app, contact: params.contact, message: params.message, sent: true, afterTree: tree, timestamp: Date.now() } };
