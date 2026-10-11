@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mic, MicOff, Volume2, VolumeX, Settings, X } from 'lucide-react';
 import { SVETLANA_IDENTITY, getAvatarStateOverlay, getAvatarStateFromEmotion } from '../services/AvatarIdentity';
-import { listen, sttSupport, type Listener } from '../services/voice/SpeechEngine';
+import { sttSupport, type Listener } from '../services/voice/SpeechEngine';
+import { listenVerified } from '../services/voice/VoiceGuard';
 import { hasWakeWord, normalizeSpoken, pickRussianVoice } from '../services/voice/VoiceText';
 import { speakText, stopSpeaking, ttsAvailable } from '../services/voice/Tts';
 
@@ -117,6 +118,7 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
 
 // Voice Control Component: Web Speech API where available, otherwise cloud speech-to-text (see services/voice).
 // Hands-free mode: always listening, reacts to phrases that start with «Светлана, …».
+// Every phrase is checked against the owner's voiceprint (VoiceGuard): other voices are ignored.
 export function VoiceControl({ onCommand }: { onCommand?: (command: string) => void }) {
   const [isListening, setIsListening] = useState(false);
   const [handsFree, setHandsFree] = useState(false);
@@ -135,7 +137,7 @@ export function VoiceControl({ onCommand }: { onCommand?: (command: string) => v
     setTranscript('');
     const token = {};
     tokenRef.current = token;
-    const listener = listen({
+    const listener = listenVerified({
       continuous,
       onPartial: t => setTranscript(t),
       onFinal: t => {
@@ -211,6 +213,7 @@ export function VoiceControl({ onCommand }: { onCommand?: (command: string) => v
         )}
         <p className="text-[11px] text-sv-muted opacity-60">
           {support.mode === 'web' ? 'Распознавание: встроенное' : support.mode === 'cloud' ? 'Распознавание: облачное' : 'Распознавание не настроено: кнопка «Голос» внизу слева → настройки'}
+          {' · только ваш голос'}
         </p>
       </div>
     </div>
