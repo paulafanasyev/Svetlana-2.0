@@ -42,7 +42,7 @@ export interface SealOptions { ts?: number; nonce?: Uint8Array; iv?: Uint8Array 
 export async function sealRequest(key: CryptoKey, route: string, plaintext: string, o: SealOptions = {}): Promise<{ body: string; nonce: string }> {
   const ts = o.ts ?? Date.now();
   const nonce = b64(o.nonce ?? globalThis.crypto.getRandomValues(new Uint8Array(16)));
-  const iv = o.iv ?? globalThis.crypto.getRandomValues(new Uint8Array(12));
+  const iv = o.iv ? new Uint8Array(o.iv) : globalThis.crypto.getRandomValues(new Uint8Array(12));
   const ct = new Uint8Array(await globalThis.crypto.subtle.encrypt(
     { name: 'AES-GCM', iv, additionalData: enc.encode(requestAad(route, ts, nonce)) }, key, enc.encode(plaintext)));
   return { body: JSON.stringify({ v: BRIDGE_PROTOCOL, ts, nonce, iv: b64(iv), ct: b64(ct) }), nonce };
