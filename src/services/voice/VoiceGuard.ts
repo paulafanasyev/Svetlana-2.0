@@ -1,8 +1,11 @@
 // Голосовые команды принимаются только от владельца: параллельно с распознаванием речи
 // пишем звук с микрофона и сверяем каждую фразу с отпечатком голоса (VoicePrint).
-// Без записанного голоса голосовое управление выключено.
+// Защита от записи: перед первой командой Светлана просит сказать 3 случайные цифры (Liveness),
+// цифры и голос проверяются по одному и тому же звуку. Без записанного голоса управление выключено.
 import { listen, type ListenOptions, type Listener } from './SpeechEngine';
-import { computeVoicePrint, loadTemplate, verifyPrint, type VerifyResult, type VoicePrint } from './VoicePrint';
+import { computeVoicePrint, loadTemplate, verifyPrint, type VerifyResult, type VoicePrint, type VoiceTemplate } from './VoicePrint';
+import { speakText, stopSpeaking } from './Tts';
+import { generateChallenge, matchesChallenge, templateId, VoiceLockout, VoiceTrust, type Challenge } from './Liveness';
 
 export interface PcmCapture { take(seconds: number): { pcm: Float32Array; sampleRate: number }; stop(): void }
 
@@ -58,35 +61,243 @@ export function voiceEnrolled(): boolean { return !!loadTemplate(); }
 
 export const NOT_ENROLLED = 'Голосовые команды выполняются только по вашему голосу. Запишите голос: кнопка «Голос» → настройки (шестерёнка) → «Записать мой голос».';
 
-/**
- * Как listen(), но onFinal вызывается только если фразу сказал владелец.
- * Чужой голос, тишина в микрофоне (подставленный текст) или отсутствие доступа к звуку — фраза отбрасывается.
- * В режиме «без рук» (continuous) чужие фразы игнорируются молча, иначе — сообщение об отказе.
- */
-export function listenVerified(opts: ListenOptions, onVerify?: (r: VerifyResult) => void): Listener | null {
-  const tpl = loadTemplate();
-  if (!tpl) { opts.onError?.(NOT_ENROLLED); opts.onEnd?.(); return null; }
-  let cap: PcmCapture | null = null;
-  let ended = false;
-  const capReady = startCapture()
-    .then(c => { if (ended) { c.stop(); return null; } cap = c; return c; })
-    .catch(() => null);
-  const reject = (msg: string) => { if (!opts.continuous) opts.onError?.(msg); };
-  const inner = listen({
-    ...opts,
-    onFinal: text => {
-      void (async () => {
-        const c = cap ?? (await capReady);
-        if (!c) { reject('Нет доступа к микрофону для проверки голоса. Команда не выполнена.'); return; }
-        const { pcm, sampleRate } = c.take(8);
-        const r = verifyPrint(computeVoicePrint(pcm, sampleRate), tpl);
-        onVerify?.(r);
-        if (!r.ok) { reject(r.reason ?? 'Голос не узнан.'); return; }
-        opts.onFinal(text);
-      })();
-    },
-    onEnd: () => { ended = true; cap?.stop(); cap = null; opts.onEnd?.(); },
-  });
-  if (!inner) { ended = true; void capReady.then(c => c?.stop()); }
-  return inner;
+export function lockedMessage(ms: number): string {
+  return `Слишком много неудачных попыток. Голосовое управление на паузе ${Math.max(1, Math.ceil(ms / 60_000))} мин.`;
 }
+
+export interface VerifiedListenOptions extends ListenOptions {
+  /**
+   * Фильтр до проверки голоса: фразы, которые всё равно не станут командой (например, без «Светлана, …»
+   * в режиме «без рук»), не проверяются и не запускают цифры.
+   */
+  accept?: (text: string) => boolean;
+}
+
+/** Зависимости вынесены, чтобы логику проверки можно было прогнать в тестах без микрофона. */
+export interface GuardDeps {
+  listen(opts: ListenOptions): Listener | null;
+  startCapture(): Promise<PcmCapture>;
+  speak(text: string, onEnd: () => void): void;
+  stopSpeaking(): void;
+  loadTemplate(): VoiceTemplate | null;
+  computePrint(pcm: Float32Array, sampleRate: number): VoicePrint | null;
+  verify(p: VoicePrint, t: VoiceTemplate): VerifyResult;
+  generate(): Challenge;
+  trust: VoiceTrust;
+  lockout: VoiceLockout;
+  setTimeout(fn: () => void, ms: number): unknown;
+  clearTimeout(id: unknown): void;
+}
+
+export const CHALLENGE_TIMEOUT_MS = 20_000;
+const ANSWER_DELAY_MS = 350; // пауза после озвучки цифр, чтобы микрофон не поймал хвост своей речи
+
+export function createVoiceGuard(d: GuardDeps) {
+  return function listenVerified(opts: VerifiedListenOptions, onVerify?: (r: VerifyResult) => void): Listener | null {
+    const tpl = d.loadTemplate();
+    if (!tpl) { opts.onError?.(NOT_ENROLLED); opts.onEnd?.(); return null; }
+    const locked = d.lockout.remainingMs();
+    if (locked > 0) { opts.onError?.(lockedMessage(locked)); opts.onEnd?.(); return null; }
+    const tplKey = templateId(tpl);
+
+    let closed = false;       // сессия завершена, onEnd отдан
+    let stopped = false;      // пользователь остановил
+    let resume = false;       // в режиме «без рук» вернуться к прослушиванию после цифр
+    let busy = 0;             // фразы на проверке
+    let mainGen = 0;
+    let inner: Listener | null = null;
+    let cap: PcmCapture | null = null;
+    let challenge: { cancel(): void } | null = null;
+
+    const quiet = (msg: string) => { if (!opts.continuous) opts.onError?.(msg); };
+
+    const finish = () => {
+      if (closed) return;
+      closed = true;
+      challenge?.cancel(); challenge = null;
+      mainGen++;
+      const l = inner; inner = null; l?.stop();
+      cap?.stop(); cap = null;
+      opts.onEnd?.();
+    };
+
+    /** Неудача, которая считается попыткой подбора: чужой голос или не те цифры. */
+    const failure = (msg: string, loud: boolean) => {
+      d.trust.end();
+      const lock = d.lockout.fail();
+      if (lock > 0) { opts.onError?.(lockedMessage(lock)); finish(); return; }
+      if (loud) opts.onError?.(msg); else quiet(msg);
+    };
+
+    const currentTemplate = (): VoiceTemplate | null => {
+      const t = d.loadTemplate();
+      return t && templateId(t) === tplKey ? t : null;
+    };
+
+    const settle = () => {
+      if (closed || busy > 0 || challenge || inner) return;
+      if (resume && !stopped) { resume = false; if (startMain()) return; }
+      finish();
+    };
+
+    const pauseMain = () => {
+      mainGen++;
+      resume = !!opts.continuous;
+      const l = inner; inner = null; l?.stop();
+      cap?.stop(); cap = null;
+    };
+
+    const startMain = (): boolean => {
+      const gen = ++mainGen;
+      const capP: Promise<PcmCapture | null> = d.startCapture()
+        .then(c => { if (closed || gen !== mainGen) { c.stop(); return null; } cap = c; return c; })
+        .catch(() => null);
+      const l = d.listen({
+        continuous: opts.continuous,
+        onPartial: t => { if (gen === mainGen && !challenge) opts.onPartial?.(t); },
+        onError: m => { if (gen === mainGen && !challenge) opts.onError?.(m); },
+        onFinal: text => { if (gen === mainGen) onPhrase(text, capP); },
+        onEnd: () => {
+          if (gen !== mainGen) return;
+          inner = null; cap?.stop(); cap = null;
+          settle();
+        },
+      });
+      if (!l) { mainGen++; void capP.then(c => c?.stop()); return false; }
+      if (gen === mainGen) inner = l;
+      return true;
+    };
+
+    const onPhrase = (text: string, capP: Promise<PcmCapture | null>) => {
+      if (closed || challenge) return;
+      if (opts.accept && !opts.accept(text)) return;
+      busy++;
+      void (async () => {
+        try {
+          const c = await capP;
+          if (closed) return;
+          if (!c) { quiet('Нет доступа к микрофону для проверки голоса. Команда не выполнена.'); return; }
+          const { pcm, sampleRate } = c.take(8);
+          const t = currentTemplate();
+          if (!t) { d.trust.end(); opts.onError?.('Голос владельца изменён. Начните заново.'); finish(); return; }
+          const print = d.computePrint(pcm, sampleRate);
+          if (!print) { quiet('Не расслышала голос (слишком тихо или коротко). Команда не выполнена.'); return; }
+          const r = d.verify(print, t);
+          onVerify?.(r);
+          if (!r.ok) { failure(r.reason ?? 'Голос не узнан. Команда не выполнена.', false); return; }
+          if (d.trust.isValid(tplKey)) { d.trust.touch(); opts.onFinal(text); return; }
+          if (closed || challenge) return;
+          runChallenge(text);
+        } finally { busy--; settle(); }
+      })();
+    };
+
+    const runChallenge = (command: string) => {
+      pauseMain();
+      let generated: Challenge | null = null;
+      try { generated = d.generate(); } catch { generated = null; }
+      if (!generated) { opts.onError?.('Проверка цифрами недоступна на этом устройстве. Команда не выполнена.'); settle(); return; }
+      const ch: Challenge = generated;
+      let done = false;
+      let started = false;
+      let answer: string | null = null;
+      let cap2: PcmCapture | null = null;
+      let l2: Listener | null = null;
+      const timers: unknown[] = [];
+      const cleanup = () => {
+        done = true;
+        timers.forEach(id => d.clearTimeout(id));
+        const l = l2; l2 = null; l?.stop();
+        cap2?.stop(); cap2 = null;
+        challenge = null;
+      };
+      const end = (ok: boolean, msg?: string, counts = false) => {
+        if (done) return;
+        cleanup();
+        if (closed) return;
+        if (ok) { d.lockout.reset(); d.trust.start(tplKey); opts.onFinal(command); }
+        else if (counts) failure(msg!, true);
+        else { d.trust.end(); if (msg) opts.onError?.(msg); }
+        settle();
+      };
+      challenge = { cancel: () => { if (!done) { cleanup(); d.stopSpeaking(); } } };
+
+      const evaluate = () => {
+        if (done) return;
+        if (answer === null || !cap2) { end(false, 'Не расслышала цифры. Скажите команду ещё раз.'); return; }
+        const { pcm, sampleRate } = cap2.take(8);
+        const t = currentTemplate();
+        if (!t) { end(false, 'Голос владельца изменён. Команда не выполнена.'); return; }
+        const print = d.computePrint(pcm, sampleRate);
+        if (!print) { end(false, 'Не расслышала цифры (слишком тихо). Скажите команду ещё раз.'); return; }
+        const r = d.verify(print, t);
+        onVerify?.(r);
+        if (!r.ok) { end(false, r.reason ?? 'Голос не узнан. Команда не выполнена.', true); return; }
+        if (!matchesChallenge(answer, ch)) { end(false, 'Цифры не совпали. Команда не выполнена.', true); return; }
+        end(true);
+      };
+
+      const listenAnswer = async () => {
+        if (done || started) return;
+        started = true;
+        let c: PcmCapture;
+        try { c = await d.startCapture(); } catch { end(false, 'Нет доступа к микрофону для проверки голоса. Команда не выполнена.'); return; }
+        if (done) { c.stop(); return; }
+        cap2 = c;
+        const l = d.listen({
+          continuous: false,
+          onPartial: p => { if (!done) opts.onPartial?.(p); },
+          onFinal: a => { if (answer === null) answer = a; },
+          onError: () => undefined,
+          onEnd: () => evaluate(),
+        });
+        if (!l) { end(false, 'Распознавание речи недоступно. Команда не выполнена.'); return; }
+        if (!done) l2 = l;
+      };
+
+      timers.push(d.setTimeout(() => end(false, 'Время на ответ вышло. Скажите команду ещё раз.'), CHALLENGE_TIMEOUT_MS));
+      opts.onPartial?.(`Для проверки скажите цифры: ${ch.digits.join(' ')}`);
+      d.speak(`Для проверки скажите цифры: ${ch.spoken}`, () => {
+        if (!done) timers.push(d.setTimeout(() => { void listenAnswer(); }, ANSWER_DELAY_MS));
+      });
+    };
+
+    if (!startMain()) { closed = true; return null; }
+    const mode = inner ? (inner as Listener).mode : 'web';
+    return {
+      mode,
+      stop: () => {
+        stopped = true;
+        resume = false;
+        challenge?.cancel();
+        if (inner) inner.stop(); else settle();
+      },
+    };
+  };
+}
+
+const sharedTrust = new VoiceTrust();
+const sharedLockout = new VoiceLockout();
+
+/** Закрыть доверенную сессию (например, после записи нового голоса). */
+export function endVoiceTrust(): void { sharedTrust.end(); }
+
+/**
+ * Как listen(), но onFinal вызывается только если фразу сказал владелец, а при первой команде
+ * ещё и произнёс случайные цифры. Чужой голос, тишина (подставленный текст), не те цифры или
+ * отсутствие доступа к звуку: фраза отбрасывается. В режиме «без рук» чужие фразы игнорируются молча.
+ */
+export const listenVerified = createVoiceGuard({
+  listen,
+  startCapture,
+  speak: (text, onEnd) => speakText(text, { force: true, onEnd }),
+  stopSpeaking,
+  loadTemplate: () => loadTemplate(),
+  computePrint: computeVoicePrint,
+  verify: (p, t) => verifyPrint(p, t),
+  generate: () => generateChallenge(),
+  trust: sharedTrust,
+  lockout: sharedLockout,
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: id => clearTimeout(id as ReturnType<typeof setTimeout>),
+});
