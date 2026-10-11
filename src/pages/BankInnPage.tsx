@@ -1,5 +1,5 @@
 // Svetlana Business — проверка контрагентов по ИНН, реквизиты по ИНН/БИК, импорт банковской выписки 1С.
-import { useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import { assertFileSize, MAX_BYTES } from '../services/security/SafeData';
 import { ShieldCheck, Search, UserPlus, Upload, KeyRound, Building2, ExternalLink } from 'lucide-react';
 import { bizStore, formatRub } from '../services/biz/BizStore';
@@ -153,15 +153,16 @@ function StatementCard() {
 }
 
 function KeyCard() {
-  const [key, setKey] = useState(getDadataKey());
+  const [key, setKey] = useState('');
   const [saved, setSaved] = useState(false);
+  useEffect(() => { let alive = true; getDadataKey().then(k => { if (alive) setKey(k); }); return () => { alive = false; }; }, []);
   return (
     <div className={card}>
       <h3 className="font-semibold flex items-center gap-2"><KeyRound className="w-4 h-4 text-slate-300" />Ключ DaData</h3>
-      <p className="text-sm text-slate-400">Нужен для данных по ИНН и БИК. Бесплатно: зарегистрируйтесь на <a className="text-indigo-300 underline" href="https://dadata.ru/profile/#info" target="_blank" rel="noreferrer">dadata.ru</a> и скопируйте «API-ключ». Хранится только на этом устройстве.</p>
+      <p className="text-sm text-slate-400">Нужен для данных по ИНН и БИК. Бесплатно: зарегистрируйтесь на <a className="text-indigo-300 underline" href="https://dadata.ru/profile/#info" target="_blank" rel="noreferrer">dadata.ru</a> и скопируйте «API-ключ». Хранится зашифрованным только на этом устройстве.</p>
       <div className="flex gap-2">
         <input className={input} type="password" placeholder="API-ключ" value={key} onChange={e => { setKey(e.target.value); setSaved(false); }} />
-        <button className={btnGhost} onClick={() => { setDadataKey(key); setSaved(true); }}>{saved ? 'Сохранено' : 'Сохранить'}</button>
+        <button className={btnGhost} onClick={async () => { await setDadataKey(key); setSaved(true); }}>{saved ? 'Сохранено' : 'Сохранить'}</button>
       </div>
     </div>
   );

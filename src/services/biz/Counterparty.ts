@@ -1,6 +1,7 @@
 // Проверка контрагентов и реквизиты по ИНН/БИК.
 // Офлайн: контрольная сумма ИНН. Онлайн: DaData (ключ пользователя, бесплатный тариф) и сервис ФНС «статус самозанятого».
 import type { KeyValueStorage } from '../crm/CRMStore';
+import { getSecret, setSecret } from '../security/SecretStore';
 
 export type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{ ok: boolean; status: number; json(): Promise<any> }>;
 
@@ -47,12 +48,20 @@ function defaultStorage(): KeyValueStorage | null {
   try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; }
 }
 
-export function getDadataKey(storage: KeyValueStorage | null = defaultStorage()): string {
-  return storage?.getItem(KEY_STORAGE) ?? '';
+const KEY_SECRET = 'dadata.key';
+
+/** Ключ DaData хранится зашифрованным (SecretStore). Старый открытый ключ из localStorage переносится и стирается. */
+export async function getDadataKey(storage: KeyValueStorage | null = defaultStorage()): Promise<string> {
+  const legacy = storage?.getItem(KEY_STORAGE);
+  if (legacy) {
+    await setSecret(KEY_SECRET, legacy.trim());
+    (storage as { removeItem?(k: string): void } | null)?.removeItem?.(KEY_STORAGE);
+  }
+  return (await getSecret(KEY_SECRET)) ?? '';
 }
 
-export function setDadataKey(key: string, storage: KeyValueStorage | null = defaultStorage()): void {
-  storage?.setItem(KEY_STORAGE, key.trim());
+export async function setDadataKey(key: string): Promise<void> {
+  await setSecret(KEY_SECRET, key.trim());
 }
 
 function defaultFetch(): FetchLike | null {
@@ -79,7 +88,7 @@ function toStatus(s: unknown): PartyStatus {
 
 /** Данные организации/ИП по ИНН через DaData findById/party. */
 export async function lookupParty(inn: string, opts: { key?: string; fetchImpl?: FetchLike | null } = {}): Promise<PartyInfo | null> {
-  const key = opts.key ?? getDadataKey();
+  const key = opts.key ?? await getDadataKey();
   const f = opts.fetchImpl === undefined ? defaultFetch() : opts.fetchImpl;
   if (!key) throw new Error('Нужен API-ключ DaData (бесплатный): dadata.ru → Профиль → API-ключ. Вставьте его в разделе «Банк и ИНН».');
   if (!f) throw new Error('Нет доступа к сети');
@@ -113,7 +122,7 @@ export async function lookupParty(inn: string, opts: { key?: string; fetchImpl?:
 
 /** Банк по БИК через DaData findById/bank. */
 export async function lookupBank(bik: string, opts: { key?: string; fetchImpl?: FetchLike | null } = {}): Promise<BankInfo | null> {
-  const key = opts.key ?? getDadataKey();
+  const key = opts.key ?? await getDadataKey();
   const f = opts.fetchImpl === undefined ? defaultFetch() : opts.fetchImpl;
   if (!key) throw new Error('Нужен API-ключ DaData (бесплатный), см. раздел «Банк и ИНН».');
   if (!f) throw new Error('Нет доступа к сети');
@@ -163,7 +172,7 @@ export async function checkCounterparty(innRaw: string, opts: { now?: number; ke
     report.risks.push('ИНН не проходит проверку контрольной суммы — скорее всего, опечатка или поддельный ИНН.');
     return report;
   }
-  const key = opts.key ?? getDadataKey();
+  const key = opts.key ?? await getDadataKey();
   if (key) {
     try {
       const party = await lookupParty(inn, { key, fetchImpl: opts.fetchImpl });
