@@ -1,6 +1,7 @@
 // Svetlana Business — profile, money ledger, documents (invoices/acts/contracts),
 // receivables and Russian tax estimates (НПД, УСН). Local-first, like the CRM.
 import type { KeyValueStorage } from '../crm/CRMStore';
+import { contributionsFor, onePercent, dueDate, npdReceiptDeadline, vatStatusUsn, patentPayments, type VatStatus } from './TaxRules';
 
 export type TaxRegime = 'npd' | 'usn6' | 'usn15' | 'patent' | 'ooo' | 'none';
 export type PayerType = 'person' | 'company';
@@ -32,8 +33,14 @@ export interface BizProfile {
   birthYear?: number;
   sectors: string[];         // e.g. tech, agro, export, social, education, services
   flags: string[];           // lowIncome, unemployed, newBusiness, socialEnterprise
-  fixedContributions: number; // фиксированные взносы ИП за год (проверить сумму на текущий год)
-  contributionsPaid: number;  // уже уплачено взносов в этом году
+  fixedContributions: number; // фиксированные взносы ИП за текущий год (по умолчанию — из закона на этот год)
+  contributionsPaid: number;  // уже уплачено взносов в этом году (для напоминаний)
+  hasEmployees: boolean;      // есть работники: УСН 6% уменьшается на взносы не более чем на 50%
+  vatGeneralRate: boolean;    // УСН с НДС: выбрана общая ставка 22% вместо 5/7%
+  orgOnUsn: boolean;          // ООО на УСН (для сроков и НДС)
+  patentStart: string;        // ГГГГ-ММ-ДД
+  patentEnd: string;
+  patentCost: number;
 }
 
 export interface LedgerEntry {
@@ -49,6 +56,7 @@ export interface LedgerEntry {
   category?: string;
   receipt: ReceiptStatus;
   receiptNumber?: string;
+  taxable?: boolean;        // false — не доход/не расход для налога (перевод себе, займ, возврат)
   createdAt: number;
 }
 
@@ -68,6 +76,8 @@ export interface BizDocument {
   status: DocStatus;
   paidAt?: number;
   basis?: string;   // e.g. «Договор № 3 от 01.10.2026»
+  vatRate?: number; // ставка НДС на дату документа (0/undefined — без НДС)
+  vatNote?: string; // основание «Без НДС»
   createdAt: number;
   updatedAt: number;
 }
@@ -115,6 +125,10 @@ export interface UsnSummary {
   contributionsFixed: number;
   contributionsExtra: number; // 1% над 300 000 ₽
   taxAfterContributions: number;
+  contributionsPrevExtra: number; // 1% за прошлый год, который платится в этом году (уменьшает УСН 6%)
+  contributionsDeducted: number;  // на сколько взносы уменьшили налог (УСН 6%) или вошли в расходы (УСН 15%)
+  hasEmployees: boolean;
+  vat: VatStatus;
   quarters: { quarter: number; income: number; expenses: number; taxCumulative: number }[];
 }
 
@@ -140,14 +154,15 @@ function newId(prefix: string): string {
 }
 
 export function round2(n: number): number {
-  return Math.round(n * 100) / 100;
+  return Math.round((n + (n >= 0 ? Number.EPSILON : -Number.EPSILON)) * 100) / 100;
 }
 
 export function defaultProfile(): BizProfile {
   return {
     regime: 'none', region: '', fullName: '', inn: '', ogrn: '', address: '', phone: '', email: '',
     bankName: '', bik: '', account: '', corrAccount: '', sectors: [], flags: [],
-    fixedContributions: 57_390, contributionsPaid: 0,
+    fixedContributions: contributionsFor(new Date().getFullYear()).fixed, contributionsPaid: 0,
+    hasEmployees: false, vatGeneralRate: false, orgOnUsn: false, patentStart: '', patentEnd: '', patentCost: 0,
   };
 }
 
@@ -182,8 +197,15 @@ function ym(ts: number): string {
 
 function due28NextMonth(month: string): number {
   const [y, m] = month.split('-').map(Number);
-  return new Date(y, m, 28).getTime(); // month index m == next month
+  return dueDate(y, m, 28); // month index m == next month; перенос с выходных
 }
+
+/** Входит ли операция в налоговую базу. */
+export function isTaxable(e: LedgerEntry): boolean {
+  return e.taxable !== false;
+}
+const OWN_CONTRIBUTIONS_CATEGORY = /^(взносы ип|взносы за себя|contributions)$/i;
+const DOC_TRANSITIONS: Record<DocStatus, DocStatus[]> = { draft: ['sent', 'cancelled'], sent: ['draft', 'cancelled'], paid: [], cancelled: ['draft'] };
 
 export class BizStore {
   private readonly storage: KeyValueStorage;
@@ -239,7 +261,7 @@ export class BizStore {
       .sort((a, b) => b.date - a.date);
   }
 
-  addEntry(input: { kind: EntryKind; amount: number; description: string; date?: number; payerType?: PayerType; contactId?: string; counterparty?: string; documentId?: string; category?: string }): LedgerEntry {
+  addEntry(input: { kind: EntryKind; amount: number; description: string; date?: number; payerType?: PayerType; contactId?: string; counterparty?: string; documentId?: string; category?: string; taxable?: boolean }): LedgerEntry {
     const amount = round2(Number(input.amount));
     if (!Number.isFinite(amount) || amount <= 0) throw new Error('Сумма должна быть больше нуля');
     const description = input.description.trim() || (input.kind === 'income' ? 'Доход' : 'Расход');
@@ -251,12 +273,24 @@ export class BizStore {
       payerType: input.payerType ?? 'person',
       contactId: input.contactId, counterparty: input.counterparty?.trim() || undefined,
       documentId: input.documentId, category: input.category,
-      receipt: input.kind === 'income' && this.data.profile.regime === 'npd' ? 'pending' : 'none',
+      receipt: input.kind === 'income' && this.data.profile.regime === 'npd' && input.taxable !== false ? 'pending' : 'none',
+      taxable: input.taxable === false ? false : undefined,
       createdAt: now,
     };
+    if (!Number.isFinite(entry.date)) throw new Error('Некорректная дата');
     this.data.ledger.push(entry);
     this.commit();
     return entry;
+  }
+
+  /** Отметить, что операция не доход/не расход для налога (перевод себе, займ, возврат) — или вернуть в базу. */
+  setTaxable(id: string, taxable: boolean): LedgerEntry {
+    const e = this.data.ledger.find(x => x.id === id);
+    if (!e) throw new Error(`Запись не найдена: ${id}`);
+    e.taxable = taxable ? undefined : false;
+    if (e.kind === 'income' && this.data.profile.regime === 'npd' && e.receipt !== 'issued') e.receipt = taxable ? 'pending' : 'none';
+    this.commit();
+    return e;
   }
 
   setReceipt(id: string, receiptNumber: string): LedgerEntry {
@@ -322,15 +356,39 @@ export class BizStore {
       contactId: input.contactId, clientName, clientDetails: input.clientDetails?.trim() ?? '',
       items, total: round2(items.reduce((s, i) => s + i.qty * i.price, 0)),
       status: 'draft', basis: input.basis, createdAt: now, updatedAt: now,
+      ...this.vatForDocument(date),
     };
     this.data.documents.push(doc);
     this.commit();
     return doc;
   }
 
+  /** НДС для нового документа: ставка и основание «Без НДС». */
+  vatForDocument(date: number): { vatRate?: number; vatNote: string } {
+    const p = this.data.profile;
+    if (p.regime === 'npd') return { vatNote: 'Без НДС (плательщик налога на профессиональный доход)' };
+    if (p.regime === 'patent') return { vatNote: 'Без НДС (патентная система налогообложения)' };
+    if (p.regime === 'usn6' || p.regime === 'usn15' || (p.regime === 'ooo' && p.orgOnUsn)) {
+      const v = this.vatStatus(new Date(date).getFullYear());
+      const month = new Date(date).getMonth();
+      if (v.status !== 'exempt' && (v.fromMonth === undefined || month >= v.fromMonth)) return { vatRate: v.rate, vatNote: '' };
+      return { vatNote: 'Без НДС (освобождение по ст. 145 НК РФ)' };
+    }
+    return { vatNote: 'Без НДС' };
+  }
+
+  vatStatus(year: number = new Date(this.clock()).getFullYear()): VatStatus {
+    const inc = (y: number) => this.listEntries({ kind: 'income', year: y }).filter(isTaxable);
+    const prev = inc(year - 1).reduce((s, e) => s + e.amount, 0);
+    const monthly = Array.from({ length: 12 }, (_, m) => inc(year).filter(e => new Date(e.date).getMonth() === m).reduce((s, e) => s + e.amount, 0));
+    return vatStatusUsn(year, prev, monthly, this.data.profile.vatGeneralRate);
+  }
+
   setDocumentStatus(id: string, status: DocStatus): BizDocument {
     const d = this.getDocument(id);
     if (!d) throw new Error(`Документ не найден: ${id}`);
+    if (status === 'paid') throw new Error('Оплату отмечайте кнопкой «Оплачен»: так доход попадёт в учёт');
+    if (d.status !== status && !DOC_TRANSITIONS[d.status].includes(status)) throw new Error(`Нельзя перевести документ из «${DOC_STATUS_LABELS[d.status]}» в «${DOC_STATUS_LABELS[status]}»`);
     d.status = status;
     d.updatedAt = this.clock();
     this.commit();
@@ -342,6 +400,7 @@ export class BizStore {
     const d = this.getDocument(id);
     if (!d) throw new Error(`Документ не найден: ${id}`);
     if (d.type !== 'invoice') throw new Error('Оплаченным можно отметить только счёт');
+    if (d.status === 'cancelled') throw new Error('Счёт отменён. Сначала верните его в черновик.');
     const existing = this.data.ledger.find(e => e.documentId === d.id);
     if (existing) return { document: d, entry: existing };
     const looksCompany = /^(ооо|ао|пао|зао|ип|оао|нко|ано)(?=\s|$|«|")/i.test(d.clientName.trim());
@@ -385,7 +444,7 @@ export class BizStore {
   // ---------- taxes ----------
   npdSummary(year: number = new Date(this.clock()).getFullYear()): NpdSummary {
     const incomes = this.listEntries({ kind: 'income' })
-      .filter(e => new Date(e.date).getFullYear() <= year)
+      .filter(e => isTaxable(e) && new Date(e.date).getFullYear() <= year)
       .sort((a, b) => a.date - b.date);
     // The 10 000 ₽ deduction is lifetime-cumulative: walk all history.
     let deductionLeft = NPD_DEDUCTION;
@@ -420,60 +479,111 @@ export class BizStore {
       year, income, limit: NPD_LIMIT, limitLeft: Math.max(0, NPD_LIMIT - income), limitExceeded: income > NPD_LIMIT,
       deductionLeft: round2(deductionLeft), months: yearMonths,
       taxYear: round2(yearMonths.reduce((s, m) => s + m.tax, 0)),
-      receiptsMissing: this.data.ledger.filter(e => e.kind === 'income' && e.receipt === 'pending').length,
+      receiptsMissing: this.data.ledger.filter(e => e.kind === 'income' && e.receipt === 'pending' && new Date(e.date).getFullYear() <= year).length,
     };
   }
 
+  /**
+   * УСН для ИП (оценка). 6%: налог уменьшается на фиксированные взносы этого года и 1% за прошлый год (платится до 1 июля),
+   * при работниках — не более чем на 50%. 15%: взносы этого года (фикс. + 1%) входят в расходы, минимальный налог 1% дохода;
+   * с 2026 года 1% считается с (доходы − расходы без взносов за себя − 300 000 ₽) (ст. 430 НК РФ в ред. 425-ФЗ).
+   */
   usnSummary(year: number = new Date(this.clock()).getFullYear()): UsnSummary {
-    const regime = this.data.profile.regime === 'usn15' ? 'usn15' : 'usn6';
-    const entries = this.listEntries({ year });
-    const sum = (kind: EntryKind, q?: number) => round2(entries
-      .filter(e => e.kind === kind && (q === undefined || Math.floor(new Date(e.date).getMonth() / 3) + 1 <= q))
-      .reduce((s, e) => s + e.amount, 0));
-    const income = sum('income');
-    const expenses = sum('expense');
-    const taxFor = (inc: number, exp: number) => regime === 'usn6' ? inc * 0.06 : Math.max((inc - exp) * 0.15, inc * 0.01);
-    const base = regime === 'usn6' ? income : Math.max(0, income - expenses);
-    const taxGross = round2(regime === 'usn6' ? income * 0.06 : Math.max(0, (income - expenses) * 0.15));
-    const minTax = round2(regime === 'usn15' ? income * 0.01 : 0);
-    const contributionsFixed = this.data.profile.fixedContributions;
-    // 1% of income above 300 000 ₽ (for УСН 15% — of income minus expenses).
-    const extraBase = regime === 'usn6' ? income : Math.max(0, income - expenses);
-    const contributionsExtra = round2(Math.max(0, extraBase - 300_000) * 0.01);
-    // ИП без сотрудников на УСН 6% уменьшает налог на взносы полностью; на 15% взносы идут в расходы (упрощённо — не уменьшаем).
-    const taxAfterContributions = regime === 'usn6'
-      ? round2(Math.max(0, taxGross - contributionsFixed - contributionsExtra))
-      : round2(Math.max(taxGross, minTax));
-    const quarters = [1, 2, 3, 4].map(q => ({ quarter: q, income: sum('income', q), expenses: sum('expense', q), taxCumulative: round2(taxFor(sum('income', q), sum('expense', q))) }));
-    return { year, regime, income, expenses, base: round2(base), taxGross, minTax, contributionsFixed, contributionsExtra, taxAfterContributions, quarters };
+    const p = this.data.profile;
+    const regime = p.regime === 'usn15' ? 'usn15' : 'usn6';
+    const all = this.listEntries().filter(isTaxable);
+    const ofYear = (y: number) => all.filter(e => new Date(e.date).getFullYear() === y);
+    const totals = (list: LedgerEntry[], q?: number) => {
+      const inQ = list.filter(e => q === undefined || Math.floor(new Date(e.date).getMonth() / 3) + 1 <= q);
+      const income = round2(inQ.filter(e => e.kind === 'income').reduce((s, e) => s + e.amount, 0));
+      const expenses = round2(inQ.filter(e => e.kind === 'expense' && !OWN_CONTRIBUTIONS_CATEGORY.test(e.category ?? '')).reduce((s, e) => s + e.amount, 0));
+      return { income, expenses };
+    };
+    const { income, expenses } = totals(ofYear(year));
+    const prev = totals(ofYear(year - 1));
+    const thisYear = new Date(this.clock()).getFullYear();
+    const contributionsFixed = year === thisYear ? p.fixedContributions : contributionsFor(year).fixed;
+    const extraBase = (inc: number, exp: number) => (regime === 'usn6' ? inc : inc - exp);
+    const contributionsExtra = round2(onePercent(extraBase(income, expenses), year));
+    const contributionsPrevExtra = round2(prev.income > 0 ? onePercent(extraBase(prev.income, prev.expenses), year - 1) : 0);
+    let taxGross: number; let minTax = 0; let base: number; let tax: number; let deducted: number;
+    if (regime === 'usn6') {
+      base = income;
+      taxGross = round2(income * 0.06);
+      const canDeduct = contributionsFixed + contributionsPrevExtra;
+      deducted = round2(Math.min(canDeduct, p.hasEmployees ? taxGross * 0.5 : taxGross));
+      tax = round2(taxGross - deducted);
+    } else {
+      deducted = round2(contributionsFixed + contributionsExtra);
+      base = round2(Math.max(0, income - expenses - deducted));
+      taxGross = round2(base * 0.15);
+      minTax = round2(income * 0.01);
+      tax = round2(Math.max(taxGross, minTax));
+    }
+    const quarters = [1, 2, 3, 4].map(q => {
+      const t = totals(ofYear(year), q);
+      const cum = regime === 'usn6' ? t.income * 0.06 : Math.max(0, t.income - t.expenses) * 0.15;
+      return { quarter: q, income: t.income, expenses: t.expenses, taxCumulative: round2(cum) };
+    });
+    return {
+      year, regime, income, expenses, base: round2(base), taxGross, minTax, contributionsFixed, contributionsExtra, taxAfterContributions: tax,
+      contributionsPrevExtra, contributionsDeducted: deducted, hasEmployees: p.hasEmployees, vat: this.vatStatus(year), quarters,
+    };
   }
 
-  /** Upcoming tax deadlines for the selected regime (next `days` days). */
+  /** Ближайшие сроки по выбранному режиму (на `days` дней вперёд), с переносом с выходных и праздников. */
   deadlines(days = 120): Deadline[] {
     const now = this.clock();
     const year = new Date(now).getFullYear();
     const out: Deadline[] = [];
-    const add = (y: number, m: number, d: number, title: string, details: string) => out.push({ date: new Date(y, m, d).getTime(), title, details });
-    const regime = this.data.profile.regime;
+    const add = (y: number, m: number, d: number, title: string, details: string) => out.push({ date: dueDate(y, m, d), title, details });
+    const p = this.data.profile;
+    const regime = p.regime;
+    const usn = regime === 'usn6' || regime === 'usn15' || (regime === 'ooo' && p.orgOnUsn);
+    const ip = regime === 'usn6' || regime === 'usn15' || regime === 'patent';
     for (const y of [year, year + 1]) {
       if (regime === 'npd') {
-        for (let m = 0; m < 12; m++) add(y, m, 28, 'Налог НПД', 'Оплата налога за прошлый месяц в «Мой налог» (если начислено от 100 ₽)');
+        for (let m = 0; m < 12; m++) {
+          add(y, m, 9, 'Чеки НПД', 'Последний день выбить чеки за безналичные оплаты прошлого месяца');
+          add(y, m, 28, 'Налог НПД', 'Оплата налога за прошлый месяц в «Мой налог» (если начислено от 100 ₽)');
+        }
       }
-      if (regime === 'usn6' || regime === 'usn15') {
-        add(y, 3, 25, 'Уведомление и декларация УСН', 'Уведомление об авансе за I квартал; декларация ИП за прошлый год');
-        add(y, 3, 28, 'Аванс УСН за I квартал', 'Также налог УСН за прошлый год для ИП');
-        add(y, 6, 25, 'Уведомление по УСН', 'Аванс за полугодие');
+      if (usn) {
+        if (regime === 'ooo') {
+          add(y, 2, 25, 'Декларация УСН (организация)', 'За прошлый год');
+          add(y, 2, 28, 'Налог УСН за прошлый год (организация)', '');
+        } else {
+          add(y, 3, 25, 'Декларация УСН ИП', 'За прошлый год');
+          add(y, 3, 28, 'Налог УСН за прошлый год (ИП)', '');
+        }
+        add(y, 3, 25, 'Уведомление по УСН', 'Об авансе за I квартал');
+        add(y, 3, 28, 'Аванс УСН за I квартал', '');
+        add(y, 6, 25, 'Уведомление по УСН', 'Об авансе за полугодие');
         add(y, 6, 28, 'Аванс УСН за полугодие', '');
-        add(y, 6, 1, 'Взнос 1% с дохода свыше 300 000 ₽', 'За прошлый год');
-        add(y, 9, 25, 'Уведомление по УСН', 'Аванс за 9 месяцев');
+        add(y, 9, 25, 'Уведомление по УСН', 'Об авансе за 9 месяцев');
         add(y, 9, 28, 'Аванс УСН за 9 месяцев', '');
-        add(y, 11, 28, 'Фиксированные взносы ИП', 'Срок уплаты за текущий год');
+        const vat = this.vatStatus(y);
+        if (vat.status === 'vat') {
+          for (const m of [0, 3, 6, 9]) add(y, m, 25, 'Декларация по НДС', `За прошлый квартал (ставка ${vat.rate}%); налог — равными долями до 28-го числа трёх следующих месяцев`);
+        }
       }
-      if (regime === 'patent') {
-        add(y, 11, 28, 'Фиксированные взносы ИП', 'Срок уплаты за текущий год');
+      if (ip) {
+        add(y, 6, 1, 'Взнос 1% с дохода свыше 300 000 ₽', `За ${y - 1} год`);
+        add(y, 11, 28, 'Фиксированные взносы ИП', `За ${y} год: ${contributionsFor(y).fixed.toLocaleString('ru-RU')} ₽${contributionsFor(y).known ? '' : ' (сумму проверьте)'}`);
       }
     }
+    if (regime === 'patent' && p.patentStart && p.patentEnd && p.patentCost > 0) {
+      const start = Date.parse(p.patentStart);
+      const end = Date.parse(p.patentEnd);
+      patentPayments(start, end, p.patentCost).forEach(x => out.push({ date: x.date, title: x.title, details: formatRub(x.amount) }));
+    }
     return out.filter(d => d.date >= now - DAY && d.date <= now + days * DAY).sort((a, b) => a.date - b.date);
+  }
+
+  /** Доходы НПД, по которым срок чека (9-е число следующего месяца) уже прошёл. */
+  overdueReceipts(): LedgerEntry[] {
+    const now = this.clock();
+    return this.data.ledger.filter(e => e.kind === 'income' && e.receipt === 'pending' && npdReceiptDeadline(e.date) + DAY <= now);
   }
 
   /** Money overview for the current month and year. */
