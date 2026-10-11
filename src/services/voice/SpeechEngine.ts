@@ -3,6 +3,8 @@
 // В окне приложения на Windows (WebView2) и в Android WebView встроенное распознавание обычно недоступно,
 // поэтому при ошибке «network»/«not-allowed» переключаемся на облако, если оно настроено.
 
+import { getSecret, setSecret } from '../security/SecretStore';
+
 export interface CloudSttConfig { baseUrl: string; apiKey: string; model: string }
 
 export const STT_PRESETS: { id: string; title: string; baseUrl: string; model: string; keyUrl: string }[] = [
@@ -18,17 +20,47 @@ function storage(): KV | null {
   try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; }
 }
 
+// Ключ сервиса распознавания хранится зашифрованным (SecretStore); здесь — только адрес и модель.
+// Адрес — строго один из STT_PRESETS: подменить сервер и увести на него ключ и записи голоса нельзя.
+const STT_SECRET = 'stt.apikey';
+let sttKey: string | null = null;
+let sttKeyLoaded = false;
+const ALLOWED_STT = new Set(STT_PRESETS.map(p => p.baseUrl));
+
+/** Загрузить ключ из зашифрованного хранилища (вызывается при старте; переносит старый открытый ключ). */
+export async function loadCloudSttKey(s: KV | null = storage()): Promise<void> {
+  try {
+    const raw = s?.getItem(CFG_KEY);
+    const cfg = raw ? JSON.parse(raw) : null;
+    if (cfg && typeof cfg.apiKey === 'string' && cfg.apiKey) {
+      // миграция: ключ лежал открытым текстом
+      await setSecret(STT_SECRET, cfg.apiKey);
+      s?.setItem(CFG_KEY, JSON.stringify({ baseUrl: cfg.baseUrl, model: cfg.model }));
+    }
+    sttKey = await getSecret(STT_SECRET);
+  } catch { sttKey = null; }
+  sttKeyLoaded = true;
+}
+if (typeof window !== 'undefined') void loadCloudSttKey();
+
 export function getCloudStt(s: KV | null = storage()): CloudSttConfig | null {
   try {
     const raw = s?.getItem(CFG_KEY);
     const cfg = raw ? JSON.parse(raw) : null;
-    return cfg && cfg.baseUrl && cfg.apiKey ? { baseUrl: String(cfg.baseUrl), apiKey: String(cfg.apiKey), model: String(cfg.model || 'whisper-1') } : null;
+    const baseUrl = String(cfg?.baseUrl ?? '');
+    const apiKey = sttKey ?? (typeof cfg?.apiKey === 'string' && !sttKeyLoaded ? cfg.apiKey : '');
+    if (!ALLOWED_STT.has(baseUrl) || !apiKey) return null;
+    return { baseUrl, apiKey, model: String(cfg.model || 'whisper-1').slice(0, 60) };
   } catch { return null; }
 }
 export function setCloudStt(cfg: CloudSttConfig | null, s: KV | null = storage()): void {
   if (!s) return;
-  if (!cfg) { s.removeItem?.(CFG_KEY); return; }
-  s.setItem(CFG_KEY, JSON.stringify({ baseUrl: cfg.baseUrl.trim().replace(/\/+$/, ''), apiKey: cfg.apiKey.trim(), model: cfg.model.trim() }));
+  if (!cfg) { s.removeItem?.(CFG_KEY); sttKey = null; void setSecret(STT_SECRET, null); return; }
+  const baseUrl = cfg.baseUrl.trim().replace(/\/+$/, '');
+  if (!ALLOWED_STT.has(baseUrl)) throw new Error('Неизвестный сервис распознавания: разрешены только Groq и OpenAI');
+  s.setItem(CFG_KEY, JSON.stringify({ baseUrl, model: cfg.model.trim() }));
+  sttKey = cfg.apiKey.trim();
+  void setSecret(STT_SECRET, sttKey);
 }
 
 function webRecognitionCtor(): any {
