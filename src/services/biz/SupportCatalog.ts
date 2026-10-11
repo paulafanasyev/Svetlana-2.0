@@ -67,7 +67,7 @@ export const SUPPORT_MEASURES: SupportMeasure[] = [
     id: 'social-enterprise-grant', title: 'Грант социальному предприятию', kind: 'grant', provider: 'Центр «Мой бизнес»',
     summary: 'Для предприятий, включённых в реестр социальных предприятий (в т.ч. по критериям занятости уязвимых групп или социальным услугам).',
     amount: 'от 100 000 до 500 000 ₽', regimes: MSP, flags: ['socialEnterprise'],
-    howTo: 'Получите статус соцпредприятия (подача до 1 мая), затем подайте заявку на грант.', url: 'https://мойбизнес.рф',
+    howTo: 'Получите статус соцпредприятия (сроки подачи уточните в центре «Мой бизнес» своего региона), затем подайте заявку на грант.', url: 'https://мойбизнес.рф',
   },
   {
     id: 'microloans', title: 'Микрозаймы государственных МФО', kind: 'loan', provider: 'Региональные государственные микрофинансовые организации',
@@ -105,7 +105,7 @@ export const SUPPORT_MEASURES: SupportMeasure[] = [
   {
     id: 'agro', title: 'Гранты «Агростартап» и поддержка фермеров', kind: 'grant', provider: 'Минсельхоз / региональный минсельхоз',
     summary: 'Гранты на создание и развитие КФХ и сельхозкооперативов.',
-    regimes: ['npd', 'usn6', 'usn15', 'ooo', 'none'], sectors: ['agro'],
+    regimes: ['usn6', 'usn15', 'ooo', 'none'], sectors: ['agro'],
     howTo: 'Обратитесь в региональный минсельхоз или центр компетенций АПК.', url: 'https://mcx.gov.ru',
   },
   {
@@ -146,8 +146,11 @@ export function findSupport(profile: BizProfile, now: number, opts: { kind?: Sup
     const reasons: string[] = [];
     if (!m.regimes.includes(profile.regime)) continue;
     if (m.maxAge !== undefined) {
-      if (age === undefined || age > m.maxAge) continue;
-      reasons.push(`подходит по возрасту (${age})`);
+      // По году рождения возраст = age или age-1 (если день рождения ещё не наступил).
+      if (age === undefined || age - 1 > m.maxAge) continue;
+      reasons.push(age > m.maxAge
+        ? `на границе по возрасту (${age - 1}–${age}), проверьте точную дату рождения`
+        : `подходит по возрасту (${age - 1}–${age})`);
     }
     if (m.minAge !== undefined && (age === undefined || age < m.minAge)) continue;
     if (m.sectors) {

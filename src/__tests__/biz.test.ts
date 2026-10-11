@@ -69,7 +69,8 @@ describe('УСН', () => {
     const u = store.usnSummary(2026);
     expect(u.taxGross).toBe(60_000);
     expect(u.contributionsExtra).toBe(7_000);
-    expect(u.taxAfterContributions).toBe(3_000);
+    // 1% за 2026 год платится до 1 июля 2027 и уменьшает налог 2027 года
+    expect(u.taxAfterContributions).toBe(10_000);
   });
 
   it('applies the 1% minimum tax on УСН 15%', () => {
@@ -77,7 +78,7 @@ describe('УСН', () => {
     store.addEntry({ kind: 'income', amount: 500_000, description: 'x', date: new Date(2026, 1, 1).getTime() });
     store.addEntry({ kind: 'expense', amount: 490_000, description: 'y', date: new Date(2026, 1, 2).getTime() });
     const u = store.usnSummary(2026);
-    expect(u.taxGross).toBe(1_500);
+    expect(u.taxGross).toBe(0); // взносы за себя тоже в расходах
     expect(u.minTax).toBe(5_000);
     expect(u.taxAfterContributions).toBe(5_000);
   });
