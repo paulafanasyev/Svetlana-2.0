@@ -6,6 +6,7 @@ import { listen, getCloudStt, transcribe, type ListenOptions, type Listener } fr
 import { computeVoicePrint, loadTemplate, verifyPrint, type VerifyResult, type VoicePrint, type VoiceTemplate } from './VoicePrint';
 import { speakText, stopSpeaking } from './Tts';
 import { generateChallenge, matchesChallenge, templateId, VoiceLockout, VoiceTrust, type Challenge } from './Liveness';
+import { localSttReady, localTranscribe } from './LocalStt';
 
 export interface PcmCapture { take(seconds: number): { pcm: Float32Array; sampleRate: number }; stop(): void }
 
@@ -107,6 +108,11 @@ export interface GuardDeps {
    * Без него остаётся встроенное распознавание браузера: оно слушает тот же микрофон одновременно с нами.
    */
   cloudTranscribe(): ((wav: Blob) => Promise<string>) | null;
+  /**
+   * Распознавание на самом компьютере (GigaAM-v3 в приложении для Windows), null, если модель не установлена.
+   * Приоритетнее облака: та же запись, но звук никуда не уходит.
+   */
+  localTranscribe(): ((pcm: Float32Array, sampleRate: number) => Promise<string>) | null;
   trust: VoiceTrust;
   lockout: VoiceLockout;
   setTimeout(fn: () => void, ms: number): unknown;
@@ -115,7 +121,7 @@ export interface GuardDeps {
 
 export const CHALLENGE_TIMEOUT_MS = 20_000;
 const ANSWER_DELAY_MS = 350; // пауза после озвучки цифр, чтобы микрофон не поймал хвост своей речи
-export const ANSWER_RECORD_MS = 4500; // окно записи ответа для облачного распознавания
+export const ANSWER_RECORD_MS = 4500; // окно записи ответа для распознавания на компьютере или в облаке
 
 export function createVoiceGuard(d: GuardDeps) {
   return function listenVerified(opts: VerifiedListenOptions, onVerify?: (r: VerifyResult) => void): Listener | null {
@@ -271,8 +277,10 @@ export function createVoiceGuard(d: GuardDeps) {
         try { c = await d.startCapture(); } catch { end(false, 'Нет доступа к микрофону для проверки голоса. Команда не выполнена.'); return; }
         if (done) { c.stop(); return; }
         cap2 = c;
-        const cloud = d.cloudTranscribe();
-        if (cloud) {
+        const local = d.localTranscribe();
+        const cloud = local ? null : d.cloudTranscribe();
+        const recognize = local ?? (cloud ? (pcm: Float32Array, sr: number) => cloud(pcmToWav(pcm, sr)) : null);
+        if (recognize) {
           // Одна запись: из неё и текст, и отпечаток голоса.
           opts.onPartial?.('Слушаю цифры…');
           timers.push(d.setTimeout(() => {
@@ -280,7 +288,7 @@ export function createVoiceGuard(d: GuardDeps) {
             const { pcm, sampleRate } = cap2.take(ANSWER_RECORD_MS / 1000 + 1);
             cap2.stop(); cap2 = null;
             opts.onPartial?.('Проверяю…');
-            cloud(pcmToWav(pcm, sampleRate)).then(
+            recognize(pcm, sampleRate).then(
               text => evaluate(text, pcm, sampleRate),
               () => end(false, 'Не удалось распознать цифры. Скажите команду ещё раз.'),
             );
@@ -347,6 +355,7 @@ export const listenVerified = createVoiceGuard({
     const cfg = getCloudStt();
     return cfg ? (wav: Blob) => transcribe(wav, cfg) : null;
   },
+  localTranscribe: () => (localSttReady() ? localTranscribe : null),
   trust: sharedTrust,
   lockout: sharedLockout,
   setTimeout: (fn, ms) => setTimeout(fn, ms),

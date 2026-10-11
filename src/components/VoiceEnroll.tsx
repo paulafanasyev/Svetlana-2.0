@@ -1,8 +1,10 @@
 // Запись голоса владельца: 3 фразы по 4 секунды. Только после этого включаются голосовые команды.
-import { useState } from 'react';
-import { Mic, Trash2 } from 'lucide-react';
+// В приложении для Windows здесь же ставится модель распознавания речи на компьютере (для проверки цифрами).
+import { useEffect, useState } from 'react';
+import { Mic, Trash2, Download, Cpu } from 'lucide-react';
 import { recordPrint } from '../services/voice/VoiceGuard';
 import { buildTemplate, saveTemplate, loadTemplate, deleteTemplate, verifyPrint, MIN_ENROLL_SAMPLES, type VoicePrint } from '../services/voice/VoicePrint';
+import { localSttAvailable, localSttInstall, localSttRemove, localSttStatus, type LocalSttStatus } from '../services/voice/LocalStt';
 
 const PHRASES = [
   'Светлана, запиши доход пять тысяч рублей от Петрова за консультацию.',
@@ -56,7 +58,50 @@ export default function VoiceEnroll() {
         </div>
       )}
       {msg && <p className="text-xs text-indigo-200">{msg}</p>}
-      <p className="text-[11px] text-slate-500">Хранится только признак голоса (не запись), только на этом устройстве. Изменения данных голосом всё равно подтверждаются кнопкой: запись голоса можно воспроизвести с телефона.</p>
+      <p className="text-[11px] text-slate-500">Хранится только признак голоса (не запись), только на этом устройстве. Перед первой командой Светлана просит сказать 3 случайные цифры: так запись вашего голоса с телефона не сработает.</p>
+      {localSttAvailable() && <LocalSttCard />}
+    </div>
+  );
+}
+
+/** Модель распознавания речи на компьютере: цифры проверки распознаются локально, запись никуда не уходит. */
+function LocalSttCard() {
+  const [status, setStatus] = useState<LocalSttStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const tick = () => { void localSttStatus().then(s => { if (alive) setStatus(s); }).catch(() => undefined); };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true); setErr(null);
+    try { await fn(); } catch (e: any) { setErr(String(e?.message ?? e ?? 'Ошибка')); } finally { setBusy(false); }
+  };
+
+  if (!status) return null;
+  const pct = status.total > 0 ? Math.min(100, Math.round((status.downloaded / status.total) * 100)) : 0;
+  return (
+    <div className="rounded-lg bg-white/5 border border-white/10 p-2 space-y-1.5">
+      <p className="text-xs font-medium flex items-center gap-1.5"><Cpu className="w-3.5 h-3.5" />Распознавание на компьютере (GigaAM-v3) {status.installed ? <span className="text-emerald-300">установлено</span> : <span className="text-slate-400">не установлено</span>}</p>
+      <p className="text-[11px] text-slate-400">Цифры для проверки голоса распознаются прямо здесь, из той же записи, по которой сверяется голос. Запись никуда не отправляется. Размер около {status.sizeMb} МБ.</p>
+      {status.downloading && (
+        <div className="space-y-1">
+          <div className="h-1.5 rounded bg-white/10 overflow-hidden"><div className="h-full bg-indigo-500" style={{ width: `${pct}%` }} /></div>
+          <p className="text-[11px] text-slate-400">Скачиваю… {Math.round(status.downloaded / 1048576)} МБ{status.total ? ` из ${Math.round(status.total / 1048576)} МБ` : ''}</p>
+        </div>
+      )}
+      {!status.downloading && !status.installed && (
+        <button disabled={busy} onClick={() => run(localSttInstall)} className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-xs inline-flex items-center gap-1.5"><Download className="w-3.5 h-3.5" />Скачать модель</button>
+      )}
+      {!status.downloading && status.installed && (
+        <button disabled={busy} onClick={() => run(localSttRemove)} className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-50 text-xs inline-flex items-center gap-1.5"><Trash2 className="w-3.5 h-3.5" />Удалить модель</button>
+      )}
+      {(err || status.error) && !status.downloading && <p className="text-[11px] text-amber-300">{err || status.error}</p>}
     </div>
   );
 }
