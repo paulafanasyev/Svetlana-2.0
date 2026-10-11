@@ -104,7 +104,7 @@ export default function AvatarPage() {
 
   /**
    * @param source 'voice' — команда пришла голосом: любое действие (даже чтение) — только после нажатия,
-   *   а данные CRM/бизнеса не передаются модели (запись голоса можно воспроизвести).
+   *   а данные CRM/бизнеса (текущие и из прошлых реплик) не передаются модели (запись голоса можно воспроизвести).
    */
   const sendMessage = async (text: string, source: ActionSource = 'unknown') => {
     if (!text.trim() || isLoading) return;
@@ -146,10 +146,11 @@ export default function AvatarPage() {
       }
 
       // История для модели: результаты инструментов — только как данные, блоки действий обезврежены.
-      // По голосу модель не получает данных CRM и бизнеса.
+      // По голосу модель не получает данных CRM и бизнеса — ни текущих, ни из прошлых реплик.
+      const voice = source === 'voice';
       const history: ChatMessage[] = [
-        { role: 'system', content: SYSTEM_PROMPT + crmSystemPrompt(undefined, source !== 'voice') },
-        ...toModelHistory(messages.slice(-10)),
+        { role: 'system', content: SYSTEM_PROMPT + crmSystemPrompt(undefined, !voice) },
+        ...toModelHistory(messages.slice(-10), { hideData: voice }),
         { role: 'user', content: text },
       ];
 
