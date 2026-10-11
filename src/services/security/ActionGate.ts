@@ -4,7 +4,7 @@
 // Голос строже: запись голоса владельца можно воспроизвести, поэтому по голосу даже чтение данных
 // (контакты, финансы, записи) показывается только после нажатия — воспроизведённая запись ничего не узнает.
 
-import { safeJsonParse, stripControl } from './SafeData';
+import { safeJsonParse, stripControl, sanitizeArgs } from './SafeData';
 
 /**
  * Происхождение действия. 'user' засчитывается только вместе с жестом пользователя (см. userGesture):
@@ -17,22 +17,40 @@ export interface UserGesture { readonly __gesture: true }
 const gestures = new WeakSet<object>();
 const GESTURE_TTL_MS = 5_000;
 
+/** Канонический вид аргументов: та же очистка, что и в реестре инструментов, ключи по алфавиту. */
+function argsKey(args: unknown): string {
+  const canon = (v: unknown): unknown => Array.isArray(v) ? v.map(canon)
+    : v && typeof v === 'object'
+      ? Object.fromEntries(Object.keys(v as Record<string, unknown>).sort().map(k => [k, canon((v as Record<string, unknown>)[k])]))
+      : v;
+  try { return JSON.stringify(canon(sanitizeArgs(args))); } catch { return 'invalid'; }
+}
+
 /**
- * Жест по настоящему событию, привязанный к действию [tool]: нажатие на кнопку «Записать доход»
- * нельзя потратить на другой инструмент. Жест без [tool] годится только как проверка в интерфейсе
- * («это настоящее нажатие») и не разрешает ни одного инструмента в шлюзе.
+ * Жест по настоящему событию браузера, привязанный к действию [tool] с ТОЧНЫМИ аргументами [args]:
+ * нажатие на кнопку «Записать доход 100 ₽» нельзя потратить ни на другой инструмент, ни на другую сумму.
+ * Принимается только настоящий объект Event (а не { isTrusted: true }), если среда знает Event.
+ * Жест без [tool] и [args] годится только как проверка в интерфейсе («это настоящее нажатие»)
+ * и не разрешает ни одного инструмента в шлюзе.
  */
-export function userGesture(event: { isTrusted?: boolean } | null | undefined, tool?: string): UserGesture | undefined {
+export function userGesture(
+  event: { isTrusted?: boolean } | null | undefined,
+  tool?: string,
+  args?: Record<string, unknown>,
+): UserGesture | undefined {
   if (!event || event.isTrusted !== true) return undefined;
-  const g = Object.freeze({ __gesture: true as const, at: Date.now(), tool: typeof tool === 'string' && tool ? tool : null });
+  if (typeof Event === 'function' && !(event instanceof Event)) return undefined;
+  const bound = typeof tool === 'string' && tool && args && typeof args === 'object' ? tool : null;
+  const g = Object.freeze({ __gesture: true as const, at: Date.now(), tool: bound, args: bound ? argsKey(args) : null });
   gestures.add(g);
   return g;
 }
-function validGesture(g: UserGesture | undefined, now: number, tool: string): boolean {
+function validGesture(g: UserGesture | undefined, now: number, tool: string, args: unknown): boolean {
   if (!g || !gestures.has(g)) return false;
-  const { at, tool: boundTo } = g as unknown as { at: number; tool: string | null };
+  const { at, tool: boundTo, args: boundArgs } = g as unknown as { at: number; tool: string | null; args: string | null };
   gestures.delete(g); // одноразовый
   if (boundTo === null || boundTo !== tool) return false; // без привязки или для другого действия
+  if (boundArgs === null || boundArgs !== argsKey(args)) return false; // другие параметры
   return now - at <= GESTURE_TTL_MS;
 }
 
@@ -162,8 +180,8 @@ let recent: number[] = [];
 
 /** true — действие можно выполнять. Все инструменты проходят сюда из ToolRegistry.executeTool. */
 export async function authorizeAction(input: ActionRequest, now: number = Date.now()): Promise<boolean> {
-  // 'user' без настоящего жеста, привязанного именно к этому действию, понижаем до 'unknown'.
-  const source: ActionSource = input.source === 'user' && !validGesture(input.gesture, now, input.tool) ? 'unknown' : input.source;
+  // 'user' без настоящего жеста, привязанного именно к этому действию с этими параметрами, понижаем до 'unknown'.
+  const source: ActionSource = input.source === 'user' && !validGesture(input.gesture, now, input.tool, input.args) ? 'unknown' : input.source;
   const req: ActionRequest = { tool: input.tool, args: deepFreeze(input.args), source };
   if (!needsConfirmation(req.tool, req.source)) {
     record({ t: now, tool: req.tool, source: req.source, decision: 'auto' });
