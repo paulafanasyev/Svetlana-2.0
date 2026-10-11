@@ -1,5 +1,6 @@
 // Svetlana CRM — contacts, deals pipeline, tasks, summary, import/export.
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
+import { assertFileSize, MAX_BYTES } from '../services/security/SafeData';
 import {
   Users, Briefcase, CheckSquare, BarChart3, Database, Plus, Search, Trash2, Smartphone,
   X, Phone, Mail, ChevronLeft, ChevronRight, Download, Upload, Pencil,
@@ -427,7 +428,7 @@ function DataTab() {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    try { setMessage(handler(await file.text())); } catch (err: any) { setMessage(err?.message || 'Не удалось прочитать файл'); }
+    try { assertFileSize(file, /\.json$/i.test(file.name) ? MAX_BYTES.backupJson : MAX_BYTES.csv); setMessage(handler(await file.text())); } catch (err: any) { setMessage(err?.message || 'Не удалось прочитать файл'); }
   };
 
   const stamp = new Date().toISOString().slice(0, 10);
