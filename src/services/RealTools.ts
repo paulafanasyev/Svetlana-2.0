@@ -9,7 +9,7 @@ async function requireHands(): Promise<void> {
 }
 
 /** На экране всё ещё то приложение, в котором мы действуем (а не подменённое окно или оверлей). */
-async function stillIn(hands: { getCurrentApp(): Promise<string> }, pkg: string): Promise<boolean> {
+async function stillIn(hands: { getCurrentApp(): Promise<unknown> }, pkg: string): Promise<boolean> {
   try { return (await hands.getCurrentApp()) === pkg; } catch { return false; }
 }
 
