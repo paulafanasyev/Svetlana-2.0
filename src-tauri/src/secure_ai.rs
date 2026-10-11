@@ -6,8 +6,10 @@
 //! с ограничением размера и времени.
 //!
 //! Защита от чужого скрипта на странице:
-//! - любое изменение или удаление ключа и первый запрос к каждому облачному ИИ за сеанс
-//!   подтверждаются в НАТИВНОМ окне Windows — скрипт не может нажать его за пользователя;
+//! - любое изменение или удаление ключа подтверждается в НАТИВНОМ окне Windows — скрипт
+//!   не может нажать его за пользователя;
+//! - запросы в облако идут только по разрешению из такого же окна, привязанному к провайдеру
+//!   И модели, на 15 минут; смена или удаление ключа отзывает все разрешения;
 //! - только известные провайдеры и строгая рекурсивная схема тела запроса (роли, текст, модель,
 //!   параметры; никаких tools/stream/лишних полей);
 //! - лимит частоты запросов и изменений ключей.
@@ -28,11 +30,13 @@ const MAX_TEXT: usize = 200_000;
 const PROVIDERS: [&str; 7] = ["openai", "groq", "openrouter", "deepseek", "mistral", "anthropic", "google"];
 const CHAT_PER_MINUTE: usize = 30;
 const SECRET_WRITES_PER_MINUTE: usize = 10;
+/// Сколько действует разрешение на запросы к облачному ИИ (провайдер + модель).
+const CONSENT_TTL: Duration = Duration::from_secs(15 * 60);
 
 static CHAT_CALLS: Mutex<VecDeque<Instant>> = Mutex::new(VecDeque::new());
 static SECRET_WRITES: Mutex<VecDeque<Instant>> = Mutex::new(VecDeque::new());
-/// Провайдеры, которые пользователь разрешил в нативном окне в этом сеансе.
-static SESSION_ALLOWED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Разрешения из нативного окна: (провайдер, модель, когда выдано).
+static CONSENTS: Mutex<Vec<(String, String, Instant)>> = Mutex::new(Vec::new());
 
 /// Скользящее окно: не больше `max` событий за минуту.
 fn rate_ok(m: &Mutex<VecDeque<Instant>>, max: usize) -> bool {
@@ -50,6 +54,17 @@ fn rate_ok(m: &Mutex<VecDeque<Instant>>, max: usize) -> bool {
     }
     q.push_back(now);
     true
+}
+
+/// Есть ли свежее разрешение именно для этого провайдера и этой модели.
+fn has_consent(list: &mut Vec<(String, String, Instant)>, provider: &str, model: &str, now: Instant) -> bool {
+    list.retain(|(_, _, at)| now.duration_since(*at) <= CONSENT_TTL);
+    list.iter().any(|(p, m, _)| p == provider && m == model)
+}
+
+/// Смена или удаление ключа отзывает все разрешения этого провайдера.
+fn revoke_consents(provider: &str) {
+    CONSENTS.lock().unwrap_or_else(|e| e.into_inner()).retain(|(p, _, _)| p != provider);
 }
 
 /// Нативное окно «ОК / Отмена». Вызывается вне главного потока, чтобы не зависнуть.
@@ -104,6 +119,8 @@ pub async fn secret_set(app: AppHandle, name: String, value: Option<String>) -> 
     if !rate_ok(&SECRET_WRITES, SECRET_WRITES_PER_MINUTE) {
         return Err("Слишком частое изменение ключей, подождите минуту".into());
     }
+    // Любая попытка сменить ключ сразу отзывает разрешения на запросы к этому провайдеру.
+    revoke_consents(provider);
     let question = if value.is_some() {
         format!("Сохранить новый API-ключ для «{provider}» в хранилище Windows?")
     } else {
@@ -256,13 +273,13 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, body
     if !rate_ok(&CHAT_CALLS, CHAT_PER_MINUTE) {
         return Err("Слишком много запросов к облачному ИИ, подождите минуту".into());
     }
-    let allowed = SESSION_ALLOWED.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|p| p == provider_id);
+    let allowed = has_consent(&mut CONSENTS.lock().unwrap_or_else(|e| e.into_inner()), provider_id, &model, Instant::now());
     if !allowed {
-        let question = format!("Разрешить Светлане отправлять переписку в облачный ИИ «{provider_id}» (модель {model}) до закрытия приложения?");
+        let question = format!("Разрешить Светлане отправлять переписку в облачный ИИ «{provider_id}», модель {model}, в ближайшие 15 минут?");
         if !confirm(&app, question).await {
             return Err("Отменено пользователем".into());
         }
-        SESSION_ALLOWED.lock().unwrap_or_else(|e| e.into_inner()).push(provider_id.to_string());
+        CONSENTS.lock().unwrap_or_else(|e| e.into_inner()).push((provider_id.to_string(), model.clone(), Instant::now()));
     }
     let key = match entry(&format!("ai.{provider_id}"))?.get_password() {
         Ok(k) => k,
@@ -325,21 +342,28 @@ mod tests {
     }
 
     #[test]
+    fn consent_is_bound_to_provider_model_and_expires() {
+        let start = Instant::now();
+        let mut list = vec![("openai".to_string(), "gpt-4o".to_string(), start)];
+        assert!(has_consent(&mut list, "openai", "gpt-4o", start));
+        assert!(!has_consent(&mut list, "openai", "gpt-4o-mini", start));
+        assert!(!has_consent(&mut list, "groq", "gpt-4o", start));
+        assert!(!has_consent(&mut list, "openai", "gpt-4o", start + CONSENT_TTL + Duration::from_secs(1)));
+        assert!(list.is_empty());
+    }
+
+    #[test]
     fn body_schema_is_strict_and_recursive() {
         let ok = json!({"model": "m", "messages": [{"role": "user", "content": "hi"}], "temperature": 0.7, "max_tokens": 100});
         assert!(validate_body("openai", "m", &ok).is_ok());
-        // лишние поля, чужая модель, пустой список
         assert!(validate_body("openai", "m", &json!({"model": "m", "messages": [{"role": "user", "content": "x"}], "tools": []})).is_err());
         assert!(validate_body("openai", "m", &json!({"model": "other", "messages": [{"role": "user", "content": "x"}]})).is_err());
         assert!(validate_body("openai", "m", &json!({"model": "m", "messages": []})).is_err());
-        // недопустимые роли и содержимое
         assert!(validate_body("openai", "m", &json!({"model": "m", "messages": [{"role": "tool", "content": "x"}]})).is_err());
         assert!(validate_body("openai", "m", &json!({"model": "m", "messages": [{"role": "user", "content": {"a": 1}}]})).is_err());
         assert!(validate_body("anthropic", "m", &json!({"model": "m", "messages": [{"role": "system", "content": "x"}]})).is_err());
         assert!(validate_body("openai", "m", &json!({"model": "m", "messages": [{"role": "user", "content": "x"}], "temperature": 9})).is_err());
-        // OpenRouter-модели вида vendor/model:tag допустимы
         assert!(validate_body("openrouter", "meta-llama/llama-3:free", &json!({"model": "meta-llama/llama-3:free", "messages": [{"role": "user", "content": "x"}]})).is_ok());
-        // Google: имя модели в адресе — без символов пути
         let g = json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}], "generationConfig": {"temperature": 0.5}});
         assert!(validate_body("google", "gemini-1.5-flash", &g).is_ok());
         let bad = json!({"contents": [{"role": "user", "parts": [{"inlineData": {}}]}]});
