@@ -1,12 +1,16 @@
 // Real AI Gateway - connects to actual LLM providers
 // Defaults to local offline provider (Ollama / Local Svetlana) on Windows/Desktop
 // Безопасность: API-ключи хранятся зашифрованными (SecretStore), в localStorage — только настройки без ключей.
+// В приложении для Windows ключи облачных ИИ лежат в Диспетчере учётных данных Windows и вообще не
+// попадают в JavaScript: запрос в облако делает нативная часть (security/NativeBridge, src-tauri/src/secure_ai.rs).
 // Адреса проверяются: локальные модели — только 127.0.0.1/localhost, облачные — только официальные адреса,
 // прокси — только свой сервер. Подменённый адрес не получит ни ключ, ни переписку.
 // Локальная модель при ошибке НИКОГДА не переключается на облако сама: переписка не покидает
 // компьютер без явного выбора облачного провайдера пользователем (см. fallbackCandidates).
 import { getSecret, setSecret } from './security/SecretStore';
 import { safeJsonParse, stripControl, MAX_BYTES } from './security/SafeData';
+import { isNativeApp, nativeSetSecret, nativeHasSecret, nativeCloudChat, NATIVE_KEY_PLACEHOLDER } from './security/NativeBridge';
+import { stripUntrusted } from './security/Untrusted';
 
 export interface AIProvider {
   id: string;
@@ -183,7 +187,20 @@ class AIGateway {
         console.error('Failed to load AI providers:', e);
       }
     }
+    const native = isNativeApp();
     for (const p of this.providers.values()) {
+      if (native) {
+        // Приложение для Windows: ключ переносим в хранилище Windows и стираем из браузерного хранилища;
+        // в памяти JavaScript остаётся только отметка «ключ есть».
+        const name = secretName(p.id);
+        const legacy = p.apiKey && p.apiKey !== NATIVE_KEY_PLACEHOLDER ? p.apiKey : await getSecret(name);
+        if (legacy) {
+          try { await nativeSetSecret(name, legacy); await setSecret(name, null); } catch (e) { console.error('Не удалось перенести ключ в хранилище Windows', e); }
+        }
+        p.apiKey = undefined;
+        try { if (await nativeHasSecret(name)) p.apiKey = NATIVE_KEY_PLACEHOLDER; } catch { /* нет хранилища */ }
+        continue;
+      }
       if (!p.apiKey) { const k = await getSecret(secretName(p.id)); if (k) p.apiKey = k; }
     }
   }
@@ -198,6 +215,15 @@ class AIGateway {
   }
 
   private storeKey(p: AIProvider) {
+    if (isNativeApp()) {
+      // Отметка «ключ есть» из интерфейса никогда не перезаписывает настоящий ключ.
+      if (p.apiKey === NATIVE_KEY_PLACEHOLDER) return;
+      const value = p.apiKey ?? null;
+      p.apiKey = value ? NATIVE_KEY_PLACEHOLDER : undefined;
+      void nativeSetSecret(secretName(p.id), value).catch(e => console.error('Не удалось сохранить ключ в хранилище Windows', e));
+      void setSecret(secretName(p.id), null);
+      return;
+    }
     void setSecret(secretName(p.id), p.apiKey ?? null);
   }
 
@@ -215,6 +241,7 @@ class AIGateway {
   removeProvider(id: string) {
     this.providers.delete(id);
     void setSecret(secretName(id), null);
+    if (isNativeApp()) void nativeSetSecret(secretName(id), null).catch(() => undefined);
     if (this.activeProvider === id) {
       this.activeProvider = null;
       for (const [pid, p] of this.providers) {
@@ -295,6 +322,10 @@ class AIGateway {
     if ((proxy || provider.useProxy) && provider.type === 'online') {
       return this.callViaProxy(proxy || '/api/ai-proxy', provider, messages, options);
     }
+    // Приложение для Windows: облачный запрос делает нативная часть, ключ в JavaScript не попадает.
+    if (provider.type === 'online' && isNativeApp()) {
+      return this.callNative(provider, messages, options);
+    }
 
     switch (provider.id) {
       case 'ollama':
@@ -322,6 +353,31 @@ class AIGateway {
         }
         throw new Error(`Provider ${provider.id} not implemented`);
     }
+  }
+
+  /** Облачный запрос через нативную часть Windows-приложения (без ключа в теле запроса). */
+  private async callNative(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    const systemMessage = messages.find(m => m.role === 'system');
+    const chatMessages = messages.filter(m => m.role !== 'system');
+    const temperature = options?.temperature ?? 0.7;
+    let body: Record<string, unknown>;
+    if (provider.id === 'anthropic') {
+      body = { model: provider.model, max_tokens: options?.max_tokens ?? 4096, system: systemMessage?.content, messages: chatMessages, temperature };
+    } else if (provider.id === 'google') {
+      body = {
+        contents: chatMessages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
+        systemInstruction: systemMessage ? { parts: [{ text: systemMessage.content }] } : undefined,
+        generationConfig: { temperature, maxOutputTokens: options?.max_tokens },
+      };
+    } else {
+      body = { model: provider.model, messages, temperature, max_tokens: options?.max_tokens ?? 4096 };
+    }
+    const data: any = await nativeCloudChat(provider.id, provider.model, body);
+    const content = provider.id === 'anthropic' ? data?.content?.[0]?.text
+      : provider.id === 'google' ? data?.candidates?.[0]?.content?.parts?.[0]?.text
+      : data?.choices?.[0]?.message?.content;
+    if (typeof content !== 'string') throw new Error(`${provider.name}: пустой ответ`);
+    return { content, provider: provider.name, model: provider.model, usage: provider.id === 'google' ? undefined : data?.usage };
   }
 
   private async callViaProxy(proxyEndpoint: string, provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
@@ -566,7 +622,8 @@ class AIGateway {
 
   private extractToolCalls(content: string): StructuredToolCall[] {
     const toolCalls: StructuredToolCall[] = [];
-    const jsonMatches = content.match(/```json\s*([\s\S]*?)\s*```/g);
+    // Блоки, скопированные моделью из данных (⟦ДАННЫЕ⟧), не считаются командами.
+    const jsonMatches = stripUntrusted(content).match(/```json\s*([\s\S]*?)\s*```/g);
     if (jsonMatches) {
       for (const match of jsonMatches.slice(0, 10)) {
         try {
