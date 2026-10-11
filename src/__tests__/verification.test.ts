@@ -217,6 +217,7 @@ describe('Verification Logic', () => {
       const mockHands = {
         isConnected: () => true,
         launchApp: vi.fn().mockResolvedValue({ success: true }),
+        getCurrentApp: vi.fn().mockResolvedValue('org.telegram.messenger'),
         findElementByText: vi.fn()
           .mockResolvedValueOnce({
             id: 'contact_1',
@@ -266,6 +267,7 @@ describe('Verification Logic', () => {
       const mockHands = {
         isConnected: () => true,
         launchApp: vi.fn().mockResolvedValue({ success: true }),
+        getCurrentApp: vi.fn().mockResolvedValue('org.telegram.messenger'),
         findElementByText: vi.fn()
           .mockResolvedValueOnce({
             id: 'contact_1',
