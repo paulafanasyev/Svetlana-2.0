@@ -148,7 +148,7 @@ export function computeAnalytics(store: BizStore = bizStore): Analytics {
       const gross = forecastIncome * 0.06;
       forecastTax = round2(gross - Math.min(u.contributionsFixed + u.contributionsPrevExtra, profile.hasEmployees ? gross * 0.5 : gross));
     } else {
-      const extra = onePercent(forecastIncome - forecastExpenses, year);
+      const extra = profile.usn15OnePercentTiming === 'next' ? u.contributionsPrevExtra : onePercent(forecastIncome - forecastExpenses, year);
       forecastTax = round2(Math.max((forecastIncome - forecastExpenses - u.contributionsFixed - extra) * 0.15, forecastIncome * 0.01, 0));
     }
   }
