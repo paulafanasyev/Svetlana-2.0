@@ -1,5 +1,6 @@
 // Svetlana CRM — local-first store (localStorage on web/Windows, in-memory in tests).
 // Contacts, companies-as-text, deals with a pipeline, activities (notes, calls, meetings, tasks).
+import { safeJsonParse, csvSafe, MAX_BYTES } from '../security/SafeData';
 
 export type ContactStatus = 'lead' | 'client' | 'partner' | 'other';
 export type ContactSource = 'manual' | 'phone' | 'import' | 'chat';
@@ -154,27 +155,32 @@ function sanitize(raw: unknown): CRMData {
   if (Array.isArray(r.contacts)) {
     data.contacts = r.contacts.filter(c => c && typeof c.id === 'string' && typeof c.name === 'string').map(c => ({
       ...c,
-      phones: Array.isArray(c.phones) ? c.phones.map(String) : [],
-      emails: Array.isArray(c.emails) ? c.emails.map(String) : [],
-      tags: Array.isArray(c.tags) ? c.tags.map(String) : [],
-      company: c.company ?? '',
-      position: c.position ?? '',
-      notes: c.notes ?? '',
+      name: c.name.slice(0, 300),
+      phones: Array.isArray(c.phones) ? c.phones.slice(0, 20).map(x => String(x).slice(0, 40)) : [],
+      emails: Array.isArray(c.emails) ? c.emails.slice(0, 20).map(x => String(x).slice(0, 200)) : [],
+      tags: Array.isArray(c.tags) ? c.tags.slice(0, 50).map(x => String(x).slice(0, 60)) : [],
+      company: typeof c.company === 'string' ? c.company.slice(0, 300) : '',
+      position: typeof c.position === 'string' ? c.position.slice(0, 200) : '',
+      notes: typeof c.notes === 'string' ? c.notes.slice(0, 10_000) : '',
       status: CONTACT_STATUSES.includes(c.status) ? c.status : 'other',
-      source: c.source ?? 'manual',
+      source: (['manual', 'phone', 'import', 'chat'] as const).includes(c.source) ? c.source : 'manual',
+      createdAt: Number.isFinite(Number(c.createdAt)) ? Number(c.createdAt) : 0,
+      updatedAt: Number.isFinite(Number(c.updatedAt)) ? Number(c.updatedAt) : 0,
     }));
   }
   if (Array.isArray(r.deals)) {
     data.deals = r.deals.filter(d => d && typeof d.id === 'string' && typeof d.title === 'string').map(d => ({
       ...d,
-      amount: Number(d.amount) || 0,
-      currency: d.currency || 'RUB',
+      title: d.title.slice(0, 300),
+      amount: Number.isFinite(Number(d.amount)) && Number(d.amount) >= 0 ? Number(d.amount) : 0,
+      currency: typeof d.currency === 'string' && /^[A-Z]{3}$/.test(d.currency) ? d.currency : 'RUB',
       stage: DEAL_STAGES.includes(d.stage) ? d.stage : 'new',
     }));
   }
   if (Array.isArray(r.activities)) {
     data.activities = r.activities.filter(a => a && typeof a.id === 'string' && typeof a.text === 'string').map(a => ({
       ...a,
+      text: a.text.slice(0, 10_000),
       type: ACTIVITY_TYPES.includes(a.type) ? a.type : 'note',
       done: !!a.done,
     }));
@@ -198,7 +204,7 @@ export class CRMStore {
   private load(): CRMData {
     try {
       const raw = this.storage.getItem(STORAGE_KEY);
-      return raw ? sanitize(JSON.parse(raw)) : emptyData();
+      return raw ? sanitize(safeJsonParse(raw, MAX_BYTES.backupJson)) : emptyData();
     } catch {
       return emptyData();
     }
@@ -513,7 +519,8 @@ export class CRMStore {
   /** Replaces all data with a backup. Returns counts. */
   importJSON(json: string): { contacts: number; deals: number; activities: number } {
     let parsed: unknown;
-    try { parsed = JSON.parse(json); } catch { throw new Error('Файл не похож на резервную копию CRM (неверный JSON)'); }
+    try { parsed = safeJsonParse(json, MAX_BYTES.backupJson); } catch { throw new Error('Файл не похож на резервную копию CRM (неверный JSON или слишком большой)'); }
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { contacts?: unknown }).contacts)) throw new Error('Это не резервная копия CRM');
     const data = sanitize(parsed);
     this.data = data;
     this.commit();
@@ -531,6 +538,7 @@ export class CRMStore {
 
   /** CSV with header row; recognises Russian/English column names. */
   importContactsCSV(csv: string): ImportReport {
+    if (csv.length > MAX_BYTES.csv) throw new Error('CSV слишком большой (максимум 5 МБ)');
     const rows = parseCSV(csv);
     if (rows.length < 2) return { added: 0, merged: 0, skipped: 0, total: 0 };
     const header = rows[0].map(h => h.trim().toLowerCase());
@@ -556,11 +564,7 @@ export class CRMStore {
 }
 
 function csvCell(value: string): string {
-  const v = value ?? '';
-  // Prevent CSV formula injection in spreadsheet apps.
-  const risky = /^[=@]/.test(v) || (/^[+-]/.test(v) && !/^[+\-\d\s().;]+$/.test(v));
-  const safe = risky ? `'${v}` : v;
-  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+  return csvSafe(value, ',');
 }
 
 export function parseCSV(text: string): string[][] {
