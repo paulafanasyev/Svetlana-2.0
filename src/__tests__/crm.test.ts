@@ -207,7 +207,7 @@ describe('CRM chat integration', () => {
   it('parses CRM action blocks from an AI reply', () => {
     const reply = 'Готово.\n[CRM: {"tool":"crm_add_contact","args":{"name":"Иван"}}]\n[CRM: {broken}]\n[CRM: {"tool":"open_app","args":{}}] [EMOTION: happy]';
     const { clean, actions, invalid } = parseCRMActions(reply);
-    expect(actions).toEqual([{ tool: 'crm_add_contact', args: { name: 'Иван' } }]);
+    expect(actions).toEqual([{ tool: 'crm_add_contact', args: { name: 'Иван' }, source: 'llm' }]);
     expect(invalid).toBe(2);
     expect(clean).not.toContain('[CRM');
     expect(clean).toContain('[EMOTION: happy]');
