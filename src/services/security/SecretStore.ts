@@ -24,16 +24,19 @@ function idbKey(): Promise<CryptoKey | null> {
     req.onerror = () => resolve(null);
     req.onsuccess = () => {
       const db = req.result;
+      // Соединение закрывается сразу после чтения/записи: открытое соединение заблокировало бы
+      // удаление базы кнопкой «Удалить все данные». Сам CryptoKey после закрытия остаётся рабочим.
+      const done = (k: CryptoKey | null) => { try { db.close(); } catch { /* noop */ } resolve(k); };
       const get = db.transaction('keys', 'readonly').objectStore('keys').get('master');
-      get.onerror = () => resolve(null);
+      get.onerror = () => done(null);
       get.onsuccess = async () => {
-        if (get.result) { resolve(get.result as CryptoKey); return; }
+        if (get.result) { done(get.result as CryptoKey); return; }
         try {
           const key = await subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
           const put = db.transaction('keys', 'readwrite').objectStore('keys').put(key, 'master');
-          put.onsuccess = () => resolve(key);
-          put.onerror = () => resolve(null);
-        } catch { resolve(null); }
+          put.onsuccess = () => done(key);
+          put.onerror = () => done(null);
+        } catch { done(null); }
       };
     };
   });
