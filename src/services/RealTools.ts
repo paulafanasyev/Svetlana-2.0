@@ -1,4 +1,6 @@
 // Real Tool Registry - Uses actual PlatformHands for device control
+// Безопасность: действия на экране «прикалываются» к приложению, которое было на экране в начале,
+// и перед самим нажатием/вводом проверяется, что оно всё ещё на экране (оверлей/подмена = отказ).
 import type { Tool, ToolResult } from './ToolRegistry';
 import { handsManager } from './HandsManager';
 import { HTTPHands } from './HTTPHands';
@@ -12,6 +14,14 @@ async function requireHands(): Promise<void> {
 async function stillIn(hands: { getCurrentApp(): Promise<unknown> }, pkg: string): Promise<boolean> {
   try { return (await hands.getCurrentApp()) === pkg; } catch { return false; }
 }
+
+/** Приложение на экране в начале действия; если его нельзя определить — действие не выполняется. */
+async function pinApp(hands: { getCurrentApp(): Promise<unknown> }): Promise<string | null> {
+  try { const app = await hands.getCurrentApp(); return typeof app === 'string' && app ? app : null; } catch { return null; }
+}
+
+const UNKNOWN_APP: ToolResult = { success: false, error: 'Cannot determine which app is on screen. Stopped for safety.' };
+const movedFrom = (app: string): ToolResult => ({ success: false, error: `Another app is on screen instead of ${app}. Stopped for safety.` });
 
 export const openAppTool: Tool = {
   id: 'open_app', name: 'Open Application', description: 'Launch an Android application by package name', category: 'navigation', riskLevel: 'low',
@@ -29,10 +39,6 @@ export const openAppTool: Tool = {
   async isAvailable() { return await handsManager.isConnected(); },
 };
 
-/**
- * Contacts from the phone (Svetlana-home bridge, POST /api/contacts/list).
- * Read-only, so medium risk: no confirmation, but the data is personal.
- */
 export const readContactsTool: Tool = {
   id: 'read_contacts', name: 'Read Contacts',
   description: 'Read contacts (name and phone numbers) from the connected Android phone. Use query to filter by name; page with limit/offset.',
@@ -61,11 +67,14 @@ export const tapElementTool: Tool = {
   inputSchema: { type: 'object', properties: { elementText: { type: 'string', description: 'Text content of the element to tap' }, elementId: { type: 'string', description: 'Resource ID of the element to tap' } } },
   async execute(params: { elementText?: string; elementId?: string }): Promise<ToolResult> {
     await requireHands(); const hands = handsManager.getHands(); if (!hands) return { success: false, error: 'Hands not available' };
+    const pinned = await pinApp(hands); if (!pinned) return UNKNOWN_APP;
     let element;
     if (params.elementText) element = await hands.findElementByText(params.elementText);
     else if (params.elementId) element = await hands.findElementById(params.elementId);
     if (!element) return { success: false, error: `Element not found: ${params.elementText || params.elementId}` };
     const beforeTree = await hands.getAccessibilityTree(); const beforeApp = await hands.getCurrentApp();
+    // Проверка непосредственно перед нажатием: элемент найден в том же приложении, что и сейчас на экране.
+    if (beforeApp !== pinned) return movedFrom(pinned);
     const centerX = element.bounds.x + element.bounds.width / 2; const centerY = element.bounds.y + element.bounds.height / 2;
     const tapResult = await hands.tap(centerX, centerY);
     if (!tapResult.success) return { success: false, error: tapResult.error || 'Tap failed' };
@@ -87,9 +96,14 @@ export const typeTextTool: Tool = {
   inputSchema: { type: 'object', properties: { text: { type: 'string', description: 'Text to type' }, clearFirst: { type: 'boolean', description: 'Clear field before typing' } }, required: ['text'] },
   async execute(params: { text: string; clearFirst?: boolean }): Promise<ToolResult> {
     await requireHands(); const hands = handsManager.getHands(); if (!hands) return { success: false, error: 'Hands not available' };
-    if (params.clearFirst) { const clear = await hands.clearText(); if (!clear.success) return { success: false, error: clear.error || 'Failed to clear text' }; }
+    const pinned = await pinApp(hands); if (!pinned) return UNKNOWN_APP;
+    if (params.clearFirst) {
+      if (!(await stillIn(hands, pinned))) return movedFrom(pinned);
+      const clear = await hands.clearText(); if (!clear.success) return { success: false, error: clear.error || 'Failed to clear text' };
+    }
+    if (!(await stillIn(hands, pinned))) return movedFrom(pinned);
     const result = await hands.type(params.text); if (!result.success) return { success: false, error: result.error || 'Failed to type text' };
-    return { success: true, data: { typed: params.text, length: params.text.length, timestamp: Date.now() } };
+    return { success: true, data: { typed: params.text, length: params.text.length, app: pinned, timestamp: Date.now() } };
   },
   async verify(params, result) {
     if (!result.success) return false; const hands = handsManager.getHands(); if (!hands) return false;
@@ -101,9 +115,8 @@ export const typeTextTool: Tool = {
 };
 
 /**
- * Снимок экрана — только через защищённый мост Svetlana-home (HTTP v2): телефон сам применяет
- * политику приватности (банки и пароли не снимаются, поля паролей закрашиваются).
- * Отладочный WebSocket-путь сырые снимки не отдаёт.
+ * Снимок экрана — только через защищённый мост Svetlana-home (HTTP v2). Сейчас телефон снимки по мосту
+ * не отдаёт — инструмент честно сообщает об этом. Отладочный WebSocket-путь сырые снимки не отдаёт.
  */
 export const captureScreenTool: Tool = {
   id: 'capture_screen', name: 'Capture Screen', description: 'Take a screenshot of the current screen', category: 'system', riskLevel: 'medium', inputSchema: { type: 'object', properties: {} },
@@ -117,16 +130,12 @@ export const captureScreenTool: Tool = {
   async verify(_params, result) { return !!result.success && !!result.data?.image; }, async isAvailable() { return await handsManager.isConnected(); },
 };
 
-/**
- * Отправка сообщения. Перед КАЖДЫМ шагом (выбор контакта, ввод, «Отправить») проверяем,
- * что на экране всё ещё выбранный мессенджер: оверлей или переключение приложения останавливает цепочку.
- */
 export const sendMessageTool: Tool = {
   id: 'send_message', name: 'Send Message', description: 'Send a message via a messaging app (requires confirmation)', category: 'communication', riskLevel: 'high',
   inputSchema: { type: 'object', properties: { app: { type: 'string', description: 'Messaging app package name', enum: ['org.telegram.messenger', 'com.whatsapp', 'com.viber.voip'] }, contact: { type: 'string', description: 'Contact name or phone number' }, message: { type: 'string', description: 'Message text to send' } }, required: ['app', 'contact', 'message'] },
   async execute(params: { app: string; contact: string; message: string }): Promise<ToolResult> {
     await requireHands(); const hands = handsManager.getHands(); if (!hands) return { success: false, error: 'Hands not available' };
-    const moved = () => ({ success: false, error: `Another app is on screen instead of ${params.app}. Stopped for safety.` });
+    const moved = () => movedFrom(params.app);
     const launch = await hands.launchApp(params.app); if (!launch.success) return { success: false, error: `Failed to launch ${params.app}` };
     await new Promise(r => setTimeout(r, 2000));
     if (!(await stillIn(hands, params.app))) return moved();
@@ -154,7 +163,7 @@ export const goHomeTool: Tool = { id:'go_home', name:'Go Home', description:'Nav
 
 export const goBackTool: Tool = { id:'go_back', name:'Go Back', description:'Navigate back', category:'navigation', riskLevel:'low', inputSchema:{type:'object',properties:{}}, async execute(){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const beforeApp=await h.getCurrentApp();const r=await h.goBack();if(!r.success)return{success:false,error:r.error||'Back navigation failed'};await new Promise(res=>setTimeout(res,300));const afterApp=await h.getCurrentApp();const navigated=beforeApp!==afterApp;return navigated?{success:true,data:{navigated,beforeApp,afterApp}}:{success:false,error:`Verification failed: back navigation did not change app (${beforeApp})`,data:{navigated:false,beforeApp,afterApp}};},async verify(_p,r){return !!r.success&&r.data?.navigated===true&&r.data?.beforeApp!==r.data?.afterApp},async isAvailable(){return await handsManager.isConnected();}};
 
-export const searchWebTool: Tool = { id:'search_web', name:'Search Web', description:'Search the web using default browser', category:'data', riskLevel:'low', inputSchema:{type:'object',properties:{query:{type:'string',description:'Search query'}},required:['query']}, async execute(p){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const url=`https://www.google.com/search?q=${encodeURIComponent(p.query)}`;const l=await h.launchApp('com.android.chrome');if(!l.success)return{success:false,error:'Failed to open browser'};await new Promise(r=>setTimeout(r,1000));const t=await h.type(url);if(!t.success)return{success:false,error:'Failed to type search query'};const e=await h.pressKey('enter');return e.success?{success:true,data:{query:p.query,url,browser:'com.android.chrome'}}:{success:false,error:'Failed to submit search'};},async verify(_p,r){return r.success},async isAvailable(){return await handsManager.isConnected();}};
+export const searchWebTool: Tool = { id:'search_web', name:'Search Web', description:'Search the web using default browser', category:'data', riskLevel:'low', inputSchema:{type:'object',properties:{query:{type:'string',description:'Search query'}},required:['query']}, async execute(p){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const url=`https://www.google.com/search?q=${encodeURIComponent(p.query)}`;const l=await h.launchApp('com.android.chrome');if(!l.success)return{success:false,error:'Failed to open browser'};await new Promise(r=>setTimeout(r,1000));if(!(await stillIn(h,'com.android.chrome')))return movedFrom('com.android.chrome');const t=await h.type(url);if(!t.success)return{success:false,error:'Failed to type search query'};const e=await h.pressKey('enter');return e.success?{success:true,data:{query:p.query,url,browser:'com.android.chrome'}}:{success:false,error:'Failed to submit search'};},async verify(_p,r){return r.success},async isAvailable(){return await handsManager.isConnected();}};
 
 import { toolRegistry } from './ToolRegistry';
 export function registerRealTools(){[openAppTool,readContactsTool,tapElementTool,typeTextTool,captureScreenTool,sendMessageTool,swipeTool,pressKeyTool,goHomeTool,goBackTool,searchWebTool].forEach(t=>toolRegistry.registerTool(t));}

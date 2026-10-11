@@ -1,4 +1,6 @@
 // Memory Module - Short-term and long-term memory with RAG-like retrieval
+// Безопасность: секреты (ключи, токены, пароли, коды из SMS, карты) вырезаются УЖЕ ПРИ ЗАПИСИ в память,
+// поэтому их нет ни в оперативной памяти, ни в истории, ни на диске. Телефоны сохраняются.
 import { safeJsonParse, stripControl, MAX_BYTES } from './security/SafeData';
 import { redactSecrets, redactDeep } from './security/Redact';
 
@@ -27,7 +29,6 @@ export const MESSAGE_TTL_MS = 7 * DAY;
 export const EPISODIC_TTL_MS = 30 * DAY;
 const num = (v: unknown, def: number, min: number, max: number): number => (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : def);
 
-/** Память из localStorage считается недоверенной: собираем запись поле за полем, мусор отбрасываем. */
 function toMemoryItem(v: unknown): MemoryItem | undefined {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
   const r = v as Record<string, unknown>;
@@ -52,12 +53,11 @@ function toMessage(v: unknown): ConversationContext['messages'][number] | undefi
   return { role: r.role as string, content: stripControl(r.content).slice(0, 20_000), timestamp: num(r.timestamp, Date.now(), 0, 4_102_444_800_000) };
 }
 
-/** Протухла ли запись: предпочтения и факты храним, разговоры и действия — 30 дней. */
 export function isExpired(item: Pick<MemoryItem, 'type' | 'timestamp'>, now = Date.now()): boolean {
   return (item.type === 'conversation' || item.type === 'action') && now - item.timestamp > EPISODIC_TTL_MS;
 }
 
-/** Запись в том виде, в котором она ложится на диск: без секретов. */
+/** Запись без секретов (и для памяти, и для диска). */
 export function persistable(item: MemoryItem): MemoryItem {
   return { ...item, content: redactSecrets(item.content), metadata: item.metadata ? redactDeep(item.metadata) : undefined };
 }
@@ -85,15 +85,16 @@ class Memory {
       if (Array.isArray(data.longTerm)) {
         for (const pair of data.longTerm.slice(0, 5000)) {
           const item = Array.isArray(pair) ? toMemoryItem(pair[1]) : undefined;
-          if (item && !isExpired(item, now)) this.longTermMemory.set(item.id, item);
+          if (item && !isExpired(item, now)) this.longTermMemory.set(item.id, persistable(item));
         }
       }
       const ctx = data.conversationContext as { messages?: unknown; currentTopic?: unknown; userMood?: unknown } | undefined;
       if (ctx && typeof ctx === 'object' && Array.isArray(ctx.messages)) {
         this.conversationContext = {
           messages: ctx.messages.slice(-20).map(toMessage)
-            .filter((m): m is ConversationContext['messages'][number] => !!m && now - m.timestamp <= MESSAGE_TTL_MS),
-          currentTopic: typeof ctx.currentTopic === 'string' ? stripControl(ctx.currentTopic).slice(0, 200) : undefined,
+            .filter((m): m is ConversationContext['messages'][number] => !!m && now - m.timestamp <= MESSAGE_TTL_MS)
+            .map(m => ({ ...m, content: redactSecrets(m.content) })),
+          currentTopic: typeof ctx.currentTopic === 'string' ? redactSecrets(stripControl(ctx.currentTopic).slice(0, 200)) : undefined,
           userMood: typeof ctx.userMood === 'string' ? stripControl(ctx.userMood).slice(0, 50) : undefined,
         };
       }
@@ -127,19 +128,17 @@ class Memory {
     }
   }
 
-  // Short-term memory (working memory)
   addToShortTerm(item: Omit<MemoryItem, 'id' | 'timestamp' | 'accessCount' | 'lastAccessed'>) {
-    const memoryItem: MemoryItem = {
+    const memoryItem: MemoryItem = persistable({
       ...item,
       id: `stm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       timestamp: Date.now(),
       accessCount: 0,
       lastAccessed: Date.now(),
-    };
+    });
 
     this.shortTermMemory.push(memoryItem);
 
-    // Maintain limit
     if (this.shortTermMemory.length > this.SHORT_TERM_LIMIT) {
       this.shortTermMemory.shift();
     }
@@ -155,15 +154,14 @@ class Memory {
     this.shortTermMemory = [];
   }
 
-  // Long-term memory
   addToLongTerm(item: Omit<MemoryItem, 'id' | 'timestamp' | 'accessCount' | 'lastAccessed'>) {
-    const memoryItem: MemoryItem = {
+    const memoryItem: MemoryItem = persistable({
       ...item,
       id: `ltm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       timestamp: Date.now(),
       accessCount: 0,
       lastAccessed: Date.now(),
-    };
+    });
 
     this.longTermMemory.set(memoryItem.id, memoryItem);
     this.saveToStorage();
@@ -190,52 +188,43 @@ class Memory {
     this.saveToStorage();
   }
 
-  // RAG-like retrieval
   retrieve(query: string, limit: number = 5): MemoryItem[] {
     const queryLower = query.toLowerCase();
     const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
 
-    // Score all memories
     const scored = Array.from(this.longTermMemory.values()).map(item => {
       let score = 0;
       const contentLower = item.content.toLowerCase();
 
-      // Keyword matching
       for (const word of queryWords) {
         if (contentLower.includes(word)) {
           score += 10;
         }
       }
 
-      // Recency bonus
       const ageHours = (Date.now() - item.timestamp) / (1000 * 60 * 60);
-      score += Math.max(0, 5 - ageHours / 24); // Decay over 5 days
+      score += Math.max(0, 5 - ageHours / 24);
 
-      // Importance bonus
       score += item.importance * 5;
 
-      // Access frequency bonus
       score += Math.min(item.accessCount, 5);
 
       return { item, score };
     });
 
-    // Sort by score and return top N
     return scored
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
       .map(s => s.item);
   }
 
-  // Conversation context
   addMessage(role: string, content: string) {
     this.conversationContext.messages.push({
       role,
-      content,
+      content: redactSecrets(content),
       timestamp: Date.now(),
     });
 
-    // Keep last 20 messages
     if (this.conversationContext.messages.length > 20) {
       this.conversationContext.messages.shift();
     }
@@ -248,7 +237,10 @@ class Memory {
   }
 
   setConversationContext(context: Partial<ConversationContext>) {
-    Object.assign(this.conversationContext, context);
+    const clean: Partial<ConversationContext> = { ...context };
+    if (context.messages) clean.messages = context.messages.map(m => ({ ...m, content: redactSecrets(m.content) }));
+    if (context.currentTopic !== undefined) clean.currentTopic = redactSecrets(context.currentTopic);
+    Object.assign(this.conversationContext, clean);
     this.saveToStorage();
   }
 
@@ -261,7 +253,6 @@ class Memory {
     this.saveToStorage();
   }
 
-  // Statistics
   getStats() {
     return {
       shortTermCount: this.shortTermMemory.length,
@@ -270,7 +261,6 @@ class Memory {
     };
   }
 
-  // Clear all memory
   clearAll() {
     this.shortTermMemory = [];
     this.longTermMemory.clear();
