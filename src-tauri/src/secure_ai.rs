@@ -6,17 +6,18 @@
 //! с ограничением размера и времени.
 //!
 //! Защита от чужого скрипта на странице:
-//! - любое изменение или удаление ключа подтверждается в НАТИВНОМ окне Windows — скрипт
-//!   не может нажать его за пользователя;
-//! - запросы в облако идут только по разрешению из такого же окна, привязанному к провайдеру
-//!   И модели: не дольше 15 минут и не больше 30 запросов, потом спрашиваем снова;
+//! - любое изменение или удаление ключа подтверждается в НАТИВНОМ окне Windows;
+//! - запросы в облако идут только по разрешению из такого же окна. Разрешение привязано к
+//!   провайдеру, модели И разговору (первому сообщению пользователя в запросе — оно показано
+//!   в окне), действует не дольше 15 минут и не больше 30 запросов. Другой разговор = новый вопрос;
 //!   смена или удаление ключа отзывает все разрешения;
-//! - только известные провайдеры и строгая рекурсивная схема тела запроса (роли, текст, модель,
-//!   параметры; никаких tools/stream/лишних полей);
+//! - только известные провайдеры и строгая рекурсивная схема тела запроса;
 //! - лимит частоты запросов и изменений ключей.
 
 use serde_json::{Map, Value};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
@@ -31,17 +32,22 @@ const MAX_TEXT: usize = 200_000;
 const PROVIDERS: [&str; 7] = ["openai", "groq", "openrouter", "deepseek", "mistral", "anthropic", "google"];
 const CHAT_PER_MINUTE: usize = 30;
 const SECRET_WRITES_PER_MINUTE: usize = 10;
-/// Сколько действует разрешение на запросы к облачному ИИ (провайдер + модель).
 const CONSENT_TTL: Duration = Duration::from_secs(15 * 60);
-/// И на сколько запросов оно рассчитано.
 const CONSENT_MAX_USES: u32 = 30;
+
+/// Разрешение из нативного окна.
+struct Consent {
+    provider: String,
+    model: String,
+    conversation: u64,
+    at: Instant,
+    uses: u32,
+}
 
 static CHAT_CALLS: Mutex<VecDeque<Instant>> = Mutex::new(VecDeque::new());
 static SECRET_WRITES: Mutex<VecDeque<Instant>> = Mutex::new(VecDeque::new());
-/// Разрешения из нативного окна: (провайдер, модель, когда выдано, сколько раз использовано).
-static CONSENTS: Mutex<Vec<(String, String, Instant, u32)>> = Mutex::new(Vec::new());
+static CONSENTS: Mutex<Vec<Consent>> = Mutex::new(Vec::new());
 
-/// Скользящее окно: не больше `max` событий за минуту.
 fn rate_ok(m: &Mutex<VecDeque<Instant>>, max: usize) -> bool {
     let mut q = m.lock().unwrap_or_else(|e| e.into_inner());
     let now = Instant::now();
@@ -59,25 +65,44 @@ fn rate_ok(m: &Mutex<VecDeque<Instant>>, max: usize) -> bool {
     true
 }
 
-/// Есть ли свежее и не исчерпанное разрешение именно для этого провайдера и модели.
-/// Каждый успешный вызов расходует одно использование.
-fn has_consent(list: &mut Vec<(String, String, Instant, u32)>, provider: &str, model: &str, now: Instant) -> bool {
-    list.retain(|(_, _, at, uses)| now.duration_since(*at) <= CONSENT_TTL && *uses < CONSENT_MAX_USES);
-    match list.iter_mut().find(|(p, m, _, _)| p == provider && m == model) {
+/// Разговор запроса: отпечаток и начало первого сообщения пользователя (для окна подтверждения).
+fn conversation_of(provider: &str, body: &Value) -> (u64, String) {
+    let list_key = if provider == "google" { "contents" } else { "messages" };
+    let first = body
+        .get(list_key)
+        .and_then(|v| v.as_array())
+        .and_then(|l| l.iter().find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user")));
+    let text = first
+        .and_then(|m| {
+            if provider == "google" {
+                m.get("parts").and_then(|p| p.as_array()).and_then(|p| p.first()).and_then(|p| p.get("text")).and_then(|t| t.as_str())
+            } else {
+                m.get("content").and_then(|c| c.as_str())
+            }
+        })
+        .unwrap_or("");
+    let mut h = DefaultHasher::new();
+    text.hash(&mut h);
+    let preview: String = text.chars().filter(|c| !c.is_control()).take(80).collect();
+    (h.finish(), preview)
+}
+
+/// Есть ли свежее и не исчерпанное разрешение для этого провайдера, модели и разговора.
+fn has_consent(list: &mut Vec<Consent>, provider: &str, model: &str, conversation: u64, now: Instant) -> bool {
+    list.retain(|c| now.duration_since(c.at) <= CONSENT_TTL && c.uses < CONSENT_MAX_USES);
+    match list.iter_mut().find(|c| c.provider == provider && c.model == model && c.conversation == conversation) {
         Some(c) => {
-            c.3 += 1;
+            c.uses += 1;
             true
         }
         None => false,
     }
 }
 
-/// Смена или удаление ключа отзывает все разрешения этого провайдера.
 fn revoke_consents(provider: &str) {
-    CONSENTS.lock().unwrap_or_else(|e| e.into_inner()).retain(|(p, _, _, _)| p != provider);
+    CONSENTS.lock().unwrap_or_else(|e| e.into_inner()).retain(|c| c.provider != provider);
 }
 
-/// Нативное окно «ОК / Отмена». Вызывается вне главного потока, чтобы не зависнуть.
 async fn confirm(app: &AppHandle, text: String) -> bool {
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -112,8 +137,6 @@ fn has_secret(e: &keyring::Entry) -> Result<bool, String> {
     }
 }
 
-/// Сохранить ключ (пустое значение удаляет). Только ai.<известный провайдер>, не чаще 10 раз
-/// в минуту и только после подтверждения в нативном окне Windows.
 #[tauri::command]
 pub async fn secret_set(app: AppHandle, name: String, value: Option<String>) -> Result<(), String> {
     let provider = provider_of_secret(&name).ok_or("Недопустимое имя ключа")?;
@@ -124,7 +147,7 @@ pub async fn secret_set(app: AppHandle, name: String, value: Option<String>) -> 
             return Err("Некорректный ключ".into());
         }
     } else if !has_secret(&e)? {
-        return Ok(()); // удалять нечего — не беспокоим пользователя
+        return Ok(());
     }
     if !rate_ok(&SECRET_WRITES, SECRET_WRITES_PER_MINUTE) {
         return Err("Слишком частое изменение ключей, подождите минуту".into());
@@ -147,13 +170,11 @@ pub async fn secret_set(app: AppHandle, name: String, value: Option<String>) -> 
     }
 }
 
-/// Есть ли ключ. Сам ключ наружу не выдаётся.
 #[tauri::command]
 pub fn secret_has(name: String) -> Result<bool, String> {
     has_secret(&entry(&name)?)
 }
 
-/// Имя модели. Для Google оно вставляется в адрес, поэтому там запрещены `/`, `:` и `..`.
 fn valid_model(provider: &str, m: &str) -> bool {
     if m.is_empty() || m.len() > 100 {
         return false;
@@ -185,7 +206,6 @@ fn check_number(o: &Map<String, Value>, key: &str, min: f64, max: f64) -> Result
     }
 }
 
-/// Части сообщения Google: только текст.
 fn check_parts(v: Option<&Value>) -> Result<(), String> {
     let parts = v.and_then(|p| p.as_array()).ok_or("Нет частей сообщения")?;
     if parts.is_empty() || parts.len() > 20 {
@@ -223,7 +243,6 @@ fn check_message(provider: &str, m: &Value) -> Result<(), String> {
     Ok(())
 }
 
-/// Строгая рекурсивная проверка тела запроса: обычный чат, без инструментов и потоков.
 fn validate_body(provider: &str, model: &str, body: &Value) -> Result<(), String> {
     let obj = body.as_object().ok_or("Тело запроса должно быть объектом")?;
     if !valid_model(provider, model) {
@@ -274,7 +293,6 @@ fn validate_body(provider: &str, model: &str, body: &Value) -> Result<(), String
     Ok(())
 }
 
-/// Запрос к облачному ИИ: адрес фиксирован по провайдеру, ключ подставляется здесь.
 #[tauri::command]
 pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, body: Value) -> Result<String, String> {
     let provider_id = PROVIDERS.iter().copied().find(|p| *p == provider).ok_or("Этот облачный сервис не поддерживается")?;
@@ -282,15 +300,22 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, body
     if !rate_ok(&CHAT_CALLS, CHAT_PER_MINUTE) {
         return Err("Слишком много запросов к облачному ИИ, подождите минуту".into());
     }
-    let allowed = has_consent(&mut CONSENTS.lock().unwrap_or_else(|e| e.into_inner()), provider_id, &model, Instant::now());
+    let (conversation, preview) = conversation_of(provider_id, &body);
+    let allowed = has_consent(&mut CONSENTS.lock().unwrap_or_else(|e| e.into_inner()), provider_id, &model, conversation, Instant::now());
     if !allowed {
         let question = format!(
-            "Разрешить Светлане отправлять переписку в облачный ИИ «{provider_id}», модель {model}? Разрешение действует 15 минут и не больше {CONSENT_MAX_USES} запросов."
+            "Разрешить Светлане отправить переписку в облачный ИИ «{provider_id}», модель {model}?\nРазговор: «{preview}»\nРазрешение действует только для этого разговора: 15 минут и не больше {CONSENT_MAX_USES} запросов."
         );
         if !confirm(&app, question).await {
             return Err("Отменено пользователем".into());
         }
-        CONSENTS.lock().unwrap_or_else(|e| e.into_inner()).push((provider_id.to_string(), model.clone(), Instant::now(), 1));
+        CONSENTS.lock().unwrap_or_else(|e| e.into_inner()).push(Consent {
+            provider: provider_id.to_string(),
+            model: model.clone(),
+            conversation,
+            at: Instant::now(),
+            uses: 1,
+        });
     }
     let key = match entry(&format!("ai.{provider_id}"))?.get_password() {
         Ok(k) => k,
@@ -345,6 +370,10 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn consent(p: &str, m: &str, conv: u64, at: Instant) -> Consent {
+        Consent { provider: p.to_string(), model: m.to_string(), conversation: conv, at, uses: 1 }
+    }
+
     #[test]
     fn only_known_provider_secrets() {
         assert_eq!(provider_of_secret("ai.openai"), Some("openai"));
@@ -353,24 +382,38 @@ mod tests {
     }
 
     #[test]
-    fn consent_is_bound_to_provider_model_and_expires() {
+    fn consent_is_bound_to_provider_model_conversation_and_expires() {
         let start = Instant::now();
-        let mut list = vec![("openai".to_string(), "gpt-4o".to_string(), start, 1)];
-        assert!(has_consent(&mut list, "openai", "gpt-4o", start));
-        assert!(!has_consent(&mut list, "openai", "gpt-4o-mini", start));
-        assert!(!has_consent(&mut list, "groq", "gpt-4o", start));
-        assert!(!has_consent(&mut list, "openai", "gpt-4o", start + CONSENT_TTL + Duration::from_secs(1)));
+        let mut list = vec![consent("openai", "gpt-4o", 7, start)];
+        assert!(has_consent(&mut list, "openai", "gpt-4o", 7, start));
+        assert!(!has_consent(&mut list, "openai", "gpt-4o", 8, start));
+        assert!(!has_consent(&mut list, "openai", "gpt-4o-mini", 7, start));
+        assert!(!has_consent(&mut list, "groq", "gpt-4o", 7, start));
+        assert!(!has_consent(&mut list, "openai", "gpt-4o", 7, start + CONSENT_TTL + Duration::from_secs(1)));
         assert!(list.is_empty());
     }
 
     #[test]
     fn consent_runs_out_after_max_uses() {
         let start = Instant::now();
-        let mut list = vec![("openai".to_string(), "gpt-4o".to_string(), start, 1)];
+        let mut list = vec![consent("openai", "gpt-4o", 1, start)];
         for _ in 1..CONSENT_MAX_USES {
-            assert!(has_consent(&mut list, "openai", "gpt-4o", start));
+            assert!(has_consent(&mut list, "openai", "gpt-4o", 1, start));
         }
-        assert!(!has_consent(&mut list, "openai", "gpt-4o", start));
+        assert!(!has_consent(&mut list, "openai", "gpt-4o", 1, start));
+    }
+
+    #[test]
+    fn conversation_is_the_first_user_message() {
+        let a = json!({"model": "m", "messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "привет"}, {"role": "user", "content": "ещё"}]});
+        let b = json!({"model": "m", "messages": [{"role": "system", "content": "other"}, {"role": "user", "content": "привет"}]});
+        let c = json!({"model": "m", "messages": [{"role": "user", "content": "другой"}]});
+        let (ha, pa) = conversation_of("openai", &a);
+        assert_eq!(pa, "привет");
+        assert_eq!(ha, conversation_of("openai", &b).0);
+        assert_ne!(ha, conversation_of("openai", &c).0);
+        let g = json!({"contents": [{"role": "user", "parts": [{"text": "привет"}]}]});
+        assert_eq!(conversation_of("google", &g).1, "привет");
     }
 
     #[test]

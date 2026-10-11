@@ -8,10 +8,11 @@ import { safeJsonParse, stripControl } from './security/SafeData';
 
 const MAX_REPLY_BYTES = 20 * 1024 * 1024;
 const ROUTE_RE = /^[a-z]+\/[A-Za-z]+$/;
+/** Честный отказ: у телефона пока нет защищённого маршрута для снимков экрана. */
+export const SCREEN_CAPTURE_UNSUPPORTED = 'Снимок экрана через мост пока не поддерживается телефоном: сделайте скриншот в Светлане на телефоне.';
 
 interface RawReply { status: number; text: string }
 
-/** JSON без исключений: null, если ответ не JSON или слишком большой. */
 function parseJson(text: string, max: number): unknown {
   try { return safeJsonParse(text, max); } catch { return null; }
 }
@@ -25,7 +26,6 @@ export class HTTPHands implements PlatformHands {
     this.config = { ...config, endpoint: validateBridgeEndpoint(config.endpoint) };
   }
 
-  /** Запрос без кук, без переходов на другие адреса, без кеша; ответ ограничен по размеру. */
   private async raw(url: string, init: RequestInit): Promise<RawReply> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.config.timeout || 10000);
@@ -42,7 +42,6 @@ export class HTTPHands implements PlatformHands {
     }
   }
 
-  /** Проверка связи и получение соли; общий ключ выводится из кода подключения локально. */
   private async handshake(): Promise<void> {
     const r = await this.raw(`${this.config.endpoint}/health`, { method: 'GET' });
     if (r.status !== 200) throw new Error('Health check failed');
@@ -58,7 +57,6 @@ export class HTTPHands implements PlatformHands {
     try {
       await this.handshake();
       this.connected = true;
-      // Сразу проверяем код, чтобы интерфейс сообщил о неверном коде.
       await this.sendRequest('device/info');
     } catch (error) {
       this.connected = false;
@@ -92,19 +90,16 @@ export class HTTPHands implements PlatformHands {
 
     const outer = parseJson(r.text, MAX_REPLY_BYTES) as Record<string, unknown> | null;
     if (outer && outer.v === BRIDGE_PROTOCOL && typeof outer.ct === 'string') {
-      // Зашифрованный ответ: доверяем только после проверки подлинности.
       const inner = parseJson(await openResponse(key, method, nonce, r.text), MAX_REPLY_BYTES) as Record<string, any> | null;
       if (!inner || typeof inner !== 'object') throw new Error(BAD_REPLY);
       if (inner.success === false) throw new Error(stripControl(String(inner.message ?? inner.error ?? `HTTP ${r.status}`)).slice(0, 300));
       return inner.data ?? inner;
     }
 
-    // Открытый ответ бывает только у ошибок до проверки кода. Успех без шифрования не принимаем.
     if (r.status === 200) throw new Error(BAD_REPLY);
     const code = typeof outer?.error === 'string' ? outer.error : '';
     const message = stripControl(String(outer?.message ?? `HTTP ${r.status}`)).slice(0, 300);
     if (code === 'UNAUTHORIZED' && !retried) {
-      // Телефон мог перезапуститься и сменить соль: обновляем ключ и пробуем один раз.
       await this.handshake();
       return this.sendRequest(method, params, true);
     }
@@ -113,17 +108,14 @@ export class HTTPHands implements PlatformHands {
     throw new Error(message);
   }
 
-  // Device info
   async getDeviceInfo(): Promise<DeviceInfo> {
     return await this.sendRequest('device/info');
   }
 
-  // Contacts (Svetlana-home bridge)
   async listContacts(options: { query?: string; limit?: number; offset?: number } = {}): Promise<ContactsPage> {
     return await this.sendRequest('contacts/list', options);
   }
 
-  // App control
   async launchApp(packageName: string): Promise<ActionResult> {
     return await this.sendRequest('app/launch', { packageName });
   }
@@ -137,7 +129,6 @@ export class HTTPHands implements PlatformHands {
     return result.packageName || null;
   }
 
-  // UI interaction
   async tap(x: number, y: number): Promise<ActionResult> {
     return await this.sendRequest('ui/tap', { x, y });
   }
@@ -165,7 +156,6 @@ export class HTTPHands implements PlatformHands {
     return await this.sendRequest('ui/swipe', { startX, startY, endX, endY, duration });
   }
 
-  // Text input
   async type(text: string): Promise<ActionResult> {
     return await this.sendRequest('input/type', { text });
   }
@@ -174,17 +164,18 @@ export class HTTPHands implements PlatformHands {
     return await this.sendRequest('input/clear');
   }
 
-  // Keys
   async pressKey(key: string): Promise<ActionResult> {
     return await this.sendRequest('input/key', { key });
   }
 
-  // Screen capture
+  /**
+   * Снимок экрана. У Svetlana-home пока нет защищённого маршрута screen/capture (снимки делаются
+   * только на самом телефоне по его политике приватности), поэтому запрос не отправляется.
+   */
   async captureScreen(): Promise<ScreenCapture> {
-    return await this.sendRequest('screen/capture');
+    throw new Error(SCREEN_CAPTURE_UNSUPPORTED);
   }
 
-  // Accessibility
   async getAccessibilityTree(): Promise<AccessibilityTree> {
     return await this.sendRequest('accessibility/tree');
   }
@@ -197,7 +188,6 @@ export class HTTPHands implements PlatformHands {
     return await this.sendRequest('accessibility/findById', { id });
   }
 
-  // System
   async goHome(): Promise<ActionResult> {
     return await this.sendRequest('system/home');
   }
