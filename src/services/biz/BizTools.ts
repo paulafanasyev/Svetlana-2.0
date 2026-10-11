@@ -152,6 +152,7 @@ export function createBizTools(store: BizStore = bizStore): Tool[] {
       description: 'Mark an invoice as paid (by number or client name) and record the income.',
       inputSchema: { type: 'object', properties: {
         invoice: { type: 'string', description: 'Invoice number or client name' },
+        payMethod: { type: 'string', description: 'transfer, card or cash; affects НПД receipt deadline', enum: ['transfer', 'card', 'cash'] },
       }, required: ['invoice'] },
       async execute(p) {
         const ref = String(p.invoice).trim().toLowerCase().replace(/^№\s*/, '');
@@ -160,7 +161,7 @@ export function createBizTools(store: BizStore = bizStore): Tool[] {
           ?? open.find(d => d.clientName.toLowerCase().includes(ref))
           ?? (() => { const c = findContactFuzzy(p.invoice); return c ? open.find(d => d.contactId === c.id) : undefined; })();
         if (!doc) return fail(`Неоплаченный счёт не найден: ${p.invoice}`);
-        const r = store.markPaid(doc.id);
+        const r = store.markPaid(doc.id, { payMethod: p.payMethod });
         return ok({ number: r.document.number, client: r.document.clientName, total: r.document.total });
       },
       isAvailable: always,
@@ -330,10 +331,10 @@ export function bizSystemPrompt(store: BizStore = bizStore): string {
 ${store.summaryForAI()}
 Действия (тем же форматом [CRM: {"tool": "...", "args": {...}}]):
 - biz_set_profile {"regime": "npd|usn6|usn15|patent|ooo", "region": "...", "birthYear": 1990, "sectors": "tech,services", "flags": "lowIncome,unemployed"}
-- biz_add_income {"amount": 5000, "client": "имя", "description": "за что", "payerType": "person|company"}
+- biz_add_income {"amount": 5000, "client": "имя", "description": "за что", "payerType": "person|company", "payMethod": "transfer|card|cash"}
 - biz_add_expense {"amount": 1000, "description": "..."}
 - biz_create_document {"type": "invoice|act|contract", "client": "имя", "service": "...", "amount": 15000}
-- biz_mark_paid {"invoice": "номер или клиент"}
+- biz_mark_paid {"invoice": "номер или клиент", "payMethod": "transfer|card|cash"}
 - biz_receivables {}
 - biz_tax_summary {}
 - biz_find_support {"kind": "grant|subsidy|loan|...", "query": "..."}
