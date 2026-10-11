@@ -12,40 +12,19 @@ describe('New Tools', () => {
 
   describe('swipe tool', () => {
     it('should execute swipe successfully', async () => {
-      const mockHands = {
-        swipe: vi.fn().mockResolvedValue({ success: true }),
-      };
-
+      const mockHands = { swipe: vi.fn().mockResolvedValue({ success: true }) };
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
-
-      const result = await toolRegistry.executeTool('swipe', {
-        startX: 100,
-        startY: 500,
-        endX: 100,
-        endY: 200,
-        duration: 300,
-      });
-
+      const result = await toolRegistry.executeTool('swipe', { startX: 100, startY: 500, endX: 100, endY: 200, duration: 300 });
       expect(result.success).toBe(true);
       expect(mockHands.swipe).toHaveBeenCalledWith(100, 500, 100, 200, 300);
     });
 
     it('should handle swipe failure', async () => {
-      const mockHands = {
-        swipe: vi.fn().mockResolvedValue({ success: false, error: 'Swipe failed' }),
-      };
-
+      const mockHands = { swipe: vi.fn().mockResolvedValue({ success: false, error: 'Swipe failed' }) };
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
-
-      const result = await toolRegistry.executeTool('swipe', {
-        startX: 100,
-        startY: 500,
-        endX: 100,
-        endY: 200,
-      });
-
+      const result = await toolRegistry.executeTool('swipe', { startX: 100, startY: 500, endX: 100, endY: 200 });
       expect(result.success).toBe(false);
       expect(result.error).toContain('Swipe failed');
     });
@@ -53,29 +32,19 @@ describe('New Tools', () => {
 
   describe('press_key tool', () => {
     it('should execute key press successfully', async () => {
-      const mockHands = {
-        pressKey: vi.fn().mockResolvedValue({ success: true }),
-      };
-
+      const mockHands = { pressKey: vi.fn().mockResolvedValue({ success: true }) };
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
-
       const result = await toolRegistry.executeTool('press_key', { key: 'back' });
-
       expect(result.success).toBe(true);
       expect(mockHands.pressKey).toHaveBeenCalledWith('back');
     });
 
     it('should handle key press failure', async () => {
-      const mockHands = {
-        pressKey: vi.fn().mockResolvedValue({ success: false, error: 'Key press failed' }),
-      };
-
+      const mockHands = { pressKey: vi.fn().mockResolvedValue({ success: false, error: 'Key press failed' }) };
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
-
       const result = await toolRegistry.executeTool('press_key', { key: 'home' });
-
       expect(result.success).toBe(false);
       expect(result.error).toContain('Key press failed');
     });
@@ -83,32 +52,20 @@ describe('New Tools', () => {
 
   describe('go_home tool', () => {
     it('should navigate to home successfully', async () => {
-      const mockHands = {
-        goHome: vi.fn().mockResolvedValue({ success: true }),
-        getCurrentApp: vi.fn().mockResolvedValue('com.android.launcher'),
-      };
-
+      const mockHands = { goHome: vi.fn().mockResolvedValue({ success: true }), getCurrentApp: vi.fn().mockResolvedValue('com.android.launcher') };
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
-
       const result = await toolRegistry.executeTool('go_home', {});
-
       expect(result.success).toBe(true);
       expect(result.data.currentApp).toBe('com.android.launcher');
       expect(mockHands.goHome).toHaveBeenCalled();
     });
 
     it('should handle go_home failure', async () => {
-      const mockHands = {
-        goHome: vi.fn().mockResolvedValue({ success: false, error: 'Failed to go home' }),
-        getCurrentApp: vi.fn().mockResolvedValue(null),
-      };
-
+      const mockHands = { goHome: vi.fn().mockResolvedValue({ success: false, error: 'Failed to go home' }), getCurrentApp: vi.fn().mockResolvedValue(null) };
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
-
       const result = await toolRegistry.executeTool('go_home', {});
-
       expect(result.success).toBe(false);
       expect(result.error).toContain('Failed to go home');
     });
@@ -116,18 +73,10 @@ describe('New Tools', () => {
 
   describe('go_back tool', () => {
     it('should navigate back successfully', async () => {
-      const mockHands = {
-        goBack: vi.fn().mockResolvedValue({ success: true }),
-        getCurrentApp: vi.fn()
-          .mockResolvedValueOnce('com.app.settings')
-          .mockResolvedValueOnce('com.app.home'),
-      };
-
+      const mockHands = { goBack: vi.fn().mockResolvedValue({ success: true }), getCurrentApp: vi.fn().mockResolvedValueOnce('com.app.settings').mockResolvedValueOnce('com.app.home') };
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
-
       const result = await toolRegistry.executeTool('go_back', {});
-
       expect(result.success).toBe(true);
       expect(result.data.beforeApp).toBe('com.app.settings');
       expect(result.data.afterApp).toBe('com.app.home');
@@ -136,16 +85,10 @@ describe('New Tools', () => {
     });
 
     it('should handle go_back failure', async () => {
-      const mockHands = {
-        goBack: vi.fn().mockResolvedValue({ success: false, error: 'Failed to go back' }),
-        getCurrentApp: vi.fn().mockResolvedValue(null),
-      };
-
+      const mockHands = { goBack: vi.fn().mockResolvedValue({ success: false, error: 'Failed to go back' }), getCurrentApp: vi.fn().mockResolvedValue(null) };
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
-
       const result = await toolRegistry.executeTool('go_back', {});
-
       expect(result.success).toBe(false);
       expect(result.error).toContain('Failed to go back');
     });
@@ -155,15 +98,13 @@ describe('New Tools', () => {
     it('should execute web search successfully', async () => {
       const mockHands = {
         launchApp: vi.fn().mockResolvedValue({ success: true }),
+        getCurrentApp: vi.fn().mockResolvedValue('com.android.chrome'),
         type: vi.fn().mockResolvedValue({ success: true }),
         pressKey: vi.fn().mockResolvedValue({ success: true }),
       };
-
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
-
       const result = await toolRegistry.executeTool('search_web', { query: 'test query' });
-
       expect(result.success).toBe(true);
       expect(result.data.query).toBe('test query');
       expect(mockHands.launchApp).toHaveBeenCalled();
@@ -171,16 +112,25 @@ describe('New Tools', () => {
       expect(mockHands.pressKey).toHaveBeenCalledWith('enter');
     });
 
-    it('should handle browser launch failure', async () => {
+    it('does not type the query when the browser is not on screen', async () => {
       const mockHands = {
-        launchApp: vi.fn().mockResolvedValue({ success: false, error: 'Failed to open browser' }),
+        launchApp: vi.fn().mockResolvedValue({ success: true }),
+        getCurrentApp: vi.fn().mockResolvedValue('com.evil.overlay'),
+        type: vi.fn().mockResolvedValue({ success: true }),
+        pressKey: vi.fn().mockResolvedValue({ success: true }),
       };
-
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
-
       const result = await toolRegistry.executeTool('search_web', { query: 'test' });
+      expect(result.success).toBe(false);
+      expect(mockHands.type).not.toHaveBeenCalled();
+    });
 
+    it('should handle browser launch failure', async () => {
+      const mockHands = { launchApp: vi.fn().mockResolvedValue({ success: false, error: 'Failed to open browser' }) };
+      vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
+      vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
+      const result = await toolRegistry.executeTool('search_web', { query: 'test' });
       expect(result.success).toBe(false);
       expect(result.error).toContain('Failed to open browser');
     });
@@ -188,42 +138,20 @@ describe('New Tools', () => {
 
   describe('Tool registration', () => {
     it('should register all new tools', () => {
-      const tools = toolRegistry.getAllTools();
-      const toolIds = tools.map(t => t.id);
-
-      expect(toolIds).toContain('swipe');
-      expect(toolIds).toContain('press_key');
-      expect(toolIds).toContain('go_home');
-      expect(toolIds).toContain('go_back');
-      expect(toolIds).toContain('search_web');
+      const toolIds = toolRegistry.getAllTools().map(t => t.id);
+      for (const id of ['swipe', 'press_key', 'go_home', 'go_back', 'search_web']) expect(toolIds).toContain(id);
     });
 
     it('should have correct risk levels', () => {
-      const swipe = toolRegistry.getTool('swipe');
-      const pressKey = toolRegistry.getTool('press_key');
-      const goHome = toolRegistry.getTool('go_home');
-      const goBack = toolRegistry.getTool('go_back');
-      const searchWeb = toolRegistry.getTool('search_web');
-
-      expect(swipe?.riskLevel).toBe('low');
-      expect(pressKey?.riskLevel).toBe('low');
-      expect(goHome?.riskLevel).toBe('low');
-      expect(goBack?.riskLevel).toBe('low');
-      expect(searchWeb?.riskLevel).toBe('low');
+      for (const id of ['swipe', 'press_key', 'go_home', 'go_back', 'search_web']) expect(toolRegistry.getTool(id)?.riskLevel).toBe('low');
     });
 
     it('should have correct categories', () => {
-      const swipe = toolRegistry.getTool('swipe');
-      const pressKey = toolRegistry.getTool('press_key');
-      const goHome = toolRegistry.getTool('go_home');
-      const goBack = toolRegistry.getTool('go_back');
-      const searchWeb = toolRegistry.getTool('search_web');
-
-      expect(swipe?.category).toBe('interaction');
-      expect(pressKey?.category).toBe('interaction');
-      expect(goHome?.category).toBe('navigation');
-      expect(goBack?.category).toBe('navigation');
-      expect(searchWeb?.category).toBe('data');
+      expect(toolRegistry.getTool('swipe')?.category).toBe('interaction');
+      expect(toolRegistry.getTool('press_key')?.category).toBe('interaction');
+      expect(toolRegistry.getTool('go_home')?.category).toBe('navigation');
+      expect(toolRegistry.getTool('go_back')?.category).toBe('navigation');
+      expect(toolRegistry.getTool('search_web')?.category).toBe('data');
     });
   });
 });
