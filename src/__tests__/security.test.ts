@@ -1,7 +1,7 @@
 // Безопасность: шлюз подтверждений для действий модели/голоса, безопасный JSON/CSV/ICS, импорт резервных копий.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { authorizeAction, needsConfirmation, setActionConfirmer, resetActionGate, summarizeAction } from '../services/security/ActionGate';
-import { safeJsonParse, csvSafe, sanitizeArgs, stripControl, assertFileSize } from '../services/security/SafeData';
+import { safeJsonParse, csvSafe, csvUnescape, sanitizeArgs, stripControl, assertFileSize } from '../services/security/SafeData';
 import { parseCRMActions, runCRMActions } from '../services/crm/CRMTools';
 import { BizStore } from '../services/biz/BizStore';
 import { renderDocumentHTML } from '../services/biz/DocTemplates';
@@ -60,6 +60,9 @@ describe('safe data', () => {
   it('neutralizes spreadsheet formulas, including leading whitespace and +/- tricks', () => {
     for (const bad of ['=1+1', '+1+1', '-1+1', '@SUM(A1)', ' =cmd()', '\t=1', '\uFF1D1']) expect(csvSafe(bad).replace(/^"/, '').startsWith("'")).toBe(true);
     expect(csvSafe('Иванов')).toBe('Иванов');
+    expect(csvSafe('+7 900 000-00-01')).toBe('+7 900 000-00-01');
+    expect(csvUnescape("'=1+1")).toBe('=1+1');
+    expect(csvUnescape("'Иван")).toBe("'Иван");
     expect(csvSafe('a;b', ';')).toBe('"a;b"');
   });
   it('cleans tool arguments and control characters', () => {

@@ -52,14 +52,23 @@ export function stripControl(s: unknown, keepNewlines = true): string {
   return keepNewlines ? str : str.replace(/[\r\n\t]+/g, ' ');
 }
 
+// Номер телефона вида «+7 900 000-00-01»: только цифры, пробелы, скобки, точки и дефисы.
+// Такая строка не может вызвать функцию таблицы, поэтому не портим её апострофом.
+const PLAIN_PHONE = /^\+?\d[\d\s().\-]{5,}$/;
+
 /**
  * Ячейка CSV, безопасная для Excel/LibreOffice/Google Sheets: если первый значимый символ
  * (после пробелов и управляющих) — = + - @ или ячейка начинается с табуляции/CR/LF, добавляем апостроф.
  */
 export function csvSafe(value: unknown, sep = ';'): string {
   const v = String(value ?? '');
-  const risky = /^[\s\u00a0]*[=+\-@\uff1d\uff0b\uff0d\uff20]/.test(v) || /^[\t\r\n]/.test(v);
+  const risky = !PLAIN_PHONE.test(v) && (/^[\s\u00a0]*[=+\-@\uff1d\uff0b\uff0d\uff20]/.test(v) || /^[\t\r\n]/.test(v));
   const safe = risky ? `'${v}` : v;
   const needsQuote = safe.includes('"') || safe.includes(sep) || /[\r\n,]/.test(safe);
   return needsQuote ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+
+/** Обратное к csvSafe: убирает защитный апостроф при импорте нашего же CSV. */
+export function csvUnescape(value: string): string {
+  return /^'[\s\u00a0]*[=+\-@\uff1d\uff0b\uff0d\uff20\t\r\n]/.test(value) ? value.slice(1) : value;
 }
