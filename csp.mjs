@@ -1,5 +1,5 @@
 // Единая политика безопасности контента (CSP) для веб-сборки и Windows (Tauri).
-// Разрешены только нужные адреса: облачные ИИ, распознавание речи, DaData, ФНС, локальные модели и мост с телефоном.
+// Разрешены только нужные адреса: облачные ИИ, распознавание речи, DaData, ФНС, личный кабинет, локальные модели и мост с телефоном.
 // Любой другой адрес (в т.ч. подменённый «свой» сервер ИИ) браузер заблокирует. Картинки — только свои (без внешних ссылок-маячков).
 // Мост с телефоном: только http на порт 8080 (протокол v2 сам шифрует и подписывает каждый запрос).
 // CSP не умеет выразить «только домашняя сеть», поэтому адрес дополнительно проверяет BridgeCrypto.validateBridgeEndpoint
@@ -8,6 +8,8 @@ export const CLOUD_ORIGINS = [
   'https://api.openai.com', 'https://api.anthropic.com', 'https://api.groq.com', 'https://openrouter.ai',
   'https://api.deepseek.com', 'https://generativelanguage.googleapis.com', 'https://api.mistral.ai',
   'https://suggestions.dadata.ru', 'https://statusnpd.nalog.ru',
+  // Личный кабинет «Мир Самозанятых» (мир-самозанятых.рф и резервный API).
+  'https://xn----8sba1acxdkgqms3b9euc.xn--p1ai', 'https://mir-samozanyatykh-api-frankfurt.onrender.com',
 ];
 // Локальные модели (Ollama, LM Studio, llama.cpp, vLLM), Windows MCP на этом ПК и мост Svetlana-home (порт 8080 в домашней сети).
 export const LOCAL_ORIGINS = [

@@ -82,10 +82,29 @@ export async function getSecret(name: string, kv: KV | null = storage()): Promis
 
 export async function deleteSecret(name: string, kv: KV | null = storage()): Promise<void> { await setSecret(name, null, kv); }
 
-/** Удалить все секреты (кнопка «Удалить все данные»). */
-export function clearAllSecrets(kv: KV | null = storage()): void {
+/** Где реально лежат секреты на этом устройстве: зашифрованы на диске или только в памяти. */
+export async function secretStorageMode(): Promise<'encrypted' | 'memory'> {
+  return (await masterKey()) ? 'encrypted' : 'memory';
+}
+
+/**
+ * Удалить все секреты (кнопка «Удалить все данные»): шифротексты из localStorage, копии в памяти
+ * и сам ключ шифрования в IndexedDB. После этого старые шифротексты (например, из резервной копии)
+ * расшифровать уже нельзя: ключ уничтожен.
+ */
+export function clearAllSecrets(kv: KV | null = storage()): Promise<void> {
   memory.clear();
-  if (!kv || !('length' in (kv as any))) return;
-  const s = kv as unknown as Storage;
-  for (let i = s.length - 1; i >= 0; i--) { const k = s.key(i); if (k?.startsWith(PREFIX)) s.removeItem(k); }
+  keyPromise = null;
+  if (kv && 'length' in (kv as any)) {
+    const s = kv as unknown as Storage;
+    for (let i = s.length - 1; i >= 0; i--) { const k = s.key(i); if (k?.startsWith(PREFIX)) s.removeItem(k); }
+  }
+  const idb = (globalThis as any).indexedDB as IDBFactory | undefined;
+  if (!idb || keyProvider !== idbKey) return Promise.resolve();
+  return new Promise(resolve => {
+    try {
+      const req = idb.deleteDatabase('svetlana_secrets');
+      req.onsuccess = req.onerror = (req as any).onblocked = () => resolve();
+    } catch { resolve(); }
+  });
 }
