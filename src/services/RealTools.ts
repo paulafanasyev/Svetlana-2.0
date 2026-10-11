@@ -4,7 +4,9 @@
 // Перед нажатием элемент ищется ещё раз и сравнивается (id, текст, границы): подмена кнопки внутри того же
 // приложения = отказ. Ввод идёт только в то поле, которое было в фокусе в начале (фокус ушёл = отказ).
 // Сообщение уходит только в чат, в ЗАГОЛОВКЕ которого (самый верхний текст) именно этот собеседник,
-// и только той же кнопкой «Отправить». Имя в тексте сообщения ниже заголовка не считается.
+// только той же кнопкой «Отправить» и только пока фокус всё ещё в том же поле сообщения.
+// Имя в тексте сообщения ниже заголовка не считается. Клавиша (Enter) не нажимается, если фокус ушёл в другое поле.
+// Свайп — «слепой» жест по координатам внутри того же приложения (низкий риск, цели у него нет).
 // Проверка результата (verify) тоже считает доказательством только экран того же приложения.
 import type { Tool, ToolResult } from './ToolRegistry';
 import { handsManager } from './HandsManager';
@@ -250,9 +252,10 @@ export const sendMessageTool: Tool = {
     await new Promise(r => setTimeout(r, 500));
     const findSend = async () => (await hands.findElementByText('Send')) || (await hands.findElementByText('Отправить'));
     const send = await findSend(); if (!send) return { success: false, error: 'Send button not found. Message typed but not sent.', data: { messageTyped: true, sent: false } };
-    // Перед отправкой: та же кнопка и тот же собеседник в заголовке.
+    // Перед отправкой: та же кнопка, тот же собеседник в заголовке и фокус всё ещё в том же поле сообщения.
     if (!sameElement(send, await findSend())) return { ...ELEMENT_CHANGED, data: { messageTyped: true, sent: false } };
     if (!(await recipientOnScreen(hands, params.contact))) return { ...WRONG_RECIPIENT, data: { messageTyped: true, sent: false } };
+    if (!sameField(field, await focusedField(hands))) return { ...FIELD_CHANGED, data: { messageTyped: true, sent: false } };
     if (!(await stillIn(hands, params.app))) return moved();
     const sent = await hands.tap(send.bounds.x + send.bounds.width / 2, send.bounds.y + send.bounds.height / 2); if (!sent.success) return { success: false, error: 'Failed to tap send button' };
     await new Promise(r => setTimeout(r, 500)); const tree = await hands.getAccessibilityTree();
@@ -284,7 +287,10 @@ export const pressKeyTool: Tool = {
   async execute(p) {
     await requireHands(); const h = handsManager.getHands(); if (!h) return { success: false, error: 'Hands not available' };
     const pinned = await pinApp(h); if (!pinned) return UNKNOWN_APP;
+    // Если в начале было поле в фокусе, клавиша (Enter = «отправить») нажимается только в нём.
+    const field = await focusedField(h);
     if (!(await stillIn(h, pinned))) return movedFrom(pinned);
+    if (field && !sameField(field, await focusedField(h))) return { success: false, error: 'The focused field changed right before the key press. Stopped for safety.' };
     const r = await h.pressKey(p.key);
     return r.success ? { success: true, data: { key: p.key, app: pinned } } : { success: false, error: r.error || 'Key press failed' };
   },
