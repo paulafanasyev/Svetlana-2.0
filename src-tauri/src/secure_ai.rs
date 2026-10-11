@@ -9,7 +9,8 @@
 //! - любое изменение или удаление ключа подтверждается в НАТИВНОМ окне Windows — скрипт
 //!   не может нажать его за пользователя;
 //! - запросы в облако идут только по разрешению из такого же окна, привязанному к провайдеру
-//!   И модели, на 15 минут; смена или удаление ключа отзывает все разрешения;
+//!   И модели: не дольше 15 минут и не больше 30 запросов, потом спрашиваем снова;
+//!   смена или удаление ключа отзывает все разрешения;
 //! - только известные провайдеры и строгая рекурсивная схема тела запроса (роли, текст, модель,
 //!   параметры; никаких tools/stream/лишних полей);
 //! - лимит частоты запросов и изменений ключей.
@@ -32,11 +33,13 @@ const CHAT_PER_MINUTE: usize = 30;
 const SECRET_WRITES_PER_MINUTE: usize = 10;
 /// Сколько действует разрешение на запросы к облачному ИИ (провайдер + модель).
 const CONSENT_TTL: Duration = Duration::from_secs(15 * 60);
+/// И на сколько запросов оно рассчитано.
+const CONSENT_MAX_USES: u32 = 30;
 
 static CHAT_CALLS: Mutex<VecDeque<Instant>> = Mutex::new(VecDeque::new());
 static SECRET_WRITES: Mutex<VecDeque<Instant>> = Mutex::new(VecDeque::new());
-/// Разрешения из нативного окна: (провайдер, модель, когда выдано).
-static CONSENTS: Mutex<Vec<(String, String, Instant)>> = Mutex::new(Vec::new());
+/// Разрешения из нативного окна: (провайдер, модель, когда выдано, сколько раз использовано).
+static CONSENTS: Mutex<Vec<(String, String, Instant, u32)>> = Mutex::new(Vec::new());
 
 /// Скользящее окно: не больше `max` событий за минуту.
 fn rate_ok(m: &Mutex<VecDeque<Instant>>, max: usize) -> bool {
@@ -56,15 +59,22 @@ fn rate_ok(m: &Mutex<VecDeque<Instant>>, max: usize) -> bool {
     true
 }
 
-/// Есть ли свежее разрешение именно для этого провайдера и этой модели.
-fn has_consent(list: &mut Vec<(String, String, Instant)>, provider: &str, model: &str, now: Instant) -> bool {
-    list.retain(|(_, _, at)| now.duration_since(*at) <= CONSENT_TTL);
-    list.iter().any(|(p, m, _)| p == provider && m == model)
+/// Есть ли свежее и не исчерпанное разрешение именно для этого провайдера и модели.
+/// Каждый успешный вызов расходует одно использование.
+fn has_consent(list: &mut Vec<(String, String, Instant, u32)>, provider: &str, model: &str, now: Instant) -> bool {
+    list.retain(|(_, _, at, uses)| now.duration_since(*at) <= CONSENT_TTL && *uses < CONSENT_MAX_USES);
+    match list.iter_mut().find(|(p, m, _, _)| p == provider && m == model) {
+        Some(c) => {
+            c.3 += 1;
+            true
+        }
+        None => false,
+    }
 }
 
 /// Смена или удаление ключа отзывает все разрешения этого провайдера.
 fn revoke_consents(provider: &str) {
-    CONSENTS.lock().unwrap_or_else(|e| e.into_inner()).retain(|(p, _, _)| p != provider);
+    CONSENTS.lock().unwrap_or_else(|e| e.into_inner()).retain(|(p, _, _, _)| p != provider);
 }
 
 /// Нативное окно «ОК / Отмена». Вызывается вне главного потока, чтобы не зависнуть.
@@ -119,7 +129,6 @@ pub async fn secret_set(app: AppHandle, name: String, value: Option<String>) -> 
     if !rate_ok(&SECRET_WRITES, SECRET_WRITES_PER_MINUTE) {
         return Err("Слишком частое изменение ключей, подождите минуту".into());
     }
-    // Любая попытка сменить ключ сразу отзывает разрешения на запросы к этому провайдеру.
     revoke_consents(provider);
     let question = if value.is_some() {
         format!("Сохранить новый API-ключ для «{provider}» в хранилище Windows?")
@@ -275,11 +284,13 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, body
     }
     let allowed = has_consent(&mut CONSENTS.lock().unwrap_or_else(|e| e.into_inner()), provider_id, &model, Instant::now());
     if !allowed {
-        let question = format!("Разрешить Светлане отправлять переписку в облачный ИИ «{provider_id}», модель {model}, в ближайшие 15 минут?");
+        let question = format!(
+            "Разрешить Светлане отправлять переписку в облачный ИИ «{provider_id}», модель {model}? Разрешение действует 15 минут и не больше {CONSENT_MAX_USES} запросов."
+        );
         if !confirm(&app, question).await {
             return Err("Отменено пользователем".into());
         }
-        CONSENTS.lock().unwrap_or_else(|e| e.into_inner()).push((provider_id.to_string(), model.clone(), Instant::now()));
+        CONSENTS.lock().unwrap_or_else(|e| e.into_inner()).push((provider_id.to_string(), model.clone(), Instant::now(), 1));
     }
     let key = match entry(&format!("ai.{provider_id}"))?.get_password() {
         Ok(k) => k,
@@ -344,12 +355,22 @@ mod tests {
     #[test]
     fn consent_is_bound_to_provider_model_and_expires() {
         let start = Instant::now();
-        let mut list = vec![("openai".to_string(), "gpt-4o".to_string(), start)];
+        let mut list = vec![("openai".to_string(), "gpt-4o".to_string(), start, 1)];
         assert!(has_consent(&mut list, "openai", "gpt-4o", start));
         assert!(!has_consent(&mut list, "openai", "gpt-4o-mini", start));
         assert!(!has_consent(&mut list, "groq", "gpt-4o", start));
         assert!(!has_consent(&mut list, "openai", "gpt-4o", start + CONSENT_TTL + Duration::from_secs(1)));
         assert!(list.is_empty());
+    }
+
+    #[test]
+    fn consent_runs_out_after_max_uses() {
+        let start = Instant::now();
+        let mut list = vec![("openai".to_string(), "gpt-4o".to_string(), start, 1)];
+        for _ in 1..CONSENT_MAX_USES {
+            assert!(has_consent(&mut list, "openai", "gpt-4o", start));
+        }
+        assert!(!has_consent(&mut list, "openai", "gpt-4o", start));
     }
 
     #[test]
