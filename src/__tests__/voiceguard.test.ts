@@ -1,7 +1,7 @@
 // Голосовая проверка на ПК: команда выполняется только после голоса владельца и верных случайных цифр;
 // затем доверенная сессия, чужой голос и не те цифры считаются попытками, после 5 неудач пауза.
 import { describe, it, expect } from 'vitest';
-import { createVoiceGuard, pcmToWav, ANSWER_RECORD_MS, type GuardDeps, type PcmCapture } from '../services/voice/VoiceGuard';
+import { createVoiceGuard, pcmToWav, ANSWER_RECORD_MS, NO_SAME_AUDIO_STT, type GuardDeps, type PcmCapture } from '../services/voice/VoiceGuard';
 import { makeChallenge, VoiceLockout, VoiceTrust } from '../services/voice/Liveness';
 import type { ListenOptions, Listener } from '../services/voice/SpeechEngine';
 import type { VoicePrint, VoiceTemplate } from '../services/voice/VoicePrint';
@@ -9,13 +9,17 @@ import type { VoicePrint, VoiceTemplate } from '../services/voice/VoicePrint';
 const TPL: VoiceTemplate = { version: 1, mean: [0], sd: [1], distThreshold: 1.5, samples: 5, createdAt: 1 };
 const OWNER = 0.2, STRANGER = 9, SILENCE = -1;
 
-function harness(opts: { continuous?: boolean; cloud?: (wav: Blob) => Promise<string>; local?: (pcm: Float32Array, sr: number) => Promise<string>; accept?: (t: string) => boolean } = {}) {
+function harness(opts: { continuous?: boolean; cloud?: (wav: Blob) => Promise<string>; local?: (pcm: Float32Array, sr: number) => Promise<string>; noStt?: boolean; accept?: (t: string) => boolean; slowCapture?: boolean } = {}) {
   const listeners: { o: ListenOptions; stopped: boolean }[] = [];
   let timers: { at: number; fn: () => void; id: number }[] = [];
   let clock = 0; let seq = 0;
   let level = OWNER;               // какой «голос» сейчас в микрофоне
   const takes: number[] = [];      // что отдала запись (уровень) при каждом take
   let tpl: VoiceTemplate | null = TPL;
+  let reply = '';                  // что «услышит» локальное распознавание в ответе с цифрами
+  const pending: (() => void)[] = []; // запоздавшие запуски записи (slowCapture)
+  let captureStops = 0;
+  const defaultLocal = opts.noStt || opts.cloud || opts.local ? null : async () => reply;
   const spoken: string[] = [];
   const events: string[] = [];
   const store = new Map<string, string>();
@@ -29,10 +33,14 @@ function harness(opts: { continuous?: boolean; cloud?: (wav: Blob) => Promise<st
       listeners.push(rec);
       return { mode: 'web', stop: () => { if (!rec.stopped) { rec.stopped = true; o.onEnd?.(); } } };
     },
-    startCapture: async (): Promise<PcmCapture> => ({
-      take: (sec: number) => { takes.push(sec === 0 ? NaN : level); return { pcm: new Float32Array([level]), sampleRate: 16000 }; },
-      stop: () => undefined,
-    }),
+    startCapture: (): Promise<PcmCapture> => {
+      const c: PcmCapture = {
+        take: (sec: number) => { takes.push(sec === 0 ? NaN : level); return { pcm: new Float32Array([level]), sampleRate: 16000 }; },
+        stop: () => { captureStops++; },
+      };
+      if (!opts.slowCapture) return Promise.resolve(c);
+      return new Promise(r => pending.push(() => r(c)));
+    },
     speak: (t, onEnd) => { spoken.push(t); onEnd(); },
     stopSpeaking: () => undefined,
     loadTemplate: () => tpl,
@@ -40,7 +48,7 @@ function harness(opts: { continuous?: boolean; cloud?: (wav: Blob) => Promise<st
     verify: (p, t) => (p.v[0] <= t.distThreshold ? { ok: true, score: p.v[0] } : { ok: false, score: p.v[0], reason: 'чужой' }),
     generate: () => makeChallenge([7, 4, 2]),
     cloudTranscribe: () => opts.cloud ?? null,
-    localTranscribe: () => opts.local ?? null,
+    localTranscribe: () => opts.local ?? defaultLocal,
     trust, lockout,
     setTimeout: (fn, ms) => { const id = ++seq; timers.push({ at: clock + ms, fn, id }); return id; },
     clearTimeout: id => { timers = timers.filter(t => t.id !== id); },
@@ -66,17 +74,22 @@ function harness(opts: { continuous?: boolean; cloud?: (wav: Blob) => Promise<st
     }
     clock = until;
   };
-  /** Сказать фразу в активный распознаватель (последний не остановленный). */
+  /**
+   * Сказать фразу в активный распознаватель (последний не остановленный). Если его нет, идёт проверка
+   * цифрами: фраза становится ответом, который распознаётся из записи.
+   */
   const say = async (text: string, voice = OWNER, end = !opts.continuous) => {
     await flush();
     level = voice;
-    const rec = [...listeners].reverse().find(r => !r.stopped)!;
+    const rec = [...listeners].reverse().find(r => !r.stopped);
+    if (!rec) { reply = text; await runTimers(ANSWER_RECORD_MS + 1000); return; }
     rec.o.onFinal(text);
     if (end) { rec.stopped = true; rec.o.onEnd?.(); }
     await flush();
   };
   return {
-    l, say, events, spoken, listeners, runTimers, flush, lockout, trust, takes,
+    l, say, events, spoken, listeners, runTimers, flush, lockout, trust, takes, pending,
+    captureStops: () => captureStops,
     setLevel: (v: number) => { level = v; },
     setTemplate: (t: VoiceTemplate | null) => { tpl = t; },
     advance: (ms: number) => { now += ms; },
@@ -149,11 +162,11 @@ describe('voice guard with liveness', () => {
     const h = harness({ continuous: true });
     await h.say('светлана, что у меня завтра');
     await h.runTimers();
-    const answerRec = h.listeners[h.listeners.length - 1];
-    expect(answerRec.o.continuous).toBe(false);
-    answerRec.o.onFinal('семьсот сорок два'); answerRec.stopped = true; answerRec.o.onEnd?.();
-    await h.flush(); await h.flush();
+    const before = h.listeners.length;
+    await h.say('семьсот сорок два');
+    await h.flush();
     expect(h.events).toEqual(['RUN светлана, что у меня завтра']);
+    expect(h.listeners.length).toBe(before + 1); // для ответа браузер не слушал, только возобновили основное
     const main = h.listeners[h.listeners.length - 1];
     expect(main.o.continuous).toBe(true);
     expect(main.stopped).toBe(false);
@@ -224,5 +237,25 @@ describe('voice guard with liveness', () => {
     await h2.say('что у меня завтра');
     await h2.runTimers(ANSWER_RECORD_MS + 1000); await h2.flush();
     expect(h2.events.some(e => e.startsWith('RUN'))).toBe(false);
+  });
+  it('without recognition from the same recording the digits check refuses (fail closed)', async () => {
+    const h = harness({ noStt: true });
+    const before = h.listeners.length;
+    await h.say('переведи деньги');
+    await h.runTimers(30_000);
+    expect(h.spoken.length).toBe(0); // цифры даже не озвучиваются
+    expect(h.listeners.length).toBe(before); // браузерное распознавание ответа не открывалось
+    expect(h.events).toEqual(['ERR ' + NO_SAME_AUDIO_STT, 'END']);
+    expect(h.lockout.remainingMs()).toBe(0);
+  });
+  it('a capture that opens after recognition already ended is closed at once and not used', async () => {
+    const h = harness({ slowCapture: true });
+    await h.say('переведи деньги'); // фраза и конец распознавания раньше, чем открылся микрофон
+    h.pending.splice(0).forEach(f => f());
+    await h.flush(); await h.runTimers(30_000);
+    expect(h.captureStops()).toBe(1);
+    expect(h.spoken.length).toBe(0);
+    expect(h.events.some(e => e.startsWith('RUN'))).toBe(false);
+    expect(h.events[h.events.length - 1]).toBe('END');
   });
 });

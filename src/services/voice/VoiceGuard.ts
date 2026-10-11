@@ -78,6 +78,8 @@ export function pcmToWav(pcm: Float32Array, sampleRate: number): Blob {
   return new Blob([buf], { type: 'audio/wav' });
 }
 
+export const NO_SAME_AUDIO_STT = 'Для проверки цифрами нужна модель распознавания на компьютере (Голос → настройки → «Скачать модель») или облачное распознавание. Команда не выполнена.';
+
 export const NOT_ENROLLED = 'Голосовые команды выполняются только по вашему голосу. Запишите голос: кнопка «Голос» → настройки (шестерёнка) → «Записать мой голос».';
 
 export function lockedMessage(ms: number): string {
@@ -105,7 +107,7 @@ export interface GuardDeps {
   /**
    * Облачное распознавание записанного нами же звука (null, если не настроено). Если есть, ответ с цифрами
    * распознаётся из той же записи, по которой проверяется голос: подменить звук для одной из проверок нельзя.
-   * Без него остаётся встроенное распознавание браузера: оно слушает тот же микрофон одновременно с нами.
+   * Встроенное распознавание браузера для цифр не используется: оно слушает микрофон отдельно от нашей записи.
    */
   cloudTranscribe(): ((wav: Blob) => Promise<string>) | null;
   /**
@@ -180,8 +182,9 @@ export function createVoiceGuard(d: GuardDeps) {
 
     const startMain = (): boolean => {
       const gen = ++mainGen;
+      let ended = false; // распознавание уже закончилось: запоздавшую запись сразу закрываем
       const capP: Promise<PcmCapture | null> = d.startCapture()
-        .then(c => { if (closed || gen !== mainGen) { c.stop(); return null; } cap = c; return c; })
+        .then(c => { if (closed || ended || gen !== mainGen) { c.stop(); return null; } cap = c; return c; })
         .catch(() => null);
       const l = d.listen({
         continuous: opts.continuous,
@@ -189,6 +192,7 @@ export function createVoiceGuard(d: GuardDeps) {
         onError: m => { if (gen === mainGen && !challenge) opts.onError?.(m); },
         onFinal: text => { if (gen === mainGen) onPhrase(text, capP); },
         onEnd: () => {
+          ended = true;
           if (gen !== mainGen) return;
           inner = null; cap?.stop(); cap = null;
           settle();
@@ -232,16 +236,20 @@ export function createVoiceGuard(d: GuardDeps) {
       try { generated = d.generate(); } catch { generated = null; }
       if (!generated) { opts.onError?.('Проверка цифрами недоступна на этом устройстве. Команда не выполнена.'); settle(); return; }
       const ch: Challenge = generated;
+      // Цифры распознаются только из той же записи, по которой проверяется голос: на компьютере (GigaAM)
+      // или в облаке. Встроенное распознавание браузера слушает микрофон отдельно, поэтому для проверки
+      // не годится: без локальной модели и без облака команда не выполняется (как на Android, fail closed).
+      const local = d.localTranscribe();
+      const cloud = local ? null : d.cloudTranscribe();
+      const recognize = local ?? (cloud ? (pcm: Float32Array, sr: number) => cloud(pcmToWav(pcm, sr)) : null);
+      if (!recognize) { opts.onError?.(NO_SAME_AUDIO_STT); settle(); return; }
       let done = false;
       let started = false;
-      let answer: string | null = null;
       let cap2: PcmCapture | null = null;
-      let l2: Listener | null = null;
       const timers: unknown[] = [];
       const cleanup = () => {
         done = true;
         timers.forEach(id => d.clearTimeout(id));
-        const l = l2; l2 = null; l?.stop();
         cap2?.stop(); cap2 = null;
         challenge = null;
       };
@@ -277,37 +285,18 @@ export function createVoiceGuard(d: GuardDeps) {
         try { c = await d.startCapture(); } catch { end(false, 'Нет доступа к микрофону для проверки голоса. Команда не выполнена.'); return; }
         if (done) { c.stop(); return; }
         cap2 = c;
-        const local = d.localTranscribe();
-        const cloud = local ? null : d.cloudTranscribe();
-        const recognize = local ?? (cloud ? (pcm: Float32Array, sr: number) => cloud(pcmToWav(pcm, sr)) : null);
-        if (recognize) {
-          // Одна запись: из неё и текст, и отпечаток голоса.
-          opts.onPartial?.('Слушаю цифры…');
-          timers.push(d.setTimeout(() => {
-            if (done || !cap2) return;
-            const { pcm, sampleRate } = cap2.take(ANSWER_RECORD_MS / 1000 + 1);
-            cap2.stop(); cap2 = null;
-            opts.onPartial?.('Проверяю…');
-            recognize(pcm, sampleRate).then(
-              text => evaluate(text, pcm, sampleRate),
-              () => end(false, 'Не удалось распознать цифры. Скажите команду ещё раз.'),
-            );
-          }, ANSWER_RECORD_MS));
-          return;
-        }
-        const l = d.listen({
-          continuous: false,
-          onPartial: p => { if (!done) opts.onPartial?.(p); },
-          onFinal: a => { if (answer === null) answer = a; },
-          onError: () => undefined,
-          onEnd: () => {
-            if (done || !cap2) return;
-            const { pcm, sampleRate } = cap2.take(8);
-            evaluate(answer, pcm, sampleRate);
-          },
-        });
-        if (!l) { end(false, 'Распознавание речи недоступно. Команда не выполнена.'); return; }
-        if (!done) l2 = l;
+        // Одна запись: из неё и текст, и отпечаток голоса.
+        opts.onPartial?.('Слушаю цифры…');
+        timers.push(d.setTimeout(() => {
+          if (done || !cap2) return;
+          const { pcm, sampleRate } = cap2.take(ANSWER_RECORD_MS / 1000 + 1);
+          cap2.stop(); cap2 = null;
+          opts.onPartial?.('Проверяю…');
+          recognize(pcm, sampleRate).then(
+            text => evaluate(text, pcm, sampleRate),
+            () => end(false, 'Не удалось распознать цифры. Скажите команду ещё раз.'),
+          );
+        }, ANSWER_RECORD_MS));
       };
 
       timers.push(d.setTimeout(() => end(false, 'Время на ответ вышло. Скажите команду ещё раз.'), CHALLENGE_TIMEOUT_MS));
