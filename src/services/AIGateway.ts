@@ -7,10 +7,12 @@
 // прокси — только свой сервер. Подменённый адрес не получит ни ключ, ни переписку.
 // Локальная модель при ошибке НИКОГДА не переключается на облако сама: переписка не покидает
 // компьютер без явного выбора облачного провайдера пользователем (см. fallbackCandidates).
+// Вызовы инструментов от модели проходят строгую проверку по схеме инструмента (security/ToolCallSchema).
 import { getSecret, setSecret } from './security/SecretStore';
 import { safeJsonParse, stripControl, MAX_BYTES } from './security/SafeData';
 import { isNativeApp, nativeSetSecret, nativeHasSecret, nativeCloudChat, NATIVE_KEY_PLACEHOLDER } from './security/NativeBridge';
 import { stripUntrusted } from './security/Untrusted';
+import { validateToolCalls } from './security/ToolCallSchema';
 
 export interface AIProvider {
   id: string;
@@ -612,7 +614,8 @@ class AIGateway {
     }
 
     const response = await this.chat(messages, options, providerId);
-    const toolCalls = this.extractToolCalls(response.content);
+    // Только инструменты из этого запроса и только аргументы, точно совпадающие со схемой.
+    const toolCalls = validateToolCalls(this.extractToolCalls(response.content), tools);
     
     return {
       ...response,
@@ -628,7 +631,7 @@ class AIGateway {
       for (const match of jsonMatches.slice(0, 10)) {
         try {
           const json = safeJsonParse(match.replace(/```json\s*|\s*```/g, ''), 50_000) as { tool?: unknown; arguments?: unknown } | null;
-          if (json && typeof json.tool === 'string' && /^[a-z0-9_]{1,60}$/.test(json.tool) && json.arguments && typeof json.arguments === 'object') {
+          if (json && typeof json.tool === 'string' && /^[a-z0-9_]{1,60}$/.test(json.tool) && json.arguments && typeof json.arguments === 'object' && !Array.isArray(json.arguments)) {
             toolCalls.push({
               tool: json.tool,
               arguments: json.arguments as Record<string, any>,

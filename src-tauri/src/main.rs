@@ -5,6 +5,8 @@ mod secure_ai;
 
 fn main() {
     tauri::Builder::default()
+        // Только для нативных подтверждений из Rust; из JavaScript диалоги недоступны (нет разрешения в capabilities).
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             secure_ai::secret_set,
             secure_ai::secret_has,
