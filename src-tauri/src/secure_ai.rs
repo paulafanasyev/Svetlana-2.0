@@ -8,18 +8,21 @@
 //! Защита от чужого скрипта на странице:
 //! - любое изменение или удаление ключа подтверждается в НАТИВНОМ окне Windows;
 //! - запросы в облако идут только по разрешению из такого же окна. Разрешение привязано к
-//!   провайдеру, модели И разговору (первому сообщению пользователя в запросе — оно показано
-//!   в окне), действует не дольше 15 минут и не больше 30 запросов. Другой разговор = новый вопрос;
-//!   смена или удаление ключа отзывает все разрешения;
+//!   провайдеру, модели И случайному ID разговора, который выдаёт только эта нативная часть
+//!   (128 бит, подобрать или вычислить из текста нельзя), действует не дольше 15 минут и
+//!   не больше 30 запросов. Другой разговор = новый вопрос; смена или удаление ключа отзывает
+//!   все разрешения; невыданный или устаревший ID = отказ;
 //! - только известные провайдеры и строгая рекурсивная схема тела запроса;
-//! - лимит частоты запросов и изменений ключей.
+//! - лимит частоты запросов, новых разговоров и изменений ключей.
 
 use serde_json::{Map, Value};
-use std::collections::hash_map::DefaultHasher;
+use sha2::{Digest, Sha256};
+use std::collections::hash_map::RandomState;
 use std::collections::VecDeque;
-use std::hash::{Hash, Hasher};
+use std::hash::BuildHasher;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -34,19 +37,32 @@ const CHAT_PER_MINUTE: usize = 30;
 const SECRET_WRITES_PER_MINUTE: usize = 10;
 const CONSENT_TTL: Duration = Duration::from_secs(15 * 60);
 const CONSENT_MAX_USES: u32 = 30;
+const CONVERSATION_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+const MAX_CONVERSATIONS: usize = 32;
+const CONVERSATIONS_PER_MINUTE: usize = 10;
+const CONVERSATION_UNKNOWN: &str = "CONVERSATION_UNKNOWN: разговор не выдан приложением или устарел";
 
 /// Разрешение из нативного окна.
 struct Consent {
     provider: String,
     model: String,
-    conversation: u64,
+    conversation: String,
     at: Instant,
     uses: u32,
 }
 
+/// Выданный нативной частью ID разговора.
+struct Issued {
+    id: String,
+    at: Instant,
+}
+
 static CHAT_CALLS: Mutex<VecDeque<Instant>> = Mutex::new(VecDeque::new());
 static SECRET_WRITES: Mutex<VecDeque<Instant>> = Mutex::new(VecDeque::new());
+static NEW_CONVERSATIONS: Mutex<VecDeque<Instant>> = Mutex::new(VecDeque::new());
 static CONSENTS: Mutex<Vec<Consent>> = Mutex::new(Vec::new());
+static ISSUED: Mutex<VecDeque<Issued>> = Mutex::new(VecDeque::new());
+static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn rate_ok(m: &Mutex<VecDeque<Instant>>, max: usize) -> bool {
     let mut q = m.lock().unwrap_or_else(|e| e.into_inner());
@@ -65,8 +81,36 @@ fn rate_ok(m: &Mutex<VecDeque<Instant>>, max: usize) -> bool {
     true
 }
 
-/// Разговор запроса: отпечаток и начало первого сообщения пользователя (для окна подтверждения).
-fn conversation_of(provider: &str, body: &Value) -> (u64, String) {
+/// 128-битный случайный ID: случайные ключи ОС (RandomState) + счётчик + время + pid, через SHA-256.
+fn random_id() -> String {
+    let mut h = Sha256::new();
+    for i in 0u64..4 {
+        h.update(RandomState::new().hash_one(i).to_le_bytes());
+    }
+    h.update(ID_COUNTER.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    h.update(nanos.to_le_bytes());
+    h.update(std::process::id().to_le_bytes());
+    h.finalize().iter().take(16).map(|b| format!("{b:02x}")).collect()
+}
+
+fn issue_conversation(list: &mut VecDeque<Issued>, now: Instant) -> String {
+    list.retain(|c| now.duration_since(c.at) <= CONVERSATION_TTL);
+    while list.len() >= MAX_CONVERSATIONS {
+        list.pop_front();
+    }
+    let id = random_id();
+    list.push_back(Issued { id: id.clone(), at: now });
+    id
+}
+
+fn is_issued(list: &mut VecDeque<Issued>, id: &str, now: Instant) -> bool {
+    list.retain(|c| now.duration_since(c.at) <= CONVERSATION_TTL);
+    id.len() == 32 && list.iter().any(|c| c.id == id)
+}
+
+/// Начало первого сообщения пользователя — только для окна подтверждения.
+fn preview_of(provider: &str, body: &Value) -> String {
     let list_key = if provider == "google" { "contents" } else { "messages" };
     let first = body
         .get(list_key)
@@ -81,14 +125,11 @@ fn conversation_of(provider: &str, body: &Value) -> (u64, String) {
             }
         })
         .unwrap_or("");
-    let mut h = DefaultHasher::new();
-    text.hash(&mut h);
-    let preview: String = text.chars().filter(|c| !c.is_control()).take(80).collect();
-    (h.finish(), preview)
+    text.chars().filter(|c| !c.is_control()).take(80).collect()
 }
 
 /// Есть ли свежее и не исчерпанное разрешение для этого провайдера, модели и разговора.
-fn has_consent(list: &mut Vec<Consent>, provider: &str, model: &str, conversation: u64, now: Instant) -> bool {
+fn has_consent(list: &mut Vec<Consent>, provider: &str, model: &str, conversation: &str, now: Instant) -> bool {
     list.retain(|c| now.duration_since(c.at) <= CONSENT_TTL && c.uses < CONSENT_MAX_USES);
     match list.iter_mut().find(|c| c.provider == provider && c.model == model && c.conversation == conversation) {
         Some(c) => {
@@ -173,6 +214,15 @@ pub async fn secret_set(app: AppHandle, name: String, value: Option<String>) -> 
 #[tauri::command]
 pub fn secret_has(name: String) -> Result<bool, String> {
     has_secret(&entry(&name)?)
+}
+
+/// Новый разговор: случайный ID, к которому будет привязано разрешение на облако.
+#[tauri::command]
+pub fn ai_new_conversation() -> Result<String, String> {
+    if !rate_ok(&NEW_CONVERSATIONS, CONVERSATIONS_PER_MINUTE) {
+        return Err("Слишком много новых разговоров, подождите минуту".into());
+    }
+    Ok(issue_conversation(&mut ISSUED.lock().unwrap_or_else(|e| e.into_inner()), Instant::now()))
 }
 
 fn valid_model(provider: &str, m: &str) -> bool {
@@ -294,15 +344,18 @@ fn validate_body(provider: &str, model: &str, body: &Value) -> Result<(), String
 }
 
 #[tauri::command]
-pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, body: Value) -> Result<String, String> {
+pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conversation: String, body: Value) -> Result<String, String> {
     let provider_id = PROVIDERS.iter().copied().find(|p| *p == provider).ok_or("Этот облачный сервис не поддерживается")?;
     validate_body(provider_id, &model, &body)?;
+    if !is_issued(&mut ISSUED.lock().unwrap_or_else(|e| e.into_inner()), &conversation, Instant::now()) {
+        return Err(CONVERSATION_UNKNOWN.into());
+    }
     if !rate_ok(&CHAT_CALLS, CHAT_PER_MINUTE) {
         return Err("Слишком много запросов к облачному ИИ, подождите минуту".into());
     }
-    let (conversation, preview) = conversation_of(provider_id, &body);
-    let allowed = has_consent(&mut CONSENTS.lock().unwrap_or_else(|e| e.into_inner()), provider_id, &model, conversation, Instant::now());
+    let allowed = has_consent(&mut CONSENTS.lock().unwrap_or_else(|e| e.into_inner()), provider_id, &model, &conversation, Instant::now());
     if !allowed {
+        let preview = preview_of(provider_id, &body);
         let question = format!(
             "Разрешить Светлане отправить переписку в облачный ИИ «{provider_id}», модель {model}?\nРазговор: «{preview}»\nРазрешение действует только для этого разговора: 15 минут и не больше {CONSENT_MAX_USES} запросов."
         );
@@ -312,7 +365,7 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, body
         CONSENTS.lock().unwrap_or_else(|e| e.into_inner()).push(Consent {
             provider: provider_id.to_string(),
             model: model.clone(),
-            conversation,
+            conversation: conversation.clone(),
             at: Instant::now(),
             uses: 1,
         });
@@ -370,8 +423,8 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn consent(p: &str, m: &str, conv: u64, at: Instant) -> Consent {
-        Consent { provider: p.to_string(), model: m.to_string(), conversation: conv, at, uses: 1 }
+    fn consent(p: &str, m: &str, conv: &str, at: Instant) -> Consent {
+        Consent { provider: p.to_string(), model: m.to_string(), conversation: conv.to_string(), at, uses: 1 }
     }
 
     #[test]
@@ -384,36 +437,53 @@ mod tests {
     #[test]
     fn consent_is_bound_to_provider_model_conversation_and_expires() {
         let start = Instant::now();
-        let mut list = vec![consent("openai", "gpt-4o", 7, start)];
-        assert!(has_consent(&mut list, "openai", "gpt-4o", 7, start));
-        assert!(!has_consent(&mut list, "openai", "gpt-4o", 8, start));
-        assert!(!has_consent(&mut list, "openai", "gpt-4o-mini", 7, start));
-        assert!(!has_consent(&mut list, "groq", "gpt-4o", 7, start));
-        assert!(!has_consent(&mut list, "openai", "gpt-4o", 7, start + CONSENT_TTL + Duration::from_secs(1)));
+        let mut list = vec![consent("openai", "gpt-4o", "c7", start)];
+        assert!(has_consent(&mut list, "openai", "gpt-4o", "c7", start));
+        assert!(!has_consent(&mut list, "openai", "gpt-4o", "c8", start));
+        assert!(!has_consent(&mut list, "openai", "gpt-4o-mini", "c7", start));
+        assert!(!has_consent(&mut list, "groq", "gpt-4o", "c7", start));
+        assert!(!has_consent(&mut list, "openai", "gpt-4o", "c7", start + CONSENT_TTL + Duration::from_secs(1)));
         assert!(list.is_empty());
     }
 
     #[test]
     fn consent_runs_out_after_max_uses() {
         let start = Instant::now();
-        let mut list = vec![consent("openai", "gpt-4o", 1, start)];
+        let mut list = vec![consent("openai", "gpt-4o", "c1", start)];
         for _ in 1..CONSENT_MAX_USES {
-            assert!(has_consent(&mut list, "openai", "gpt-4o", 1, start));
+            assert!(has_consent(&mut list, "openai", "gpt-4o", "c1", start));
         }
-        assert!(!has_consent(&mut list, "openai", "gpt-4o", 1, start));
+        assert!(!has_consent(&mut list, "openai", "gpt-4o", "c1", start));
     }
 
     #[test]
-    fn conversation_is_the_first_user_message() {
+    fn conversations_are_random_issued_and_bounded() {
+        let start = Instant::now();
+        let mut list = VecDeque::new();
+        let a = issue_conversation(&mut list, start);
+        let b = issue_conversation(&mut list, start);
+        assert_eq!(a.len(), 32);
+        assert!(a.bytes().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
+        assert!(is_issued(&mut list, &a, start));
+        assert!(!is_issued(&mut list, &"0".repeat(32), start));
+        assert!(!is_issued(&mut list, "", start));
+        for _ in 0..MAX_CONVERSATIONS {
+            issue_conversation(&mut list, start);
+        }
+        assert!(list.len() <= MAX_CONVERSATIONS);
+        assert!(!is_issued(&mut list, &a, start));
+        let c = issue_conversation(&mut list, start);
+        assert!(is_issued(&mut list, &c, start));
+        assert!(!is_issued(&mut list, &c, start + CONVERSATION_TTL + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn preview_is_the_first_user_message() {
         let a = json!({"model": "m", "messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "привет"}, {"role": "user", "content": "ещё"}]});
-        let b = json!({"model": "m", "messages": [{"role": "system", "content": "other"}, {"role": "user", "content": "привет"}]});
-        let c = json!({"model": "m", "messages": [{"role": "user", "content": "другой"}]});
-        let (ha, pa) = conversation_of("openai", &a);
-        assert_eq!(pa, "привет");
-        assert_eq!(ha, conversation_of("openai", &b).0);
-        assert_ne!(ha, conversation_of("openai", &c).0);
+        assert_eq!(preview_of("openai", &a), "привет");
         let g = json!({"contents": [{"role": "user", "parts": [{"text": "привет"}]}]});
-        assert_eq!(conversation_of("google", &g).1, "привет");
+        assert_eq!(preview_of("google", &g), "привет");
     }
 
     #[test]

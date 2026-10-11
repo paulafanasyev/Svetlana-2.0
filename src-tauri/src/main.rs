@@ -11,6 +11,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             secure_ai::secret_set,
             secure_ai::secret_has,
+            secure_ai::ai_new_conversation,
             secure_ai::ai_cloud_chat,
             local_stt::local_stt_status,
             local_stt::local_stt_install,
