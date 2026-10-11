@@ -14,6 +14,9 @@ function memory(): KeyValueStorage {
   return { getItem: k => m.get(k) ?? null, setItem: (k, v) => { m.set(k, v); } };
 }
 
+/** Объект, который проходит проверку «настоящее событие браузера» (в тестах нет живых нажатий). */
+const trusted = () => Object.create(Event.prototype, { isTrusted: { value: true } }) as Event;
+
 beforeEach(() => resetActionGate());
 
 describe('action gate', () => {
@@ -62,8 +65,9 @@ describe('action gate', () => {
     setActionConfirmer(async (req) => { asked.push(req.source); return false; });
     expect(await authorizeAction({ tool: 'biz_add_income', args: {}, source: 'user' })).toBe(false);
     expect(asked).toEqual(['unknown']);
-    expect(await authorizeAction({ tool: 'biz_add_income', args: {}, source: 'user', gesture: userGesture({ isTrusted: false }, 'biz_add_income') })).toBe(false);
-    const g = userGesture({ isTrusted: true }, 'biz_add_income');
+    expect(await authorizeAction({ tool: 'biz_add_income', args: {}, source: 'user', gesture: userGesture({ isTrusted: false }, 'biz_add_income', {}) })).toBe(false);
+    expect(userGesture({ isTrusted: true }, 'biz_add_income', {})).toBeUndefined(); // не настоящее событие
+    const g = userGesture(trusted(), 'biz_add_income', {});
     expect(await authorizeAction({ tool: 'biz_add_income', args: {}, source: 'user', gesture: g })).toBe(true);
     expect(await authorizeAction({ tool: 'biz_add_income', args: {}, source: 'user', gesture: g })).toBe(false); // жест одноразовый
     expect(stricterSource('user', 'llm')).toBe('llm');
