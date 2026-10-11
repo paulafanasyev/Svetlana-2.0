@@ -5,6 +5,7 @@ import { aiGateway, type ChatMessage } from '../services/AIGateway';
 import { crmSystemPrompt, detectCRMIntent, parseCRMActions, runCRMActions } from '../services/crm/CRMTools';
 import { toModelHistory } from '../services/security/History';
 import { resetNativeConversation } from '../services/security/NativeBridge';
+import type { ActionSource } from '../services/security/ActionGate';
 import {
   Mic, Volume2, VolumeX, MessageCircle, Send,
   Sparkles, Heart, Smile, Frown, Laugh, AlertCircle,
@@ -101,7 +102,11 @@ export default function AvatarPage() {
     setEmotion('neutral');
   };
 
-  const sendMessage = async (text: string) => {
+  /**
+   * @param source 'voice' — команда пришла голосом: любое действие (даже чтение) — только после нажатия,
+   *   а данные CRM/бизнеса не передаются модели (запись голоса можно воспроизвести).
+   */
+  const sendMessage = async (text: string, source: ActionSource = 'unknown') => {
     if (!text.trim() || isLoading) return;
 
     const userMessage: Message = {
@@ -118,7 +123,7 @@ export default function AvatarPage() {
       // Local CRM commands work without any AI provider (offline, on device).
       const crmIntent = detectCRMIntent(text);
       if (crmIntent) {
-        const lines = await runCRMActions([crmIntent]);
+        const lines = await runCRMActions([crmIntent], source);
         const reply = lines.join('\n');
         const ok = !reply.startsWith('⚠️');
         setMessages(prev => [...prev, {
@@ -141,8 +146,9 @@ export default function AvatarPage() {
       }
 
       // История для модели: результаты инструментов — только как данные, блоки действий обезврежены.
+      // По голосу модель не получает данных CRM и бизнеса.
       const history: ChatMessage[] = [
-        { role: 'system', content: SYSTEM_PROMPT + crmSystemPrompt() },
+        { role: 'system', content: SYSTEM_PROMPT + crmSystemPrompt(undefined, source !== 'voice') },
         ...toModelHistory(messages.slice(-10)),
         { role: 'user', content: text },
       ];
@@ -153,7 +159,7 @@ export default function AvatarPage() {
       const { clean, actions } = parseCRMActions(response.content);
       let cleanContent = cleanEmotionTag(clean);
       if (actions.length > 0) {
-        const results = await runCRMActions(actions);
+        const results = await runCRMActions(actions, source);
         cleanContent = [cleanContent, ...results].filter(Boolean).join('\n');
       }
 
@@ -187,7 +193,7 @@ export default function AvatarPage() {
   };
 
   const handleVoiceCommand = (command: string) => {
-    sendMessage(command);
+    sendMessage(command, 'voice');
   };
 
   const emotionButtons: { emotion: Emotion; icon: any; label: string; color: string }[] = [

