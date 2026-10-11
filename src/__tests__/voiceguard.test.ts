@@ -1,7 +1,7 @@
 // Голосовая проверка на ПК: команда выполняется только после голоса владельца и верных случайных цифр;
 // затем доверенная сессия, чужой голос и не те цифры считаются попытками, после 5 неудач пауза.
 import { describe, it, expect } from 'vitest';
-import { createVoiceGuard, type GuardDeps, type PcmCapture } from '../services/voice/VoiceGuard';
+import { createVoiceGuard, pcmToWav, ANSWER_RECORD_MS, type GuardDeps, type PcmCapture } from '../services/voice/VoiceGuard';
 import { makeChallenge, VoiceLockout, VoiceTrust } from '../services/voice/Liveness';
 import type { ListenOptions, Listener } from '../services/voice/SpeechEngine';
 import type { VoicePrint, VoiceTemplate } from '../services/voice/VoicePrint';
@@ -9,11 +9,12 @@ import type { VoicePrint, VoiceTemplate } from '../services/voice/VoicePrint';
 const TPL: VoiceTemplate = { version: 1, mean: [0], sd: [1], distThreshold: 1.5, samples: 5, createdAt: 1 };
 const OWNER = 0.2, STRANGER = 9, SILENCE = -1;
 
-function harness(opts: { continuous?: boolean } = {}) {
+function harness(opts: { continuous?: boolean; cloud?: (wav: Blob) => Promise<string>; accept?: (t: string) => boolean } = {}) {
   const listeners: { o: ListenOptions; stopped: boolean }[] = [];
   let timers: { at: number; fn: () => void; id: number }[] = [];
   let clock = 0; let seq = 0;
   let level = OWNER;               // какой «голос» сейчас в микрофоне
+  const takes: number[] = [];      // что отдала запись (уровень) при каждом take
   let tpl: VoiceTemplate | null = TPL;
   const spoken: string[] = [];
   const events: string[] = [];
@@ -29,7 +30,7 @@ function harness(opts: { continuous?: boolean } = {}) {
       return { mode: 'web', stop: () => { if (!rec.stopped) { rec.stopped = true; o.onEnd?.(); } } };
     },
     startCapture: async (): Promise<PcmCapture> => ({
-      take: () => ({ pcm: new Float32Array([level]), sampleRate: 16000 }),
+      take: (sec: number) => { takes.push(sec === 0 ? NaN : level); return { pcm: new Float32Array([level]), sampleRate: 16000 }; },
       stop: () => undefined,
     }),
     speak: (t, onEnd) => { spoken.push(t); onEnd(); },
@@ -38,6 +39,7 @@ function harness(opts: { continuous?: boolean } = {}) {
     computePrint: (pcm): VoicePrint | null => (pcm[0] === SILENCE ? null : { v: [pcm[0]], frames: 50 }),
     verify: (p, t) => (p.v[0] <= t.distThreshold ? { ok: true, score: p.v[0] } : { ok: false, score: p.v[0], reason: 'чужой' }),
     generate: () => makeChallenge([7, 4, 2]),
+    cloudTranscribe: () => opts.cloud ?? null,
     trust, lockout,
     setTimeout: (fn, ms) => { const id = ++seq; timers.push({ at: clock + ms, fn, id }); return id; },
     clearTimeout: id => { timers = timers.filter(t => t.id !== id); },
@@ -45,6 +47,7 @@ function harness(opts: { continuous?: boolean } = {}) {
   const guard = createVoiceGuard(deps);
   const l = guard({
     continuous: opts.continuous,
+    accept: opts.accept,
     onFinal: t => events.push('RUN ' + t),
     onError: m => events.push('ERR ' + m),
     onEnd: () => events.push('END'),
@@ -72,7 +75,8 @@ function harness(opts: { continuous?: boolean } = {}) {
     await flush();
   };
   return {
-    l, say, events, spoken, listeners, runTimers, flush, lockout, trust,
+    l, say, events, spoken, listeners, runTimers, flush, lockout, trust, takes,
+    setLevel: (v: number) => { level = v; },
     setTemplate: (t: VoiceTemplate | null) => { tpl = t; },
     advance: (ms: number) => { now += ms; },
     guard,
@@ -162,5 +166,42 @@ describe('voice guard with liveness', () => {
     const g = h.guard({ onFinal: () => undefined, onError: m => h.events.push('ERR ' + m), onEnd: () => h.events.push('END') });
     expect(g).toBeNull();
     expect(h.events[h.events.length - 1]).toBe('END');
+  });
+  it('cloud mode: digits are transcribed from the very audio whose voice is checked', async () => {
+    const sent: Blob[] = [];
+    let reply = '742';
+    const h = harness({ cloud: async wav => { sent.push(wav); return reply; } });
+    await h.say('выставь счёт');
+    const before = h.listeners.length;
+    await h.runTimers(ANSWER_RECORD_MS + 1000);
+    await h.flush();
+    expect(h.listeners.length).toBe(before); // браузерное распознавание для ответа не открывалось
+    expect(sent.length).toBe(1);
+    expect(sent[0].type).toBe('audio/wav');
+    expect(h.events).toEqual(['RUN выставь счёт', 'END']);
+
+    reply = '742';
+    const h2 = harness({ cloud: async () => reply });
+    await h2.say('выставь счёт');
+    h2.setLevel(STRANGER); // цифры верные, но голос в записи чужой
+    await h2.runTimers(ANSWER_RECORD_MS + 1000); await h2.flush();
+    expect(h2.events.some(e => e.startsWith('RUN'))).toBe(false);
+
+    const h3 = harness({ cloud: async () => { throw new Error('сеть'); } });
+    await h3.say('выставь счёт');
+    await h3.runTimers(ANSWER_RECORD_MS + 1000); await h3.flush();
+    expect(h3.events.some(e => e.startsWith('RUN'))).toBe(false);
+    expect(h3.events[h3.events.length - 1]).toBe('END');
+  });
+  it('hands-free: audio of an ignored phrase is discarded before the next check', async () => {
+    const h = harness({ continuous: true, accept: t => t.startsWith('светлана') });
+    await h.say('болтовня рядом', OWNER);
+    expect(h.takes).toEqual([NaN]); // буфер сброшен, проверка не запускалась
+    expect(h.spoken.length).toBe(0);
+  });
+  it('WAV encoding has the right size and type', () => {
+    const wav = pcmToWav(new Float32Array([0, 1, -1, 0.5]), 16000);
+    expect(wav.size).toBe(44 + 8);
+    expect(wav.type).toBe('audio/wav');
   });
 });

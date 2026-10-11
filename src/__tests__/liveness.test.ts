@@ -68,9 +68,11 @@ describe('voice trust session', () => {
     expect(t.isValid('a', 995)).toBe(false); // часы назад
   });
   it('template id changes when the voice is re-recorded', () => {
-    const base = { createdAt: 1, samples: 5, distThreshold: 1.5, mean: [0.1, 0.2] };
+    const base = { version: 1, createdAt: 1, samples: 5, distThreshold: 1.5, mean: [0.1, 0.2], sd: [1, 1] };
     expect(templateId(base)).toBe(templateId({ ...base }));
     expect(templateId(base)).not.toBe(templateId({ ...base, createdAt: 2 }));
+    expect(templateId(base)).not.toBe(templateId({ ...base, sd: [1, 50] }));
+    expect(templateId(base)).not.toBe(templateId({ ...base, mean: [0.1, 0.20001] }));
   });
 });
 
