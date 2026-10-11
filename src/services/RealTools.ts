@@ -3,7 +3,8 @@
 // и перед самим нажатием/вводом/свайпом/клавишей проверяется, что оно всё ещё на экране (оверлей/подмена = отказ).
 // Перед нажатием элемент ищется ещё раз и сравнивается (id, текст, границы): подмена кнопки внутри того же
 // приложения = отказ. Ввод идёт только в то поле, которое было в фокусе в начале (фокус ушёл = отказ).
-// Сообщение уходит только в чат, где виден именно этот собеседник, и только той же кнопкой «Отправить».
+// Сообщение уходит только в чат, в ЗАГОЛОВКЕ которого (самый верхний текст) именно этот собеседник,
+// и только той же кнопкой «Отправить». Имя в тексте сообщения ниже заголовка не считается.
 // Проверка результата (verify) тоже считает доказательством только экран того же приложения.
 import type { Tool, ToolResult } from './ToolRegistry';
 import { handsManager } from './HandsManager';
@@ -63,12 +64,33 @@ function fieldIdentity(f: any): FieldLike {
   return { id: f?.id, type: f?.type, className: f?.className, bounds: f?.bounds };
 }
 
-/** На экране есть нередактируемый элемент с именем собеседника (заголовок чата). Поле ввода не считается. */
-function showsRecipient(node: any, contact: string): boolean {
-  if (!node) return false;
+/**
+ * Заголовок чата: самый верхний (по границам, иначе первый по порядку) нередактируемый текст на экране.
+ * Сообщения и подписи ниже с тем же именем заголовком не считаются.
+ */
+function chatTitle(root: any): string | null {
+  const items: { text: string; y: number; x: number; order: number }[] = [];
+  let order = 0;
+  const walk = (n: any) => {
+    if (!n) return;
+    if (!isEditable(n) && typeof n.text === 'string' && n.text.trim()) {
+      const b = n.bounds;
+      items.push({ text: n.text.trim(), y: typeof b?.y === 'number' ? b.y : Infinity, x: typeof b?.x === 'number' ? b.x : Infinity, order: order++ });
+    }
+    for (const c of n.children || []) walk(c);
+  };
+  walk(root);
+  if (!items.length) return null;
+  items.sort((a, b) => (a.y - b.y) || (a.x - b.x) || (a.order - b.order));
+  return items[0].text;
+}
+
+/** Открыт чат именно с этим собеседником: заголовок равен имени или начинается с него («John Smith» для «John»). */
+function showsRecipient(root: any, contact: string): boolean {
+  const title = chatTitle(root)?.toLowerCase();
   const want = contact.trim().toLowerCase();
-  if (!isEditable(node) && typeof node.text === 'string' && node.text.trim().toLowerCase() === want) return true;
-  return (node.children || []).some((c: any) => showsRecipient(c, contact));
+  if (!title || !want) return false;
+  return title === want || title.startsWith(`${want} `);
 }
 
 async function recipientOnScreen(hands: { getAccessibilityTree(): Promise<any> }, contact: string): Promise<boolean> {
@@ -218,7 +240,7 @@ export const sendMessageTool: Tool = {
     const tap = await hands.tap(contact.bounds.x + contact.bounds.width / 2, contact.bounds.y + contact.bounds.height / 2); if (!tap.success) return { success: false, error: 'Failed to tap contact' };
     await new Promise(r => setTimeout(r, 1000));
     if (!(await stillIn(hands, params.app))) return moved();
-    // Открыт чат именно с этим собеседником, и в нём поле ввода в фокусе.
+    // Открыт чат именно с этим собеседником (заголовок), и в нём поле ввода в фокусе.
     const field = await focusedField(hands);
     if (!field) return NO_CHAT_INPUT;
     if (!(await recipientOnScreen(hands, params.contact))) return WRONG_RECIPIENT;
@@ -228,7 +250,7 @@ export const sendMessageTool: Tool = {
     await new Promise(r => setTimeout(r, 500));
     const findSend = async () => (await hands.findElementByText('Send')) || (await hands.findElementByText('Отправить'));
     const send = await findSend(); if (!send) return { success: false, error: 'Send button not found. Message typed but not sent.', data: { messageTyped: true, sent: false } };
-    // Перед отправкой: та же кнопка и тот же собеседник на экране.
+    // Перед отправкой: та же кнопка и тот же собеседник в заголовке.
     if (!sameElement(send, await findSend())) return { ...ELEMENT_CHANGED, data: { messageTyped: true, sent: false } };
     if (!(await recipientOnScreen(hands, params.contact))) return { ...WRONG_RECIPIENT, data: { messageTyped: true, sent: false } };
     if (!(await stillIn(hands, params.app))) return moved();
