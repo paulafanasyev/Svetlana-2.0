@@ -62,8 +62,8 @@ describe('action gate', () => {
     setActionConfirmer(async (req) => { asked.push(req.source); return false; });
     expect(await authorizeAction({ tool: 'biz_add_income', args: {}, source: 'user' })).toBe(false);
     expect(asked).toEqual(['unknown']);
-    expect(await authorizeAction({ tool: 'biz_add_income', args: {}, source: 'user', gesture: userGesture({ isTrusted: false }) })).toBe(false);
-    const g = userGesture({ isTrusted: true });
+    expect(await authorizeAction({ tool: 'biz_add_income', args: {}, source: 'user', gesture: userGesture({ isTrusted: false }, 'biz_add_income') })).toBe(false);
+    const g = userGesture({ isTrusted: true }, 'biz_add_income');
     expect(await authorizeAction({ tool: 'biz_add_income', args: {}, source: 'user', gesture: g })).toBe(true);
     expect(await authorizeAction({ tool: 'biz_add_income', args: {}, source: 'user', gesture: g })).toBe(false); // жест одноразовый
     expect(stricterSource('user', 'llm')).toBe('llm');

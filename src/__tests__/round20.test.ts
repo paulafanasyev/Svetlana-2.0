@@ -1,4 +1,4 @@
-// Раунд 20: жест пользователя, выданный под конкретное действие, не разрешает другое.
+// Раунд 20: жест пользователя разрешает только то действие, под которое выдан; жест без привязки — никакое.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { authorizeAction, userGesture, setActionConfirmer, resetActionGate } from '../services/security/ActionGate';
 
@@ -20,9 +20,11 @@ describe('gesture bound to an action', () => {
     expect(await authorizeAction({ tool: 'biz_add_income', args: { amount: 1 }, source: 'user', gesture: g })).toBe(false);
   });
 
-  it('an unbound gesture still works as before', async () => {
-    setActionConfirmer(async () => false);
+  it('an unbound gesture authorizes no tool', async () => {
+    const asked: string[] = [];
+    setActionConfirmer(async (req) => { asked.push(req.source); return false; });
     const g = userGesture({ isTrusted: true });
-    expect(await authorizeAction({ tool: 'biz_add_income', args: {}, source: 'user', gesture: g })).toBe(true);
+    expect(await authorizeAction({ tool: 'biz_add_income', args: {}, source: 'user', gesture: g })).toBe(false);
+    expect(asked).toEqual(['unknown']);
   });
 });

@@ -18,8 +18,9 @@ const gestures = new WeakSet<object>();
 const GESTURE_TTL_MS = 5_000;
 
 /**
- * Жест по настоящему событию. Если указан [tool], жест привязан к этому действию: нажатие на кнопку
- * «Записать доход» нельзя потратить на другой инструмент.
+ * Жест по настоящему событию, привязанный к действию [tool]: нажатие на кнопку «Записать доход»
+ * нельзя потратить на другой инструмент. Жест без [tool] годится только как проверка в интерфейсе
+ * («это настоящее нажатие») и не разрешает ни одного инструмента в шлюзе.
  */
 export function userGesture(event: { isTrusted?: boolean } | null | undefined, tool?: string): UserGesture | undefined {
   if (!event || event.isTrusted !== true) return undefined;
@@ -31,7 +32,7 @@ function validGesture(g: UserGesture | undefined, now: number, tool: string): bo
   if (!g || !gestures.has(g)) return false;
   const { at, tool: boundTo } = g as unknown as { at: number; tool: string | null };
   gestures.delete(g); // одноразовый
-  if (boundTo !== null && boundTo !== tool) return false; // жест для другого действия
+  if (boundTo === null || boundTo !== tool) return false; // без привязки или для другого действия
   return now - at <= GESTURE_TTL_MS;
 }
 
@@ -161,7 +162,7 @@ let recent: number[] = [];
 
 /** true — действие можно выполнять. Все инструменты проходят сюда из ToolRegistry.executeTool. */
 export async function authorizeAction(input: ActionRequest, now: number = Date.now()): Promise<boolean> {
-  // 'user' без настоящего жеста пользователя (или с жестом для другого действия) понижаем до 'unknown'.
+  // 'user' без настоящего жеста, привязанного именно к этому действию, понижаем до 'unknown'.
   const source: ActionSource = input.source === 'user' && !validGesture(input.gesture, now, input.tool) ? 'unknown' : input.source;
   const req: ActionRequest = { tool: input.tool, args: deepFreeze(input.args), source };
   if (!needsConfirmation(req.tool, req.source)) {
