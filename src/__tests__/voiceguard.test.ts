@@ -9,7 +9,7 @@ import type { VoicePrint, VoiceTemplate } from '../services/voice/VoicePrint';
 const TPL: VoiceTemplate = { version: 1, mean: [0], sd: [1], distThreshold: 1.5, samples: 5, createdAt: 1 };
 const OWNER = 0.2, STRANGER = 9, SILENCE = -1;
 
-function harness(opts: { continuous?: boolean; cloud?: (wav: Blob) => Promise<string>; accept?: (t: string) => boolean } = {}) {
+function harness(opts: { continuous?: boolean; cloud?: (wav: Blob) => Promise<string>; local?: (pcm: Float32Array, sr: number) => Promise<string>; accept?: (t: string) => boolean } = {}) {
   const listeners: { o: ListenOptions; stopped: boolean }[] = [];
   let timers: { at: number; fn: () => void; id: number }[] = [];
   let clock = 0; let seq = 0;
@@ -40,6 +40,7 @@ function harness(opts: { continuous?: boolean; cloud?: (wav: Blob) => Promise<st
     verify: (p, t) => (p.v[0] <= t.distThreshold ? { ok: true, score: p.v[0] } : { ok: false, score: p.v[0], reason: 'чужой' }),
     generate: () => makeChallenge([7, 4, 2]),
     cloudTranscribe: () => opts.cloud ?? null,
+    localTranscribe: () => opts.local ?? null,
     trust, lockout,
     setTimeout: (fn, ms) => { const id = ++seq; timers.push({ at: clock + ms, fn, id }); return id; },
     clearTimeout: id => { timers = timers.filter(t => t.id !== id); },
@@ -203,5 +204,25 @@ describe('voice guard with liveness', () => {
     const wav = pcmToWav(new Float32Array([0, 1, -1, 0.5]), 16000);
     expect(wav.size).toBe(44 + 8);
     expect(wav.type).toBe('audio/wav');
+  });
+  it('local recognition on the PC is preferred over the cloud and uses the same recording', async () => {
+    const cloudCalls: Blob[] = [];
+    const localCalls: number[] = [];
+    const h = harness({
+      cloud: async wav => { cloudCalls.push(wav); return '742'; },
+      local: async pcm => { localCalls.push(pcm[0]); return 'семь четыре два'; },
+    });
+    await h.say('что у меня завтра');
+    const before = h.listeners.length;
+    await h.runTimers(ANSWER_RECORD_MS + 1000); await h.flush();
+    expect(cloudCalls.length).toBe(0);
+    expect(localCalls).toEqual([Math.fround(OWNER)]); // распознан ровно тот звук, по которому проверен голос
+    expect(h.listeners.length).toBe(before);
+    expect(h.events).toEqual(['RUN что у меня завтра', 'END']);
+
+    const h2 = harness({ local: async () => 'семь четыре три' });
+    await h2.say('что у меня завтра');
+    await h2.runTimers(ANSWER_RECORD_MS + 1000); await h2.flush();
+    expect(h2.events.some(e => e.startsWith('RUN'))).toBe(false);
   });
 });
