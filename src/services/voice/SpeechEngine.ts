@@ -87,7 +87,7 @@ export type FetchLike = (url: string, init: { method: string; headers: Record<st
 /** Отправляет запись в Whisper-совместимый API и возвращает текст. */
 export async function transcribe(audio: Blob, cfg: CloudSttConfig, fetchImpl: FetchLike = fetch as unknown as FetchLike): Promise<string> {
   const form = new FormData();
-  const ext = /mp4|m4a|aac/.test(audio.type) ? 'm4a' : /ogg/.test(audio.type) ? 'ogg' : 'webm';
+  const ext = /wav/.test(audio.type) ? 'wav' : /mp4|m4a|aac/.test(audio.type) ? 'm4a' : /ogg/.test(audio.type) ? 'ogg' : 'webm';
   form.append('file', audio, `voice.${ext}`);
   form.append('model', cfg.model);
   form.append('language', 'ru');

@@ -101,9 +101,9 @@ function parseCompound(tokens: string[]): number | null {
   return value;
 }
 
-/** Метка шаблона голоса: новая запись голоса или удаление сразу закрывают доверенную сессию. */
-export function templateId(t: { createdAt: number; samples: number; mean: number[]; distThreshold: number }): string {
-  return `${t.createdAt}|${t.samples}|${t.distThreshold}|${t.mean.map(x => x.toFixed(4)).join(',')}`;
+/** Метка шаблона голоса (все поля): новая запись голоса, удаление или любая правка шаблона закрывают доверенную сессию. */
+export function templateId(t: { version: number; createdAt: number; samples: number; mean: number[]; sd: number[]; distThreshold: number }): string {
+  return JSON.stringify([t.version, t.createdAt, t.samples, t.distThreshold, t.mean, t.sd]);
 }
 
 const monotonic = (): number => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now());
