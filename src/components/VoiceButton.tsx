@@ -42,7 +42,7 @@ export default function VoiceButton() {
       speakText('Это вопрос для чата. Здесь я выполняю команды про деньги, запись и клиентов.');
       return;
     }
-    const lines = await runCRMActions([intent]);
+    const lines = await runCRMActions([intent], 'voice');
     const reply = lines.join('\n');
     show({ heard: command, reply }, 20000);
     speakText(reply);
