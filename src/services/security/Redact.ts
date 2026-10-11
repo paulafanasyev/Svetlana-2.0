@@ -1,12 +1,12 @@
 // Маскировка секретов и личных данных перед записью в журналы и экспортом журналов:
 // API-ключи, Bearer-токены, код подключения телефона, номера карт и телефонов, картинки (скриншоты) и
-// поля с «секретными» именами (apiKey, password, token, pin, otp…).
+// поля с «секретными» именами (apiKey, api_token, auth_token, private_key, password, secret, session, pin, otp…).
 // Для долговременной памяти (localStorage) — redactSecrets/redactDeep: то же, но телефоны сохраняются
 // (они нужны Светлане, чтобы звонить и писать), а пароли и коды из SMS скрываются.
 
 const MAX_STRING = 4000;
 const MAX_DEPTH = 4;
-const SECRET_KEY_RE = /api[-_]?key|secret|passw|authorization|cookie|pairing[-_]?code|^(access_?|refresh_?|id_?)?token$|^(pin|otp|apiKey|key)$/i;
+const SECRET_KEY_RE = /api[-_]?key|secret|passw|authorization|cookie|pairing[-_]?code|private[-_]?key|credential|session|token$|^(pin|otp|apiKey|key|cvv|cvc)$/i;
 const IMAGE_KEY_RE = /^(image|screenshot|screen|png|jpeg|base64|bitmap)$/i;
 
 function luhn(digits: string): boolean {
@@ -25,6 +25,7 @@ export function redactSecrets(input: unknown): string {
   s = s.replace(/\b(?:sk|gsk|xai|rk|pk)[-_][A-Za-z0-9_-]{12,}/g, '[ключ скрыт]');
   s = s.replace(/\bAIza[0-9A-Za-z_-]{20,}/g, '[ключ скрыт]');
   s = s.replace(/\b(?:ghp|gho|ghs|github_pat)_[A-Za-z0-9_]{20,}/g, '[ключ скрыт]');
+  s = s.replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[ключ скрыт]');
   s = s.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 [скрыто]');
   s = s.replace(/\b[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}\b/g, '[код подключения скрыт]');
   s = s.replace(/((?:парол[ьяеи]|password|passwd|pin|пин|cvv|cvc)\s*[:=]\s*)\S+/gi, '$1[скрыто]');
@@ -42,6 +43,8 @@ export function redactText(input: unknown): string {
   let s = String(input ?? '');
   s = s.replace(/\b(?:sk|gsk|xai|rk|pk)[-_][A-Za-z0-9_-]{12,}/g, '[ключ скрыт]');
   s = s.replace(/\bAIza[0-9A-Za-z_-]{20,}/g, '[ключ скрыт]');
+  s = s.replace(/\b(?:ghp|gho|ghs|github_pat)_[A-Za-z0-9_]{20,}/g, '[ключ скрыт]');
+  s = s.replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[ключ скрыт]');
   s = s.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 [скрыто]');
   s = s.replace(/\b[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}\b/g, '[код подключения скрыт]');
   s = s.replace(/(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g, m => {

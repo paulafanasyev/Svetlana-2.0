@@ -2,6 +2,7 @@
 // Безопасность: всё, что попадает в журнал, проходит маскировку (security/Redact): API-ключи, токены,
 // код подключения телефона, номера карт и телефонов, скриншоты и поля вроде password/apiKey не
 // сохраняются ни в памяти журнала, ни в экспорте. Импорт журнала проверяется и тоже маскируется.
+// Хранение ограничено: не больше 1000 записей и не дольше часа с момента записи (как журнал ToolRegistry).
 import { redactText, redactValue } from './security/Redact';
 import { safeJsonParse } from './security/SafeData';
 
@@ -15,6 +16,7 @@ export interface LogEntry {
 }
 
 const LEVELS: LogEntry['level'][] = ['info', 'warn', 'error', 'debug'];
+export const LOG_TTL_MS = 60 * 60 * 1000;
 
 function clean(level: LogEntry['level'], category: unknown, message: unknown, data?: unknown, requestId?: unknown, timestamp = Date.now()): LogEntry {
   return {
@@ -31,20 +33,25 @@ class ExecutionLogger {
   private logs: LogEntry[] = [];
   private maxLogs = 1000;
   private enabled = true;
+  /** Когда запись попала в журнал (для срока хранения; не экспортируется). */
+  private addedAt = new WeakMap<LogEntry, number>();
+
+  private prune(now = Date.now()) {
+    this.logs = this.logs.filter(e => now - (this.addedAt.get(e) ?? now) <= LOG_TTL_MS).slice(-this.maxLogs);
+  }
+
+  private keep(entry: LogEntry) {
+    this.addedAt.set(entry, Date.now());
+    this.logs.push(entry);
+    this.prune();
+  }
 
   log(level: LogEntry['level'], category: string, message: string, data?: any, requestId?: string) {
     if (!this.enabled) return;
 
     const entry = clean(level, category, message, data, requestId);
+    this.keep(entry);
 
-    this.logs.push(entry);
-
-    // Keep only recent logs
-    if (this.logs.length > this.maxLogs) {
-      this.logs = this.logs.slice(-this.maxLogs);
-    }
-
-    // Console output for development (already redacted)
     if (typeof window !== 'undefined' && (window as any).__DEV__) {
       const prefix = `[${level.toUpperCase()}] [${entry.category}]`;
       switch (level) {
@@ -79,7 +86,6 @@ class ExecutionLogger {
     this.log('debug', category, message, data, requestId);
   }
 
-  // Tool execution logging
   toolExecution(toolId: string, params: any, requestId: string) {
     this.info('tool', `Executing tool: ${toolId}`, { params }, requestId);
   }
@@ -92,7 +98,6 @@ class ExecutionLogger {
     this.error('tool', `Tool failed: ${toolId}`, { error }, requestId);
   }
 
-  // Verification logging
   verificationStart(toolId: string, requestId: string) {
     this.debug('verification', `Starting verification for: ${toolId}`, undefined, requestId);
   }
@@ -105,7 +110,6 @@ class ExecutionLogger {
     this.warn('verification', `Verification failed: ${toolId}`, details, requestId);
   }
 
-  // Connection logging
   connectionAttempt(transport: string, endpoint: string) {
     this.info('connection', `Attempting connection via ${transport}`, { endpoint });
   }
@@ -118,7 +122,6 @@ class ExecutionLogger {
     this.error('connection', `Connection failed via ${transport}`, { endpoint, error });
   }
 
-  // Policy logging
   policyCheck(toolId: string, riskLevel: string, decision: string, requestId: string) {
     this.info('policy', `Policy check: ${toolId}`, { riskLevel, decision }, requestId);
   }
@@ -127,8 +130,8 @@ class ExecutionLogger {
     this.warn('policy', `Policy denied: ${toolId}`, { reason }, requestId);
   }
 
-  // Get logs
   getLogs(limit?: number, category?: string, level?: LogEntry['level']): LogEntry[] {
+    this.prune();
     let filtered = this.logs;
 
     if (category) {
@@ -147,15 +150,14 @@ class ExecutionLogger {
   }
 
   getLogsByRequestId(requestId: string): LogEntry[] {
+    this.prune();
     return this.logs.filter(log => log.requestId === requestId);
   }
 
-  // Clear logs
   clearLogs() {
     this.logs = [];
   }
 
-  // Enable/disable logging
   setEnabled(enabled: boolean) {
     this.enabled = enabled;
   }
@@ -164,8 +166,8 @@ class ExecutionLogger {
     return this.enabled;
   }
 
-  // Statistics
   getStats() {
+    this.prune();
     const stats = {
       total: this.logs.length,
       byLevel: {
@@ -185,20 +187,21 @@ class ExecutionLogger {
     return stats;
   }
 
-  // Export logs (entries were redacted on write)
   exportLogs(): string {
+    this.prune();
     return JSON.stringify(this.logs, null, 2);
   }
 
-  // Import logs: size-limited, validated and redacted again
   importLogs(json: string) {
     try {
       const logs = safeJsonParse(json, 10 * 1024 * 1024);
       if (Array.isArray(logs)) {
+        const now = Date.now();
         this.logs = logs
           .filter((e: any) => e && typeof e === 'object' && LEVELS.includes(e.level) && typeof e.message === 'string')
           .slice(-this.maxLogs)
-          .map((e: any) => clean(e.level, e.category, e.message, e.data, e.requestId, Number.isFinite(e.timestamp) ? e.timestamp : Date.now()));
+          .map((e: any) => clean(e.level, e.category, e.message, e.data, e.requestId, Number.isFinite(e.timestamp) ? e.timestamp : now));
+        for (const e of this.logs) this.addedAt.set(e, now);
       }
     } catch (error) {
       this.error('logger', 'Failed to import logs', { error });
