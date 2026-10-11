@@ -302,39 +302,47 @@ fn transcribe_blocking(path: &Path, pcm: &[f32], sample_rate: usize) -> Result<S
     Ok(ctc_decode(data, steps))
 }
 
-/// Приведение к 16 кГц: сглаживание (против наложения частот) и линейная интерполяция.
+/// Приведение к 16 кГц: windowed-sinc интерполяция с фильтром против наложения частот.
 fn resample(pcm: &[f32], sample_rate: usize) -> Vec<f32> {
-    if sample_rate == SAMPLE_RATE {
+    if sample_rate == SAMPLE_RATE || pcm.is_empty() {
         return pcm.to_vec();
     }
-    let source: Vec<f32> = if sample_rate > SAMPLE_RATE {
-        let w = ((sample_rate as f64 / SAMPLE_RATE as f64).round() as usize).max(1);
-        let half = w / 2;
-        (0..pcm.len())
-            .map(|i| {
-                let a = i.saturating_sub(half);
-                let b = (i + w - half).min(pcm.len());
-                pcm[a..b].iter().sum::<f32>() / (b - a) as f32
-            })
-            .collect()
-    } else {
-        pcm.to_vec()
-    };
+    // Полосовой sinc-фильтр с окном Блэкмана: срезаем всё выше ~7.5 кГц до прореживания,
+    // чтобы 44.1/48 кГц из браузера не давали наложения спектра. Вес нормируется, поэтому
+    // постоянная составляющая и края сохраняются.
     let ratio = sample_rate as f64 / SAMPLE_RATE as f64;
-    let n = ((source.len() as f64) / ratio).floor() as usize;
-    (0..n)
-        .map(|i| {
-            let x = i as f64 * ratio;
-            let j = x.floor() as usize;
-            let f = (x - j as f64) as f32;
-            let a = source[j.min(source.len() - 1)];
-            let b = source[(j + 1).min(source.len() - 1)];
-            a + (b - a) * f
-        })
-        .collect()
+    let cutoff = 0.5 * (SAMPLE_RATE as f64 / sample_rate as f64).min(1.0) * 0.94;
+    let half = (8.0 / cutoff).ceil() as i64;
+    let last = pcm.len() as i64 - 1;
+    let n = ((pcm.len() as f64) / ratio).floor() as usize;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let t = i as f64 * ratio;
+        let c = t.floor() as i64;
+        let mut acc = 0.0f64;
+        let mut ws = 0.0f64;
+        let from = (c - half + 1).max(0);
+        let to = (c + half).min(last);
+        for j in from..=to {
+            let x = j as f64 - t;
+            if x.abs() >= half as f64 {
+                continue;
+            }
+            let a = 2.0 * cutoff * x;
+            let s = if a.abs() < 1e-12 { 1.0 } else { (std::f64::consts::PI * a).sin() / (std::f64::consts::PI * a) };
+            let u = x / half as f64;
+            let w = 0.42 + 0.5 * (std::f64::consts::PI * u).cos() + 0.08 * (2.0 * std::f64::consts::PI * u).cos();
+            let k = s * w;
+            acc += pcm[j as usize] as f64 * k;
+            ws += k;
+        }
+        out.push(if ws.abs() > 1e-9 { (acc / ws) as f32 } else { 0.0 });
+    }
+    out
 }
 
-/// Округление до bfloat16, как в эталонной предобработке GigaAM v3.
+/// Округление до bfloat16, как в эталонной предобработке GigaAM v3 (onnx-asr preprocessors/gigaam.py:
+/// окно Ханна и мел-фильтры v3 приводятся `.astype(bfloat16).astype(np.float32)`; у v2 этого нет).
 fn bf16(x: f32) -> f32 {
     let b = x.to_bits();
     let rounded = b.wrapping_add(0x7FFF + ((b >> 16) & 1));
@@ -498,6 +506,18 @@ mod tests {
     fn resample_to_16k() {
         assert_eq!(resample(&vec![0.1; 48_000], 48_000).len(), 16_000);
         assert_eq!(resample(&vec![0.1; 8_000], 8_000).len(), 16_000);
+        // 1 кГц проходит без потерь, 12 кГц из 48 кГц не просачивается наложением.
+        let tone = |f: f64, sr: usize| -> Vec<f32> {
+            (0..sr / 2).map(|i| (2.0 * std::f64::consts::PI * f * i as f64 / sr as f64).sin() as f32).collect()
+        };
+        let rms = |y: &[f32]| -> f64 {
+            let m = &y[y.len() / 4..3 * y.len() / 4];
+            (2.0 * m.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / m.len() as f64).sqrt()
+        };
+        assert!((rms(&resample(&tone(1000.0, 48_000), 48_000)) - 1.0).abs() < 0.02);
+        assert!((rms(&resample(&tone(1000.0, 44_100), 44_100)) - 1.0).abs() < 0.02);
+        assert!(rms(&resample(&tone(12_000.0, 48_000), 48_000)) < 0.01);
+        assert!((resample(&vec![0.1; 4_800], 48_000)[0] - 0.1).abs() < 1e-4);
         assert!(allowed_host("cas-bridge.xethub.hf.co"));
         assert!(allowed_host("huggingface.co"));
         assert!(!allowed_host("evil-huggingface.co"));
