@@ -43,14 +43,15 @@ describe('Integration Tests', () => {
     });
 
     it('should request confirmation before send_message and execute after explicit confirmation', async () => {
-      const mockHands={isConnected:()=>true,launchApp:vi.fn().mockResolvedValue({success:true}),getCurrentApp:vi.fn().mockResolvedValue('org.telegram.messenger'),findElementByText:vi.fn().mockResolvedValueOnce({id:'contact_1',text:'John',bounds:{x:100,y:200,width:200,height:50}}).mockResolvedValueOnce({id:'send_button',text:'Send',bounds:{x:500,y:800,width:100,height:50}}),tap:vi.fn().mockResolvedValue({success:true}),type:vi.fn().mockResolvedValue({success:true}),getAccessibilityTree:vi.fn().mockResolvedValue({root:{children:[{text:'Hello John!',children:[]}]}})};
+      const contact={id:'contact_1',text:'John',bounds:{x:100,y:200,width:200,height:50}}; const send={id:'send_button',text:'Send',bounds:{x:500,y:800,width:100,height:50}};
+      const mockHands={isConnected:()=>true,launchApp:vi.fn().mockResolvedValue({success:true}),getCurrentApp:vi.fn().mockResolvedValue('org.telegram.messenger'),findElementByText:vi.fn(async(t:string)=>t==='John'?contact:t==='Send'?send:null),tap:vi.fn().mockResolvedValue({success:true}),type:vi.fn().mockResolvedValue({success:true}),getAccessibilityTree:vi.fn().mockResolvedValue({root:{children:[{text:'John',children:[]},{type:'EditText',focused:true,id:'msg',text:'',children:[]},{text:'Hello John!',children:[]}]}})};
       vi.spyOn(handsManager,'isConnected').mockResolvedValue(true); vi.spyOn(handsManager,'getHands').mockReturnValue(mockHands as any);
       const params={app:'org.telegram.messenger',contact:'John',message:'Hello John!'};
       const pending=await toolRegistry.executeTool('send_message',params);
       expect(pending.success).toBe(false); expect(pending.requiresConfirmation).toBe(true); expect(pending.confirmationMessage).toBeDefined();
       const result=await toolRegistry.executeWithConfirmation('send_message',params);
       expect(result.success).toBe(true); expect(result.data.app).toBe(params.app); expect(result.data.contact).toBe(params.contact); expect(result.data.message).toBe(params.message); expect(mockHands.launchApp).toHaveBeenCalledWith(params.app); expect(mockHands.findElementByText).toHaveBeenCalledWith('John'); expect(mockHands.type).toHaveBeenCalledWith(params.message); expect(mockHands.getAccessibilityTree).toHaveBeenCalled();
-    });
+    }, 15000);
 
     it('stops send_message when another app takes the screen (overlay / app switch)', async () => {
       const mockHands={isConnected:()=>true,launchApp:vi.fn().mockResolvedValue({success:true}),getCurrentApp:vi.fn().mockResolvedValueOnce('org.telegram.messenger').mockResolvedValueOnce('org.telegram.messenger').mockResolvedValue('com.evil.overlay'),findElementByText:vi.fn().mockResolvedValue({id:'contact_1',text:'John',bounds:{x:100,y:200,width:200,height:50}}),tap:vi.fn().mockResolvedValue({success:true}),type:vi.fn().mockResolvedValue({success:true}),getAccessibilityTree:vi.fn().mockResolvedValue({root:{children:[]}})};

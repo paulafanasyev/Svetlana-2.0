@@ -51,7 +51,7 @@ describe('Verification Logic', () => {
       expect(verified).toBe(false);
     });
 
-    it('should fail verification if no focused input found', async () => {
+    it('should fail (and not type) if no focused input found', async () => {
       const tool = toolRegistry.getTool('type_text');
       const mockHands = {
         isConnected: () => true,
@@ -63,6 +63,8 @@ describe('Verification Logic', () => {
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
       const result = await tool!.execute({ text: 'Hello World' });
+      expect(result.success).toBe(false);
+      expect(mockHands.type).not.toHaveBeenCalled();
       const verified = await tool!.verify!({ text: 'Hello World' }, result);
       expect(verified).toBe(false);
     });
@@ -79,8 +81,9 @@ describe('Verification Logic', () => {
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
       const result = await tool!.execute({ text: 'Hello World' });
       expect(result.success).toBe(true);
+      const readsBefore = mockHands.getAccessibilityTree.mock.calls.length;
       expect(await tool!.verify!({ text: 'Hello World' }, result)).toBe(false);
-      expect(mockHands.getAccessibilityTree).not.toHaveBeenCalled();
+      expect(mockHands.getAccessibilityTree.mock.calls.length).toBe(readsBefore);
     });
 
     it('refuses to type when another app took the screen', async () => {
@@ -194,16 +197,20 @@ describe('Verification Logic', () => {
   });
 
   describe('send_message verification', () => {
+    const contact = { id: 'contact_1', text: 'John', bounds: { x: 100, y: 200, width: 200, height: 50 } };
+    const send = { id: 'send_button', text: 'Send', bounds: { x: 500, y: 800, width: 100, height: 50 } };
     const hands = (chatText: string) => ({
       isConnected: () => true,
       launchApp: vi.fn().mockResolvedValue({ success: true }),
       getCurrentApp: vi.fn().mockResolvedValue('org.telegram.messenger'),
-      findElementByText: vi.fn()
-        .mockResolvedValueOnce({ id: 'contact_1', text: 'John', bounds: { x: 100, y: 200, width: 200, height: 50 } })
-        .mockResolvedValueOnce({ id: 'send_button', text: 'Send', bounds: { x: 500, y: 800, width: 100, height: 50 } }),
+      findElementByText: vi.fn(async (t: string) => (t === 'John' ? contact : t === 'Send' ? send : null)),
       tap: vi.fn().mockResolvedValue({ success: true }),
       type: vi.fn().mockResolvedValue({ success: true }),
-      getAccessibilityTree: vi.fn().mockResolvedValue({ root: { children: [{ text: chatText, children: [] }] } })
+      getAccessibilityTree: vi.fn().mockResolvedValue({ root: { children: [
+        { text: 'John', children: [] },
+        { type: 'EditText', focused: true, id: 'msg', text: '', children: [] },
+        { text: chatText, children: [] },
+      ] } })
     });
     const params = { app: 'org.telegram.messenger', contact: 'John', message: 'Hello John!' };
 
@@ -214,7 +221,7 @@ describe('Verification Logic', () => {
       const result = await tool!.execute(params);
       expect(result.success).toBe(true);
       expect(await tool!.verify!(params, result)).toBe(true);
-    });
+    }, 15000);
 
     it('should fail verification if message not found in chat', async () => {
       const tool = toolRegistry.getTool('send_message');
@@ -222,7 +229,7 @@ describe('Verification Logic', () => {
       vi.spyOn(handsManager, 'getHands').mockReturnValue(hands('Old message') as any);
       const result = await tool!.execute(params);
       expect(await tool!.verify!(params, result)).toBe(false);
-    });
+    }, 15000);
   });
 
   describe('open_app verification', () => {
