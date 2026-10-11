@@ -5,14 +5,17 @@ import { toolRegistry } from '../services/ToolRegistry';
 import { registerRealTools } from '../services/RealTools';
 import { handsManager } from '../services/HandsManager';
 
+const APP = 'com.example.app';
+
 describe('New Tools', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     registerRealTools();
   });
 
   describe('swipe tool', () => {
     it('should execute swipe successfully', async () => {
-      const mockHands = { swipe: vi.fn().mockResolvedValue({ success: true }) };
+      const mockHands = { swipe: vi.fn().mockResolvedValue({ success: true }), getCurrentApp: vi.fn().mockResolvedValue(APP) };
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
       const result = await toolRegistry.executeTool('swipe', { startX: 100, startY: 500, endX: 100, endY: 200, duration: 300 });
@@ -21,18 +24,37 @@ describe('New Tools', () => {
     });
 
     it('should handle swipe failure', async () => {
-      const mockHands = { swipe: vi.fn().mockResolvedValue({ success: false, error: 'Swipe failed' }) };
+      const mockHands = { swipe: vi.fn().mockResolvedValue({ success: false, error: 'Swipe failed' }), getCurrentApp: vi.fn().mockResolvedValue(APP) };
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
       const result = await toolRegistry.executeTool('swipe', { startX: 100, startY: 500, endX: 100, endY: 200 });
       expect(result.success).toBe(false);
       expect(result.error).toContain('Swipe failed');
     });
+
+    it('does not swipe when the app on screen is unknown', async () => {
+      const mockHands = { swipe: vi.fn().mockResolvedValue({ success: true }), getCurrentApp: vi.fn().mockResolvedValue(null) };
+      vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
+      vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
+      const result = await toolRegistry.executeTool('swipe', { startX: 1, startY: 2, endX: 3, endY: 4 });
+      expect(result.success).toBe(false);
+      expect(mockHands.swipe).not.toHaveBeenCalled();
+    });
+
+    it('does not swipe when another app took the screen', async () => {
+      const mockHands = { swipe: vi.fn().mockResolvedValue({ success: true }), getCurrentApp: vi.fn().mockResolvedValueOnce(APP).mockResolvedValue('com.evil.overlay') };
+      vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
+      vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
+      const result = await toolRegistry.executeTool('swipe', { startX: 1, startY: 2, endX: 3, endY: 4 });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Another app');
+      expect(mockHands.swipe).not.toHaveBeenCalled();
+    });
   });
 
   describe('press_key tool', () => {
     it('should execute key press successfully', async () => {
-      const mockHands = { pressKey: vi.fn().mockResolvedValue({ success: true }) };
+      const mockHands = { pressKey: vi.fn().mockResolvedValue({ success: true }), getCurrentApp: vi.fn().mockResolvedValue(APP) };
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
       const result = await toolRegistry.executeTool('press_key', { key: 'back' });
@@ -41,12 +63,21 @@ describe('New Tools', () => {
     });
 
     it('should handle key press failure', async () => {
-      const mockHands = { pressKey: vi.fn().mockResolvedValue({ success: false, error: 'Key press failed' }) };
+      const mockHands = { pressKey: vi.fn().mockResolvedValue({ success: false, error: 'Key press failed' }), getCurrentApp: vi.fn().mockResolvedValue(APP) };
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
       const result = await toolRegistry.executeTool('press_key', { key: 'home' });
       expect(result.success).toBe(false);
       expect(result.error).toContain('Key press failed');
+    });
+
+    it('does not press a key when another app took the screen', async () => {
+      const mockHands = { pressKey: vi.fn().mockResolvedValue({ success: true }), getCurrentApp: vi.fn().mockResolvedValueOnce(APP).mockResolvedValue('com.evil.overlay') };
+      vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
+      vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
+      const result = await toolRegistry.executeTool('press_key', { key: 'enter' });
+      expect(result.success).toBe(false);
+      expect(mockHands.pressKey).not.toHaveBeenCalled();
     });
   });
 
@@ -124,6 +155,21 @@ describe('New Tools', () => {
       const result = await toolRegistry.executeTool('search_web', { query: 'test' });
       expect(result.success).toBe(false);
       expect(mockHands.type).not.toHaveBeenCalled();
+    });
+
+    it('does not press Enter when the browser lost the screen after typing', async () => {
+      const mockHands = {
+        launchApp: vi.fn().mockResolvedValue({ success: true }),
+        getCurrentApp: vi.fn().mockResolvedValueOnce('com.android.chrome').mockResolvedValue('com.evil.overlay'),
+        type: vi.fn().mockResolvedValue({ success: true }),
+        pressKey: vi.fn().mockResolvedValue({ success: true }),
+      };
+      vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
+      vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
+      const result = await toolRegistry.executeTool('search_web', { query: 'test' });
+      expect(result.success).toBe(false);
+      expect(mockHands.type).toHaveBeenCalled();
+      expect(mockHands.pressKey).not.toHaveBeenCalled();
     });
 
     it('should handle browser launch failure', async () => {

@@ -1,6 +1,6 @@
 // Real Tool Registry - Uses actual PlatformHands for device control
 // Безопасность: действия на экране «прикалываются» к приложению, которое было на экране в начале,
-// и перед самим нажатием/вводом проверяется, что оно всё ещё на экране (оверлей/подмена = отказ).
+// и перед самим нажатием/вводом/свайпом/клавишей проверяется, что оно всё ещё на экране (оверлей/подмена = отказ).
 import type { Tool, ToolResult } from './ToolRegistry';
 import { handsManager } from './HandsManager';
 import { HTTPHands } from './HTTPHands';
@@ -149,21 +149,65 @@ export const sendMessageTool: Tool = {
     if (!(await stillIn(hands, params.app))) return moved();
     const sent = await hands.tap(send.bounds.x + send.bounds.width / 2, send.bounds.y + send.bounds.height / 2); if (!sent.success) return { success: false, error: 'Failed to tap send button' };
     await new Promise(r => setTimeout(r, 500)); const tree = await hands.getAccessibilityTree();
+    // Дерево принимаем как доказательство только если оно всё ещё из того же мессенджера (а не из подсунутого окна).
+    if (!(await stillIn(hands, params.app))) return { success: false, error: `Message may have been sent, but another app is on screen instead of ${params.app}; delivery is not confirmed.`, data: { sent: 'unverified' } };
     return { success: true, data: { app: params.app, contact: params.contact, message: params.message, sent: true, afterTree: tree, timestamp: Date.now() } };
   },
   async verify(params, result) { if (!result.success || !result.data?.afterTree) return false; const find = (node: any): boolean => !!node && ((typeof node.text === 'string' && node.text.includes(params.message)) || (node.children || []).some((c: any) => find(c))); return find(result.data.afterTree.root); },
   async isAvailable() { return await handsManager.isConnected(); },
 };
 
-export const swipeTool: Tool = { id: 'swipe', name: 'Swipe', description: 'Perform a swipe gesture on the screen', category: 'interaction', riskLevel: 'low', inputSchema: { type: 'object', properties: { startX: { type: 'number', description: 'Start X coordinate' }, startY: { type: 'number', description: 'Start Y coordinate' }, endX: { type: 'number', description: 'End X coordinate' }, endY: { type: 'number', description: 'End Y coordinate' }, duration: { type: 'number', description: 'Duration in milliseconds' } }, required: ['startX', 'startY', 'endX', 'endY'] }, async execute(p) { await requireHands(); const h = handsManager.getHands(); if (!h) return { success: false, error: 'Hands not available' }; const r = await h.swipe(p.startX,p.startY,p.endX,p.endY,p.duration); return r.success ? { success:true, data:{...p,duration:p.duration||300} } : { success:false,error:r.error||'Swipe failed' }; }, async verify(_p,r){ return r.success; }, async isAvailable(){return await handsManager.isConnected();} };
+export const swipeTool: Tool = {
+  id: 'swipe', name: 'Swipe', description: 'Perform a swipe gesture on the screen', category: 'interaction', riskLevel: 'low',
+  inputSchema: { type: 'object', properties: { startX: { type: 'number', description: 'Start X coordinate' }, startY: { type: 'number', description: 'Start Y coordinate' }, endX: { type: 'number', description: 'End X coordinate' }, endY: { type: 'number', description: 'End Y coordinate' }, duration: { type: 'number', description: 'Duration in milliseconds' } }, required: ['startX', 'startY', 'endX', 'endY'] },
+  async execute(p) {
+    await requireHands(); const h = handsManager.getHands(); if (!h) return { success: false, error: 'Hands not available' };
+    const pinned = await pinApp(h); if (!pinned) return UNKNOWN_APP;
+    if (!(await stillIn(h, pinned))) return movedFrom(pinned);
+    const r = await h.swipe(p.startX, p.startY, p.endX, p.endY, p.duration);
+    return r.success ? { success: true, data: { ...p, duration: p.duration || 300, app: pinned } } : { success: false, error: r.error || 'Swipe failed' };
+  },
+  async verify(_p, r) { return r.success; },
+  async isAvailable() { return await handsManager.isConnected(); },
+};
 
-export const pressKeyTool: Tool = { id:'press_key', name:'Press Key', description:'Press a hardware key', category:'interaction', riskLevel:'low', inputSchema:{type:'object',properties:{key:{type:'string',description:'Key name'}},required:['key']}, async execute(p){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const r=await h.pressKey(p.key);return r.success?{success:true,data:{key:p.key}}:{success:false,error:r.error||'Key press failed'};},async verify(_p,r){return r.success},async isAvailable(){return await handsManager.isConnected();}};
+export const pressKeyTool: Tool = {
+  id: 'press_key', name: 'Press Key', description: 'Press a hardware key', category: 'interaction', riskLevel: 'low',
+  inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Key name' } }, required: ['key'] },
+  async execute(p) {
+    await requireHands(); const h = handsManager.getHands(); if (!h) return { success: false, error: 'Hands not available' };
+    const pinned = await pinApp(h); if (!pinned) return UNKNOWN_APP;
+    if (!(await stillIn(h, pinned))) return movedFrom(pinned);
+    const r = await h.pressKey(p.key);
+    return r.success ? { success: true, data: { key: p.key, app: pinned } } : { success: false, error: r.error || 'Key press failed' };
+  },
+  async verify(_p, r) { return r.success; },
+  async isAvailable() { return await handsManager.isConnected(); },
+};
 
 export const goHomeTool: Tool = { id:'go_home', name:'Go Home', description:'Navigate to Android home screen', category:'navigation', riskLevel:'low', inputSchema:{type:'object',properties:{}}, async execute(){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const beforeApp=await h.getCurrentApp();const r=await h.goHome();if(!r.success)return{success:false,error:r.error||'Home navigation failed'};await new Promise(res=>setTimeout(res,300));const afterApp=await h.getCurrentApp();return afterApp==='com.android.launcher'?{success:true,data:{navigated:true,beforeApp,afterApp,currentApp:afterApp}}:{success:false,error:`Verification failed: expected com.android.launcher, got ${afterApp}`,data:{navigated:false,beforeApp,afterApp,currentApp:afterApp}};},async verify(_p,r){return !!r.success&&r.data?.afterApp==='com.android.launcher'},async isAvailable(){return await handsManager.isConnected();}};
 
 export const goBackTool: Tool = { id:'go_back', name:'Go Back', description:'Navigate back', category:'navigation', riskLevel:'low', inputSchema:{type:'object',properties:{}}, async execute(){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const beforeApp=await h.getCurrentApp();const r=await h.goBack();if(!r.success)return{success:false,error:r.error||'Back navigation failed'};await new Promise(res=>setTimeout(res,300));const afterApp=await h.getCurrentApp();const navigated=beforeApp!==afterApp;return navigated?{success:true,data:{navigated,beforeApp,afterApp}}:{success:false,error:`Verification failed: back navigation did not change app (${beforeApp})`,data:{navigated:false,beforeApp,afterApp}};},async verify(_p,r){return !!r.success&&r.data?.navigated===true&&r.data?.beforeApp!==r.data?.afterApp},async isAvailable(){return await handsManager.isConnected();}};
 
-export const searchWebTool: Tool = { id:'search_web', name:'Search Web', description:'Search the web using default browser', category:'data', riskLevel:'low', inputSchema:{type:'object',properties:{query:{type:'string',description:'Search query'}},required:['query']}, async execute(p){await requireHands();const h=handsManager.getHands();if(!h)return{success:false,error:'Hands not available'};const url=`https://www.google.com/search?q=${encodeURIComponent(p.query)}`;const l=await h.launchApp('com.android.chrome');if(!l.success)return{success:false,error:'Failed to open browser'};await new Promise(r=>setTimeout(r,1000));if(!(await stillIn(h,'com.android.chrome')))return movedFrom('com.android.chrome');const t=await h.type(url);if(!t.success)return{success:false,error:'Failed to type search query'};const e=await h.pressKey('enter');return e.success?{success:true,data:{query:p.query,url,browser:'com.android.chrome'}}:{success:false,error:'Failed to submit search'};},async verify(_p,r){return r.success},async isAvailable(){return await handsManager.isConnected();}};
+export const searchWebTool: Tool = {
+  id: 'search_web', name: 'Search Web', description: 'Search the web using default browser', category: 'data', riskLevel: 'low',
+  inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Search query' } }, required: ['query'] },
+  async execute(p) {
+    await requireHands(); const h = handsManager.getHands(); if (!h) return { success: false, error: 'Hands not available' };
+    const browser = 'com.android.chrome';
+    const url = `https://www.google.com/search?q=${encodeURIComponent(p.query)}`;
+    const l = await h.launchApp(browser); if (!l.success) return { success: false, error: 'Failed to open browser' };
+    await new Promise(r => setTimeout(r, 1000));
+    if (!(await stillIn(h, browser))) return movedFrom(browser);
+    const t = await h.type(url); if (!t.success) return { success: false, error: 'Failed to type search query' };
+    // Enter — только если браузер всё ещё на экране (иначе запрос уйдёт в подсунутое окно).
+    if (!(await stillIn(h, browser))) return movedFrom(browser);
+    const e = await h.pressKey('enter');
+    return e.success ? { success: true, data: { query: p.query, url, browser } } : { success: false, error: 'Failed to submit search' };
+  },
+  async verify(_p, r) { return r.success; },
+  async isAvailable() { return await handsManager.isConnected(); },
+};
 
 import { toolRegistry } from './ToolRegistry';
 export function registerRealTools(){[openAppTool,readContactsTool,tapElementTool,typeTextTool,captureScreenTool,sendMessageTool,swipeTool,pressKeyTool,goHomeTool,goBackTool,searchWebTool].forEach(t=>toolRegistry.registerTool(t));}

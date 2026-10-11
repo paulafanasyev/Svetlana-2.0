@@ -1,6 +1,7 @@
 // Memory Module - Short-term and long-term memory with RAG-like retrieval
 // Безопасность: секреты (ключи, токены, пароли, коды из SMS, карты) вырезаются УЖЕ ПРИ ЗАПИСИ в память,
 // поэтому их нет ни в оперативной памяти, ни в истории, ни на диске. Телефоны сохраняются.
+// Все читающие методы отдают КОПИИ: изменить память в обход очистки секретов через полученный объект нельзя.
 import { safeJsonParse, stripControl, MAX_BYTES } from './security/SafeData';
 import { redactSecrets, redactDeep } from './security/Redact';
 
@@ -28,6 +29,13 @@ const DAY = 24 * 60 * 60 * 1000;
 export const MESSAGE_TTL_MS = 7 * DAY;
 export const EPISODIC_TTL_MS = 30 * DAY;
 const num = (v: unknown, def: number, min: number, max: number): number => (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : def);
+
+/** Глубокая копия (для данных, которые отдаём наружу). */
+function clone<T>(v: T): T {
+  try { return structuredClone(v); } catch { return JSON.parse(JSON.stringify(v)) as T; }
+}
+const copyItem = (i: MemoryItem): MemoryItem => (i.metadata ? { ...i, metadata: clone(i.metadata) } : { ...i });
+const copyMessage = <M extends { role: string; content: string }>(m: M): M => ({ ...m });
 
 function toMemoryItem(v: unknown): MemoryItem | undefined {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
@@ -143,11 +151,11 @@ class Memory {
       this.shortTermMemory.shift();
     }
 
-    return memoryItem;
+    return copyItem(memoryItem);
   }
 
   getShortTerm(limit: number = 10): MemoryItem[] {
-    return this.shortTermMemory.slice(-limit);
+    return this.shortTermMemory.slice(-limit).map(copyItem);
   }
 
   clearShortTerm() {
@@ -166,7 +174,7 @@ class Memory {
     this.longTermMemory.set(memoryItem.id, memoryItem);
     this.saveToStorage();
 
-    return memoryItem;
+    return copyItem(memoryItem);
   }
 
   getFromLongTerm(id: string): MemoryItem | undefined {
@@ -176,11 +184,11 @@ class Memory {
       item.lastAccessed = Date.now();
       this.saveToStorage();
     }
-    return item;
+    return item ? copyItem(item) : undefined;
   }
 
   getAllLongTerm(): MemoryItem[] {
-    return Array.from(this.longTermMemory.values());
+    return Array.from(this.longTermMemory.values()).map(copyItem);
   }
 
   removeFromLongTerm(id: string) {
@@ -215,7 +223,7 @@ class Memory {
     return scored
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
-      .map(s => s.item);
+      .map(s => copyItem(s.item));
   }
 
   addMessage(role: string, content: string) {
@@ -233,7 +241,7 @@ class Memory {
   }
 
   getConversationHistory(limit: number = 10): { role: string; content: string }[] {
-    return this.conversationContext.messages.slice(-limit);
+    return this.conversationContext.messages.slice(-limit).map(copyMessage);
   }
 
   setConversationContext(context: Partial<ConversationContext>) {
@@ -245,7 +253,8 @@ class Memory {
   }
 
   getConversationContext(): ConversationContext {
-    return this.conversationContext;
+    const ctx = this.conversationContext;
+    return { ...ctx, messages: ctx.messages.map(copyMessage) };
   }
 
   clearConversation() {
@@ -265,7 +274,7 @@ class Memory {
     this.shortTermMemory = [];
     this.longTermMemory.clear();
     this.conversationContext = { messages: [] };
-    localStorage.removeItem(this.STORAGE_KEY);
+    if (typeof localStorage !== 'undefined') localStorage.removeItem(this.STORAGE_KEY);
   }
 }
 
