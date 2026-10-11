@@ -53,12 +53,21 @@ export function dueDate(year: number, monthIndex: number, day: number): number {
 }
 
 // ---------- НПД ----------
-/** Чек по безналичной оплате от физлица/юрлица — не позднее 9-го числа следующего месяца (ч. 3 ст. 14 422-ФЗ). */
-export function npdReceiptDeadline(paidAt: number): number {
+/** Способ расчёта: наличные, электронное средство платежа (карта, терминал, QR-эквайринг) или перевод на счёт. */
+export type PayMethod = 'cash' | 'card' | 'transfer';
+export const PAY_METHOD_LABELS: Record<PayMethod, string> = {
+  transfer: 'Перевод на счёт / по номеру телефона', card: 'Картой через терминал или эквайринг', cash: 'Наличными',
+};
+/**
+ * Срок чека НПД (ч. 3 ст. 14 422-ФЗ): при наличных и электронных средствах платежа — в момент расчёта (берём конец дня);
+ * при иных безналичных расчётах (перевод на счёт) — не позднее 9-го числа следующего месяца.
+ */
+export function npdReceiptDeadline(paidAt: number, method: PayMethod = 'transfer'): number {
   const d = new Date(paidAt);
+  if (method === 'cash' || method === 'card') return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59).getTime();
   return dueDate(d.getFullYear(), d.getMonth() + 1, 9);
 }
-export const NPD_RECEIPT_FINE = 'штраф 20% от суммы расчёта, при повторном нарушении в течение 6 месяцев — 100% (ст. 129.13 НК РФ)';
+export const NPD_RECEIPT_FINE = 'штраф 20% от суммы расчёта, но не менее 200 ₽; при повторном нарушении в течение 6 месяцев — 100% суммы (ст. 129.13 НК РФ)';
 
 // ---------- НДС на УСН (с 2025 года) ----------
 export function vatExemptThreshold(year: number): number {
@@ -77,38 +86,68 @@ export function vatLimits(year: number): { r5: number; r7: number } {
 
 export interface VatStatus {
   status: 'exempt' | 'vat' | 'lost_usn';
-  rate: number;             // 0, 5, 7, 22
-  fromMonth?: number;       // индекс месяца, с которого НДС
+  rate: number;              // ставка последнего месяца с НДС (0 — освобождение)
+  fromMonth?: number;        // первый месяц года с НДС (индекс 0–11)
+  lostUsnFromMonth?: number; // месяц, с которого утрачено право на УСН
+  rateByMonth: number[];     // ставка по каждому месяцу года: 0 — без НДС
   threshold: number;
   text: string;
 }
 
+/** Общая ставка НДС: 20% до 2025 года включительно, 22% с 2026 года. */
+export function vatGeneralRateFor(year: number): number {
+  return year >= 2026 ? 22 : 20;
+}
+
+const monthGen = (year: number, m: number) => new Date(year, m, 1).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+const mln = (n: number) => `${(n / 1e6).toLocaleString('ru-RU')} млн ₽`;
+
 /**
- * Статус НДС плательщика УСН в году `year`.
- * prevYearIncome — доход за прошлый год; monthlyIncome — доходы текущего года по месяцам (12 чисел).
- * generalRate — плательщик выбрал общую ставку 22% вместо 5/7%.
+ * Помесячный статус НДС плательщика УСН в году `year` (ст. 145, п. 8 ст. 164 НК РФ, ст. 346.13 НК РФ):
+ * - освобождение, пока доход прошлого и текущего года не больше порога (20/15/10 млн);
+ * - с месяца, следующего за превышением порога, — 5%; с месяца после превышения 272,5 млн — 7%;
+ * - с месяца, в котором доход превысил 490,5 млн, — право на УСН утрачено, общая ставка;
+ * - если доход прошлого года больше порога — НДС с января по ставке, определённой по доходу прошлого года.
+ * generalRate — выбрана общая ставка 22% (20% до 2026) вместо 5/7%.
  */
 export function vatStatusUsn(year: number, prevYearIncome: number, monthlyIncome: number[], generalRate = false): VatStatus {
   const threshold = vatExemptThreshold(year);
   const lim = vatLimits(year);
-  const rateFor = (income: number) => (generalRate ? 22 : income <= lim.r5 ? 5 : 7);
-  const total = monthlyIncome.reduce((s, x) => s + x, 0);
-  if (total > lim.r7) return { status: 'lost_usn', rate: 22, threshold, text: `Доход превысил ${lim.r7.toLocaleString('ru-RU')} ₽: право на УСН утрачено, нужен общий режим и НДС 22%.` };
-  if (prevYearIncome > threshold) {
-    const rate = rateFor(prevYearIncome);
-    return { status: 'vat', rate, fromMonth: 0, threshold, text: `Доход за ${year - 1} год больше ${(threshold / 1e6).toLocaleString('ru-RU')} млн ₽: в ${year} году вы плательщик НДС (${rate}%${rate < 22 ? ' без вычетов' : ''}). Нужны счета-фактуры, книга продаж и декларация по НДС.` };
-  }
-  let acc = 0;
-  for (let m = 0; m < 12; m++) {
-    acc += monthlyIncome[m] ?? 0;
-    if (acc > threshold) {
-      const from = m + 1;
-      const rate = rateFor(acc);
-      return { status: from > 11 ? 'exempt' : 'vat', rate: from > 11 ? 0 : rate, fromMonth: from > 11 ? undefined : from, threshold,
-        text: from > 11 ? `Доход превысил ${(threshold / 1e6).toLocaleString('ru-RU')} млн ₽ в декабре: НДС начнётся с января.` : `Доход превысил ${(threshold / 1e6).toLocaleString('ru-RU')} млн ₽: с ${new Date(year, from, 1).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })} вы плательщик НДС (${rate}%${rate < 22 ? ' без вычетов' : ''}).` };
+  const general = vatGeneralRateFor(year);
+  const special = (income: number) => (generalRate ? general : income <= lim.r5 ? 5 : 7);
+  const rates = Array<number>(12).fill(0);
+  let lostFrom: number | undefined;
+  if (prevYearIncome > lim.r7) {
+    lostFrom = 0;
+  } else {
+    let rate = prevYearIncome > threshold ? special(prevYearIncome) : 0;
+    let acc = 0;
+    for (let m = 0; m < 12; m++) {
+      acc += monthlyIncome[m] ?? 0;
+      if (acc > lim.r7) { lostFrom = m; break; }
+      rates[m] = rate;
+      if (rate === 0 && acc > threshold) rate = special(acc);
+      else if (rate === 5 && acc > lim.r5) rate = 7;
     }
   }
-  return { status: 'exempt', rate: 0, threshold, text: `Освобождение от НДС: доход до ${(threshold / 1e6).toLocaleString('ru-RU')} млн ₽ (ст. 145 НК РФ).` };
+  if (lostFrom !== undefined) for (let m = lostFrom; m < 12; m++) rates[m] = general;
+  const fromMonth = rates.findIndex(r => r > 0);
+  const last = [...rates].reverse().find(r => r > 0) ?? 0;
+  const base = { rateByMonth: rates, threshold, rate: last, fromMonth: fromMonth >= 0 ? fromMonth : undefined, lostUsnFromMonth: lostFrom };
+  if (lostFrom !== undefined) {
+    return { ...base, status: 'lost_usn', text: lostFrom === 0
+      ? `Доход за ${year - 1} год больше ${mln(lim.r7)}: УСН в ${year} году недоступна, нужен общий режим и НДС ${general}%.`
+      : `Доход превысил ${mln(lim.r7)}: с ${monthGen(year, lostFrom)} право на УСН утрачено, общий режим и НДС ${general}%.` };
+  }
+  if (fromMonth < 0) {
+    return { ...base, status: 'exempt', text: `Освобождение от НДС: доход до ${mln(threshold)} (ст. 145 НК РФ).` };
+  }
+  const steps: string[] = [];
+  let prev = 0;
+  rates.forEach((r, m) => { if (r !== prev) { steps.push(`с ${monthGen(year, m)} — ${r}%`); prev = r; } });
+  const noDeduct = !generalRate ? ' без вычетов' : '';
+  const why = fromMonth === 0 && prevYearIncome > threshold ? `доход за ${year - 1} год больше ${mln(threshold)}` : `доход превысил ${mln(threshold)}`;
+  return { ...base, status: 'vat', text: `Вы плательщик НДС (${why}): ${steps.join(', ')}${noDeduct}. Нужны счета-фактуры, книга продаж и декларация по НДС.` };
 }
 
 // ---------- ПСН ----------

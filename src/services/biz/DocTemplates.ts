@@ -90,8 +90,8 @@ export function paymentString(profile: BizProfile, amount: number, purpose: stri
   return `ST00012|${fields.join('|')}`;
 }
 
-function esc(v: string): string {
-  return v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+function esc(v: unknown): string {
+  return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function d(ts?: number): string {
