@@ -15,7 +15,7 @@ serde_json = "1"
 # API-ключи облачных ИИ — в Диспетчере учётных данных Windows (никогда не в JavaScript)
 keyring = { version = "3", features = ["windows-native"] }
 # Запросы к облачным ИИ выполняет нативная часть, подставляя ключ сама
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-tls"] }
 # Нативное окно подтверждения Windows: скрипт на странице не может нажать его за пользователя
 tauri-plugin-dialog = "2"
 # Проверка подлинности скачанных моделей
