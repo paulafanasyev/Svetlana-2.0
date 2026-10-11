@@ -5,7 +5,8 @@
 // приложения = отказ. Ввод идёт только в то поле, которое было в фокусе в начале (фокус ушёл = отказ).
 // Сообщение уходит только в чат, в ЗАГОЛОВКЕ которого (самый верхний текст) именно этот собеседник,
 // только той же кнопкой «Отправить» и только пока фокус всё ещё в том же поле сообщения.
-// Имя в тексте сообщения ниже заголовка не считается. Клавиша (Enter) не нажимается, если фокус ушёл в другое поле.
+// Имя в тексте сообщения ниже заголовка не считается. «Отправляющие» клавиши (Enter, Search, Go…) нажимаются
+// только в поле в фокусе и только если фокус не ушёл; поиск в браузере вводит и отправляет запрос в то же поле.
 // Свайп — «слепой» жест по координатам внутри того же приложения (низкий риск, цели у него нет).
 // Проверка результата (verify) тоже считает доказательством только экран того же приложения.
 import type { Tool, ToolResult } from './ToolRegistry';
@@ -64,6 +65,13 @@ function sameField(a: FieldLike | null | undefined, b: FieldLike | null | undefi
 
 function fieldIdentity(f: any): FieldLike {
   return { id: f?.id, type: f?.type, className: f?.className, bounds: f?.bounds };
+}
+
+/** Клавиши, которые отправляют/подтверждают ввод (их можно нажать только в поле в фокусе). */
+const SUBMIT_KEYS = new Set(['enter', 'numpad_enter', 'send', 'submit', 'search', 'go', 'done', 'dpad_center', 'return']);
+function isSubmitKey(key: unknown): boolean {
+  const k = String(key ?? '').trim().toLowerCase().replace(/^keycode_/, '');
+  return SUBMIT_KEYS.has(k);
 }
 
 /**
@@ -287,8 +295,10 @@ export const pressKeyTool: Tool = {
   async execute(p) {
     await requireHands(); const h = handsManager.getHands(); if (!h) return { success: false, error: 'Hands not available' };
     const pinned = await pinApp(h); if (!pinned) return UNKNOWN_APP;
-    // Если в начале было поле в фокусе, клавиша (Enter = «отправить») нажимается только в нём.
+    // Если в начале было поле в фокусе, клавиша нажимается только в нём. «Отправляющие» клавиши
+    // (Enter, Search, Go…) без поля в фокусе не нажимаются вообще.
     const field = await focusedField(h);
+    if (!field && isSubmitKey(p.key)) return { success: false, error: 'No focused input field for this key. Stopped for safety.' };
     if (!(await stillIn(h, pinned))) return movedFrom(pinned);
     if (field && !sameField(field, await focusedField(h))) return { success: false, error: 'The focused field changed right before the key press. Stopped for safety.' };
     const r = await h.pressKey(p.key);
@@ -312,9 +322,14 @@ export const searchWebTool: Tool = {
     const l = await h.launchApp(browser); if (!l.success) return { success: false, error: 'Failed to open browser' };
     await new Promise(r => setTimeout(r, 1000));
     if (!(await stillIn(h, browser))) return movedFrom(browser);
+    // Запрос вводится только в поле браузера в фокусе, Enter — только в то же поле.
+    const field = await focusedField(h);
+    if (!field) return NO_FIELD;
+    if (!sameField(field, await focusedField(h))) return FIELD_CHANGED;
     const t = await h.type(url); if (!t.success) return { success: false, error: 'Failed to type search query' };
-    // Enter — только если браузер всё ещё на экране (иначе запрос уйдёт в подсунутое окно).
+    // Enter — только если браузер всё ещё на экране и фокус в том же поле (иначе запрос уйдёт в подсунутое окно).
     if (!(await stillIn(h, browser))) return movedFrom(browser);
+    if (!sameField(field, await focusedField(h))) return { success: false, error: 'The browser field changed before submitting. Stopped for safety.' };
     const e = await h.pressKey('enter');
     return e.success ? { success: true, data: { query: p.query, url, browser } } : { success: false, error: 'Failed to submit search' };
   },
