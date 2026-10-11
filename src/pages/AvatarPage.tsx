@@ -4,10 +4,11 @@ import Avatar, { VoiceControl, useSpeech } from '../components/Avatar';
 import { aiGateway, type ChatMessage } from '../services/AIGateway';
 import { crmSystemPrompt, detectCRMIntent, parseCRMActions, runCRMActions } from '../services/crm/CRMTools';
 import { toModelHistory } from '../services/security/History';
+import { resetNativeConversation } from '../services/security/NativeBridge';
 import {
   Mic, Volume2, VolumeX, MessageCircle, Send,
   Sparkles, Heart, Smile, Frown, Laugh, AlertCircle,
-  Settings, Wifi, WifiOff, Zap, Loader2
+  Settings, Wifi, WifiOff, Zap, Loader2, RotateCcw
 } from 'lucide-react';
 
 type Emotion = 'neutral' | 'happy' | 'sad' | 'laughing' | 'crying' | 'surprised' | 'talking';
@@ -21,6 +22,8 @@ interface Message {
   /** В реплике есть результаты инструментов (CRM): модели она вернётся только как данные. */
   hasData?: boolean;
 }
+
+const greeting = (): Message => ({ role: 'svetlana', content: 'Привет! Я Светлана. Чем могу помочь?', emotion: 'happy', timestamp: Date.now() });
 
 const SYSTEM_PROMPT = `Ты — Светлана 2.0, AI-ассистент с эмоциями и характером. Ты общаешься на русском языке.
 
@@ -64,9 +67,7 @@ function cleanEmotionTag(text: string): string {
 
 export default function AvatarPage() {
   const [emotion, setEmotion] = useState<Emotion>('neutral');
-  const [messages, setMessages] = useState<Message[]>([
-    { role: 'svetlana', content: 'Привет! Я Светлана. Чем могу помочь?', emotion: 'happy', timestamp: Date.now() },
-  ]);
+  const [messages, setMessages] = useState<Message[]>(() => [greeting()]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +75,11 @@ export default function AvatarPage() {
   const [activeProvider, setActiveProvider] = useState(aiGateway.getActiveProvider());
   const { speak, stop, isSpeaking, voices } = useSpeech();
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Каждый открытый чат — новый разговор для нативной части: разрешение на облако не переносится между чатами.
+  useEffect(() => {
+    resetNativeConversation();
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -85,6 +91,15 @@ export default function AvatarPage() {
     }, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  const newChat = () => {
+    if (isLoading) return;
+    resetNativeConversation();
+    stop();
+    setMessages([greeting()]);
+    setError(null);
+    setEmotion('neutral');
+  };
 
   const sendMessage = async (text: string) => {
     if (!text.trim() || isLoading) return;
@@ -275,12 +290,23 @@ export default function AvatarPage() {
                   </p>
                 </div>
               </div>
-              <button
-                onClick={() => isSpeaking ? stop() : speak('Привет! Я Светлана.')}
-                className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted"
-              >
-                {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={newChat}
+                  disabled={isLoading}
+                  title="Новый чат"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-sv-muted disabled:opacity-50"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  Новый чат
+                </button>
+                <button
+                  onClick={() => isSpeaking ? stop() : speak('Привет! Я Светлана.')}
+                  className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted"
+                >
+                  {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 p-4 overflow-y-auto space-y-3 min-h-[400px] max-h-[500px]">
