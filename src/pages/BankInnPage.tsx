@@ -1,5 +1,6 @@
 // Svetlana Business — проверка контрагентов по ИНН, реквизиты по ИНН/БИК, импорт банковской выписки 1С.
 import { useState, type ChangeEvent, type FormEvent } from 'react';
+import { assertFileSize, MAX_BYTES } from '../services/security/SafeData';
 import { ShieldCheck, Search, UserPlus, Upload, KeyRound, Building2, ExternalLink } from 'lucide-react';
 import { bizStore, formatRub } from '../services/biz/BizStore';
 import {
@@ -130,6 +131,7 @@ function StatementCard() {
     if (!file) return;
     setMsg(null);
     try {
+      assertFileSize(file, MAX_BYTES.statement, 'Выписка');
       const parsed = parse1C(decodeStatement(await file.arrayBuffer()));
       const r = importStatement(parsed);
       const income = parsed.docs.filter(d => d.payeeAccount === (parsed.account || bizStore.getProfile().account)).reduce((s, d) => s + d.amount, 0);
