@@ -1,5 +1,10 @@
 // Real AI Gateway - connects to actual LLM providers
 // Defaults to local offline provider (Ollama / Local Svetlana) on Windows/Desktop
+// Безопасность: API-ключи хранятся зашифрованными (SecretStore), в localStorage — только настройки без ключей.
+// Адреса проверяются: локальные модели — только 127.0.0.1/localhost, облачные — только официальные адреса,
+// прокси — только свой сервер. Подменённый адрес не получит ни ключ, ни переписку.
+import { getSecret, setSecret } from './security/SecretStore';
+import { safeJsonParse, stripControl, MAX_BYTES } from './security/SafeData';
 
 export interface AIProvider {
   id: string;
@@ -55,72 +60,145 @@ const DEFAULT_OFFLINE_PROVIDERS: AIProvider[] = [
   },
 ];
 
+/** Официальные адреса облачных сервисов, у которых адрес берётся из настроек. */
+const OFFICIAL_ENDPOINTS: Record<string, string[]> = {
+  mistral: ['https://api.mistral.ai/v1'],
+  google: ['https://generativelanguage.googleapis.com/v1beta', 'https://generativelanguage.googleapis.com/v1'],
+};
+const LOCAL_RE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?(\/[A-Za-z0-9._~-]+)*$/;
+
+/** Проверка адреса провайдера. Возвращает нормализованный адрес или бросает ошибку. */
+export function validateEndpoint(p: Pick<AIProvider, 'id' | 'type' | 'endpoint'>): string {
+  const e = String(p.endpoint ?? '').trim().replace(/\/+$/, '');
+  if (p.type === 'offline') {
+    if (!LOCAL_RE.test(e)) throw new Error('Локальная модель должна работать на этом компьютере: адрес http://127.0.0.1:порт или http://localhost:порт');
+    return e;
+  }
+  const official = OFFICIAL_ENDPOINTS[p.id];
+  if (official && !official.includes(e)) throw new Error(`Для ${p.id} разрешён только официальный адрес: ${official[0]}`);
+  return e;
+}
+
+/** Прокси: только свой сервер (путь вида /api/...) или локальный адрес. */
+export function validateProxyUrl(url: string): string {
+  const u = url.trim();
+  if (/^\/[A-Za-z0-9/_-]*$/.test(u) && !u.startsWith('//')) return u;
+  if (/^http:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?(\/[A-Za-z0-9/_-]*)?$/.test(u)) return u;
+  throw new Error('Прокси может быть только на своём сервере (/api/...) или на этом компьютере');
+}
+
+const secretName = (id: string) => `ai.${id}`;
+
+function sanitizeProvider(v: unknown): AIProvider | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  if (typeof r.id !== 'string' || !/^[a-z0-9_-]{1,40}$/.test(r.id)) return null;
+  const type = r.type === 'online' ? 'online' : 'offline';
+  try {
+    const endpoint = validateEndpoint({ id: r.id, type, endpoint: String(r.endpoint ?? '') });
+    return {
+      id: r.id, type, endpoint,
+      name: stripControl(String(r.name ?? r.id)).slice(0, 100),
+      model: stripControl(String(r.model ?? '')).slice(0, 100),
+      enabled: r.enabled === true,
+      useProxy: r.useProxy === true ? true : undefined,
+      apiKey: typeof r.apiKey === 'string' && r.apiKey ? r.apiKey.slice(0, 500) : undefined,
+    };
+  } catch { return null; }
+}
+
 class AIGateway {
   private providers: Map<string, AIProvider> = new Map();
   private activeProvider: string | null = null;
   private proxyUrl: string | null = null;
+  /** Ключи расшифровываются асинхронно при старте; запросы к ИИ ждут этого. */
+  readonly ready: Promise<void>;
 
   constructor() {
     this.initDefaultProviders();
-    this.loadFromStorage();
+    this.ready = this.loadFromStorage();
   }
 
   private initDefaultProviders() {
     for (const p of DEFAULT_OFFLINE_PROVIDERS) {
-      this.providers.set(p.id, p);
+      this.providers.set(p.id, { ...p });
     }
     this.activeProvider = 'ollama';
   }
 
   setProxyUrl(url: string | null) {
-    this.proxyUrl = url;
-    if (url) {
-      sessionStorage.setItem('svetlana_ai_proxy', url);
+    this.proxyUrl = url ? validateProxyUrl(url) : null;
+    if (this.proxyUrl) {
+      sessionStorage.setItem('svetlana_ai_proxy', this.proxyUrl);
     } else {
       sessionStorage.removeItem('svetlana_ai_proxy');
     }
   }
 
   getProxyUrl(): string | null {
-    return this.proxyUrl || sessionStorage.getItem('svetlana_ai_proxy');
+    if (this.proxyUrl) return this.proxyUrl;
+    try {
+      const s = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('svetlana_ai_proxy') : null;
+      return s ? validateProxyUrl(s) : null;
+    } catch { return null; }
   }
 
-  private loadFromStorage() {
+  private async loadFromStorage(): Promise<void> {
+    if (typeof localStorage === 'undefined') return;
     const stored = localStorage.getItem('svetlana_ai_providers');
     if (stored) {
       try {
-        const data = JSON.parse(stored);
-        data.forEach((p: AIProvider) => {
-          this.providers.set(p.id, p);
-        });
+        const data = safeJsonParse(stored, MAX_BYTES.storage);
+        let migrated = false;
+        if (Array.isArray(data)) {
+          for (const raw of data.slice(0, 50)) {
+            const p = sanitizeProvider(raw);
+            if (!p) continue;
+            if (p.apiKey) { await setSecret(secretName(p.id), p.apiKey); migrated = true; } // старый открытый ключ → шифрование
+            this.providers.set(p.id, p);
+          }
+        }
         const savedActive = localStorage.getItem('svetlana_active_provider');
         if (savedActive && this.providers.has(savedActive)) {
           this.activeProvider = savedActive;
         }
+        if (migrated) this.saveToStorage();
       } catch (e) {
         console.error('Failed to load AI providers:', e);
       }
     }
+    for (const p of this.providers.values()) {
+      if (!p.apiKey) { const k = await getSecret(secretName(p.id)); if (k) p.apiKey = k; }
+    }
   }
 
   private saveToStorage() {
-    const data = Array.from(this.providers.values());
+    // Ключи в localStorage не пишем никогда.
+    const data = Array.from(this.providers.values()).map(({ apiKey: _k, ...rest }) => rest);
     localStorage.setItem('svetlana_ai_providers', JSON.stringify(data));
     if (this.activeProvider) {
       localStorage.setItem('svetlana_active_provider', this.activeProvider);
     }
   }
 
+  private storeKey(p: AIProvider) {
+    void setSecret(secretName(p.id), p.apiKey ?? null);
+  }
+
   addProvider(provider: AIProvider) {
-    this.providers.set(provider.id, provider);
-    if (provider.enabled) {
-      this.activeProvider = provider.id;
+    const p = sanitizeProvider(provider);
+    if (!p) throw new Error('Некорректные настройки провайдера (адрес или идентификатор)');
+    this.providers.set(p.id, p);
+    if (p.enabled) {
+      this.activeProvider = p.id;
     }
+    this.storeKey(p);
     this.saveToStorage();
   }
 
   removeProvider(id: string) {
     this.providers.delete(id);
+    void setSecret(secretName(id), null);
     if (this.activeProvider === id) {
       this.activeProvider = null;
       for (const [pid, p] of this.providers) {
@@ -136,10 +214,13 @@ class AIGateway {
   updateProvider(id: string, updates: Partial<AIProvider>) {
     const provider = this.providers.get(id);
     if (provider) {
-      Object.assign(provider, updates);
+      const next = sanitizeProvider({ ...provider, ...updates, id });
+      if (!next) throw new Error('Некорректные настройки провайдера (адрес)');
+      Object.assign(provider, next);
       if (updates.enabled) {
         this.activeProvider = id;
       }
+      if ('apiKey' in updates) this.storeKey(provider);
       this.saveToStorage();
     }
   }
@@ -165,6 +246,7 @@ class AIGateway {
   }
 
   async chat(messages: ChatMessage[], options?: { temperature?: number; max_tokens?: number }, providerId?: string): Promise<AIResponse> {
+    await this.ready;
     const provider = providerId ? this.providers.get(providerId) : this.getActiveProvider();
     if (!provider) {
       throw new Error('No AI provider configured');
@@ -190,6 +272,8 @@ class AIGateway {
   }
 
   private async callProvider(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    // Повторная проверка адреса перед каждым запросом: объект провайдера мог быть изменён в обход updateProvider.
+    validateEndpoint(provider);
     const proxy = this.getProxyUrl();
     if ((proxy || provider.useProxy) && provider.type === 'online') {
       return this.callViaProxy(proxy || '/api/ai-proxy', provider, messages, options);
@@ -224,7 +308,7 @@ class AIGateway {
   }
 
   private async callViaProxy(proxyEndpoint: string, provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    const response = await fetch(proxyEndpoint, {
+    const response = await fetch(validateProxyUrl(proxyEndpoint), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -306,8 +390,9 @@ class AIGateway {
     };
   }
 
-  private async callOpenAI(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  /** OpenAI-совместимые облачные API с фиксированным официальным адресом. */
+  private async callOpenAICompatible(url: string, label: string, provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -323,7 +408,7 @@ class AIGateway {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
-      throw new Error(`OpenAI API error: ${error.error?.message || response.statusText}`);
+      throw new Error(`${label} API error: ${error.error?.message || error.message || response.statusText}`);
     }
 
     const data = await response.json();
@@ -333,6 +418,26 @@ class AIGateway {
       model: provider.model,
       usage: data.usage,
     };
+  }
+
+  private callOpenAI(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    return this.callOpenAICompatible('https://api.openai.com/v1/chat/completions', 'OpenAI', provider, messages, options);
+  }
+
+  private callGroq(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    return this.callOpenAICompatible('https://api.groq.com/openai/v1/chat/completions', 'Groq', provider, messages, options);
+  }
+
+  private callOpenRouter(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    return this.callOpenAICompatible('https://openrouter.ai/api/v1/chat/completions', 'OpenRouter', provider, messages, options);
+  }
+
+  private callDeepSeek(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    return this.callOpenAICompatible('https://api.deepseek.com/v1/chat/completions', 'DeepSeek', provider, messages, options);
+  }
+
+  private callMistral(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    return this.callOpenAICompatible(`${validateEndpoint(provider)}/chat/completions`, 'Mistral', provider, messages, options);
   }
 
   private async callAnthropic(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
@@ -369,93 +474,6 @@ class AIGateway {
     };
   }
 
-  private async callGroq(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${provider.apiKey || ''}`,
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        messages,
-        temperature: options?.temperature ?? 0.7,
-        max_tokens: options?.max_tokens ?? 4096,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(`Groq API error: ${error.error?.message || response.statusText}`);
-    }
-
-    const data = await response.json();
-    return {
-      content: data.choices[0].message.content,
-      provider: provider.name,
-      model: provider.model,
-      usage: data.usage,
-    };
-  }
-
-  private async callOpenRouter(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${provider.apiKey || ''}`,
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        messages,
-        temperature: options?.temperature ?? 0.7,
-        max_tokens: options?.max_tokens ?? 4096,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(`OpenRouter API error: ${error.error?.message || response.statusText}`);
-    }
-
-    const data = await response.json();
-    return {
-      content: data.choices[0].message.content,
-      provider: provider.name,
-      model: provider.model,
-      usage: data.usage,
-    };
-  }
-
-  private async callDeepSeek(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${provider.apiKey || ''}`,
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        messages,
-        temperature: options?.temperature ?? 0.7,
-        max_tokens: options?.max_tokens ?? 4096,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(`DeepSeek API error: ${error.error?.message || response.statusText}`);
-    }
-
-    const data = await response.json();
-    return {
-      content: data.choices[0].message.content,
-      provider: provider.name,
-      model: provider.model,
-      usage: data.usage,
-    };
-  }
-
   private async callGoogle(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
     const systemMessage = messages.find(m => m.role === 'system');
     const chatMessages = messages.filter(m => m.role !== 'system');
@@ -465,11 +483,12 @@ class AIGateway {
       parts: [{ text: m.content }]
     }));
 
+    // Ключ — в заголовке, а не в адресе: адреса попадают в журналы и историю.
     const response = await fetch(
-      `${provider.endpoint}/models/${provider.model}:generateContent?key=${provider.apiKey || ''}`,
+      `${validateEndpoint(provider)}/models/${encodeURIComponent(provider.model)}:generateContent`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': provider.apiKey || '' },
         body: JSON.stringify({
           contents,
           systemInstruction: systemMessage ? { parts: [{ text: systemMessage.content }] } : undefined,
@@ -499,35 +518,6 @@ class AIGateway {
     };
   }
 
-  private async callMistral(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    const response = await fetch(`${provider.endpoint}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${provider.apiKey || ''}`,
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        messages,
-        temperature: options?.temperature ?? 0.7,
-        max_tokens: options?.max_tokens ?? 4096,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(`Mistral API error: ${error.message || response.statusText}`);
-    }
-
-    const data = await response.json();
-    return {
-      content: data.choices[0].message.content,
-      provider: provider.name,
-      model: provider.model,
-      usage: data.usage,
-    };
-  }
-
   async testConnection(providerId: string): Promise<boolean> {
     const provider = this.providers.get(providerId);
     if (!provider) return false;
@@ -550,6 +540,7 @@ class AIGateway {
     options?: { temperature?: number; max_tokens?: number },
     providerId?: string
   ): Promise<AIResponse> {
+    await this.ready;
     const provider = providerId ? this.providers.get(providerId) : this.getActiveProvider();
     if (!provider) {
       throw new Error('No AI provider configured');
@@ -568,13 +559,13 @@ class AIGateway {
     const toolCalls: StructuredToolCall[] = [];
     const jsonMatches = content.match(/```json\s*([\s\S]*?)\s*```/g);
     if (jsonMatches) {
-      for (const match of jsonMatches) {
+      for (const match of jsonMatches.slice(0, 10)) {
         try {
-          const json = JSON.parse(match.replace(/```json\s*|\s*```/g, ''));
-          if (json.tool && json.arguments) {
+          const json = safeJsonParse(match.replace(/```json\s*|\s*```/g, ''), 50_000) as { tool?: unknown; arguments?: unknown } | null;
+          if (json && typeof json.tool === 'string' && /^[a-z0-9_]{1,60}$/.test(json.tool) && json.arguments && typeof json.arguments === 'object') {
             toolCalls.push({
               tool: json.tool,
-              arguments: json.arguments,
+              arguments: json.arguments as Record<string, any>,
               requestId: `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
               timestamp: Date.now(),
             });
