@@ -9,6 +9,7 @@ import {
   type TaxRegime, type DocType, type PayerType, type EntryKind, type BizProfile,
 } from '../services/biz/BizStore';
 import { renderDocumentHTML, paymentString } from '../services/biz/DocTemplates';
+import { PAY_METHOD_LABELS, contributionsFor, type PayMethod } from '../services/biz/TaxRules';
 import {
   findSupport, regionalSearchUrl, SUPPORT_KIND_LABELS, SECTOR_LABELS, FLAG_LABELS, RUSSIAN_REGIONS, type SupportKind,
 } from '../services/biz/SupportCatalog';
@@ -70,6 +71,7 @@ function MoneyTab() {
   const [description, setDescription] = useState('');
   const [client, setClient] = useState('');
   const [payerType, setPayerType] = useState<PayerType>('person');
+  const [payMethod, setPayMethod] = useState<PayMethod>('transfer');
   const [day, setDay] = useState('');
   const [error, setError] = useState<string | null>(null);
   const profile = bizStore.getProfile();
@@ -84,7 +86,7 @@ function MoneyTab() {
       bizStore.addEntry({
         kind, amount: Number(amount.replace(/\s/g, '').replace(',', '.')), description,
         date: day ? new Date(`${day}T12:00`).getTime() : undefined,
-        payerType, counterparty: client, contactId: contact?.id,
+        payerType, counterparty: client, contactId: contact?.id, payMethod: kind === 'income' ? payMethod : undefined,
       });
       setAmount(''); setDescription(''); setClient('');
     } catch (err: any) { setError(err?.message || 'Не удалось сохранить'); }
@@ -111,6 +113,11 @@ function MoneyTab() {
           <select className={`${input} md:col-span-2`} value={payerType} onChange={e => setPayerType(e.target.value as PayerType)}>
             <option value="person">Платит физлицо{profile.regime === 'npd' ? ' (НПД 4%)' : ''}</option>
             <option value="company">Платит юрлицо или ИП{profile.regime === 'npd' ? ' (НПД 6%)' : ''}</option>
+          </select>
+        )}
+        {kind === 'income' && profile.regime === 'npd' && (
+          <select className={`${input} md:col-span-2`} aria-label="Способ оплаты" value={payMethod} onChange={e => setPayMethod(e.target.value as PayMethod)}>
+            {(Object.keys(PAY_METHOD_LABELS) as PayMethod[]).map(m => <option key={m} value={m}>{PAY_METHOD_LABELS[m]}{m === 'transfer' ? ' (чек до 9-го числа)' : ' (чек сразу)'}</option>)}
           </select>
         )}
         <button type="submit" className={`${btnPrimary} justify-center`} disabled={!amount.trim()}><Plus className="w-4 h-4" />Записать</button>
@@ -194,7 +201,7 @@ function DocsTab() {
         {error && <p className="md:col-span-4 text-sm text-red-400">{error}</p>}
       </form>
       <div className={`${card} divide-y divide-white/5`}>
-        {docs.length === 0 && <p className="p-4 text-sm text-slate-500">Документов нет. Скажите Светлане: «Выставь счёт Иванову на 15000 за дизайн».</p>}
+        {docs.length === 0 && <p className="p-4 text-sm text-slate-500">Документов нет. Скажите Светлане: «Выстави счёт Иванову на 15000 за дизайн».</p>}
         {docs.map(d => {
           const html = () => renderDocumentHTML(d, bizStore.getProfile());
           return (
@@ -276,7 +283,7 @@ function TaxesTab() {
             <div className={`${card} p-4`}>
               <p className="text-sm mb-2">Лимит дохода НПД: {formatRub(n.income)} из {formatRub(NPD_LIMIT)}</p>
               <div className="h-2.5 rounded-full bg-white/5 overflow-hidden"><div className={`h-full ${n.income > NPD_LIMIT * 0.85 ? 'bg-red-400' : 'bg-emerald-400/70'}`} style={{ width: `${Math.min(100, (n.income / NPD_LIMIT) * 100)}%` }} /></div>
-              {n.limitExceeded && <p className="text-sm text-red-300 mt-2">Доход превысил 2,4 млн ₽: право на НПД утрачено с даты превышения. {/^\d{12}$/.test(profile.inn) && profile.ogrn ? 'ИП может в течение 20 дней подать уведомление о переходе на УСН, иначе — общий режим.' : 'Без статуса ИП дальше доход облагается НДФЛ 13%; чтобы работать на УСН, зарегистрируйте ИП.'}</p>}
+              {n.limitExceeded && <p className="text-sm text-red-300 mt-2">Доход превысил 2,4 млн ₽: право на НПД утрачено с даты превышения. {/^\d{12}$/.test(profile.inn) && profile.ogrn ? 'ИП может в течение 20 дней подать уведомление о переходе на УСН, иначе — общий режим.' : 'Без статуса ИП дальнейший доход облагается НДФЛ по прогрессивной шкале (13–22%); чтобы работать на УСН, зарегистрируйте ИП.'}</p>}
               {!n.limitExceeded && n.income === NPD_LIMIT && <p className="text-sm text-amber-300 mt-2">Лимит исчерпан ровно: любой следующий доход в этом году лишит права на НПД.</p>}
             </div>
             <div className={`${card} divide-y divide-white/5`}>
@@ -374,7 +381,11 @@ function SupportTab({ goProfile }: { goProfile: () => void }) {
 
 function ProfileTab() {
   useBizVersion();
-  const [draft, setDraft] = useState<BizProfile>(bizStore.getProfile());
+  const [draft, setDraft] = useState<BizProfile>(() => {
+    const p = bizStore.getProfile();
+    const y = new Date().getFullYear();
+    return p.fixedContributionsYear === y ? p : { ...p, fixedContributions: contributionsFor(y).fixed };
+  });
   const [msg, setMsg] = useState<string | null>(null);
   const set = (k: keyof BizProfile) => (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setDraft(d => ({ ...d, [k]: e.target.value }));
   const toggle = (k: 'sectors' | 'flags', v: string) => setDraft(d => ({ ...d, [k]: d[k].includes(v) ? d[k].filter(x => x !== v) : [...d[k], v] }));
@@ -386,6 +397,7 @@ function ProfileTab() {
         ...draft,
         birthYear: draft.birthYear ? Number(draft.birthYear) : undefined,
         fixedContributions: Number(draft.fixedContributions) || 0,
+        fixedContributionsYear: new Date().getFullYear(),
         contributionsPaid: Number(draft.contributionsPaid) || 0,
         patentCost: Number(draft.patentCost) || 0,
       });
@@ -428,7 +440,14 @@ function ProfileTab() {
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.hasEmployees} onChange={e => setDraft(d => ({ ...d, hasEmployees: e.target.checked }))} />Есть работники</label>
         )}
         {(draft.regime === 'usn6' || draft.regime === 'usn15') && (
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.vatGeneralRate} onChange={e => setDraft(d => ({ ...d, vatGeneralRate: e.target.checked }))} />НДС по общей ставке 22% (с вычетами) вместо 5%/7%</label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.vatGeneralRate} onChange={e => setDraft(d => ({ ...d, vatGeneralRate: e.target.checked }))} />НДС по общей ставке (22% с 2026 года) с вычетами вместо 5%/7%</label>
+        )}
+        {draft.regime === 'usn15' && (
+          <label className="text-sm space-y-1"><span className="text-slate-400">1% взносов учитывать в расходах</span>
+            <select className={input} value={draft.usn15OnePercentTiming} onChange={e => setDraft(d => ({ ...d, usn15OnePercentTiming: e.target.value === 'next' ? 'next' : 'same' }))}>
+              <option value="same">в году начисления (за который он считается)</option>
+              <option value="next">в году уплаты (следующем)</option>
+            </select></label>
         )}
         {(draft.regime === 'usn6' || draft.regime === 'usn15' || draft.regime === 'ooo') && (
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.orgOnUsn} onChange={e => setDraft(d => ({ ...d, orgOnUsn: e.target.checked }))} />Это организация (ООО) на УСН</label>
