@@ -1,6 +1,7 @@
 // Tests for Verification Logic
 // Tests the BEFORE → ACTION → AFTER → COMPARE pattern
 // tap/type прикалываются к приложению на экране: первый getCurrentApp — «закреплённое» приложение.
+// Доказательство результата принимается только с экрана того же приложения.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { toolRegistry } from '../services/ToolRegistry';
@@ -66,6 +67,22 @@ describe('Verification Logic', () => {
       expect(verified).toBe(false);
     });
 
+    it('does not read the verification field from an overlay that appeared after typing', async () => {
+      const tool = toolRegistry.getTool('type_text');
+      const mockHands = {
+        isConnected: () => true,
+        type: vi.fn().mockResolvedValue({ success: true }),
+        getAccessibilityTree: focused('Hello World'),
+        getCurrentApp: vi.fn().mockResolvedValueOnce('com.example.notes').mockResolvedValueOnce('com.example.notes').mockResolvedValue('com.evil.overlay'),
+      };
+      vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
+      vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
+      const result = await tool!.execute({ text: 'Hello World' });
+      expect(result.success).toBe(true);
+      expect(await tool!.verify!({ text: 'Hello World' }, result)).toBe(false);
+      expect(mockHands.getAccessibilityTree).not.toHaveBeenCalled();
+    });
+
     it('refuses to type when another app took the screen', async () => {
       const tool = toolRegistry.getTool('type_text');
       const mockHands = {
@@ -106,10 +123,7 @@ describe('Verification Logic', () => {
         getAccessibilityTree: vi.fn()
           .mockResolvedValueOnce({ root: { children: [{ id: '1' }, { id: '2' }] } })
           .mockResolvedValueOnce({ root: { children: [{ id: '1' }, { id: '2' }, { id: '3' }] } }),
-        getCurrentApp: vi.fn()
-          .mockResolvedValueOnce('com.app.before')
-          .mockResolvedValueOnce('com.app.before')
-          .mockResolvedValueOnce('com.app.after')
+        getCurrentApp: vi.fn().mockResolvedValue('com.app.before')
       };
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
@@ -139,7 +153,7 @@ describe('Verification Logic', () => {
       expect(verified).toBe(false);
     });
 
-    it('should pass verification if app changed (navigation)', async () => {
+    it('does not count a different app on screen after the tap as proof (could be an overlay)', async () => {
       const tool = toolRegistry.getTool('tap_element');
       const mockHands = {
         isConnected: () => true,
@@ -147,7 +161,7 @@ describe('Verification Logic', () => {
         tap: vi.fn().mockResolvedValue({ success: true }),
         getAccessibilityTree: vi.fn()
           .mockResolvedValueOnce({ root: { children: [{ id: '1' }] } })
-          .mockResolvedValueOnce({ root: { children: [{ id: '1' }] } }),
+          .mockResolvedValueOnce({ root: { children: [{ id: '1' }, { id: '2' }] } }),
         getCurrentApp: vi.fn()
           .mockResolvedValueOnce('com.app.home')
           .mockResolvedValueOnce('com.app.home')
@@ -156,8 +170,9 @@ describe('Verification Logic', () => {
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
       vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
       const result = await tool!.execute({ elementText: 'Settings' });
+      expect(result.success).toBe(true);
       const verified = await tool!.verify!({ elementText: 'Settings' }, result);
-      expect(verified).toBe(true);
+      expect(verified).toBe(false);
     });
 
     it('refuses to tap when another app took the screen after the element was found', async () => {
