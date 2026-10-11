@@ -12,7 +12,8 @@ const LOOPBACK_WS_RE = /^wss?:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?(\/[A-Za-z0
  * (шифрование, подпись, защита от повтора).
  */
 export function debugTransportAllowed(): boolean {
-  return import.meta.env.DEV === true;
+  const meta = import.meta as unknown as { env?: { DEV?: boolean } };
+  return meta.env?.DEV === true;
 }
 
 export class HandsManager {

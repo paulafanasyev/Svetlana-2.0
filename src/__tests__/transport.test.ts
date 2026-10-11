@@ -157,10 +157,10 @@ describe('Integration: Tool Execution Flow', () => {
     expect(result.requestId).toBeDefined();
     expect(result.timestamp).toBeDefined();
     
-    // 4. Execution is logged
+    // 4. Execution is logged (redacted copy)
     const log = toolRegistry.getExecutionLog(1);
     expect(log[0].toolId).toBe('open_app');
-    expect(log[0].result.success).toBe(false);
+    expect((log[0].result as { success?: boolean }).success).toBe(false);
   });
 
   it('should handle high-risk tools with confirmation', async () => {
