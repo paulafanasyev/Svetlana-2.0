@@ -5,8 +5,8 @@
 // приложения = отказ. Ввод идёт только в то поле, которое было в фокусе в начале (фокус ушёл = отказ).
 // Сообщение уходит только в чат, в ЗАГОЛОВКЕ которого (самый верхний текст) именно этот собеседник,
 // только той же кнопкой «Отправить» и только пока фокус всё ещё в том же поле сообщения.
-// Если в телефонной книге несколько контактов с таким именем (два «Алекса»), сообщение не отправляется:
-// нужен номер или полное имя. Имя в тексте сообщения ниже заголовка не считается. «Отправляющие» клавиши (Enter, Search, Go…) нажимаются
+// Если в телефонной книге несколько контактов с таким именем (два «Алекса») или книгу не удалось проверить,
+// сообщение не отправляется: нужен номер или полное имя. Имя в тексте сообщения ниже заголовка не считается. «Отправляющие» клавиши (Enter, Search, Go…) нажимаются
 // только в поле в фокусе и только если фокус не ушёл; поиск в браузере вводит и отправляет запрос в то же поле.
 // Свайп — «слепой» жест по координатам внутри того же приложения (низкий риск, цели у него нет).
 // Проверка результата (verify) тоже считает доказательством только экран того же приложения.
@@ -108,24 +108,29 @@ async function recipientOnScreen(hands: { getAccessibilityTree(): Promise<any> }
   try { const tree = await hands.getAccessibilityTree(); return showsRecipient(tree?.root, contact); } catch { return false; }
 }
 
+type ContactCheck = 'unique' | 'ambiguous' | 'unverified';
+
 /**
  * Имя подходит к нескольким контактам телефона (то же имя или «Alex» для «Alex Smith» — заголовок чата
  * у обоих пройдёт проверку): какой из них имеется в виду — неизвестно, первого попавшегося не выбираем.
- * Номер телефона однозначен и не проверяется. Если телефонная книга недоступна, остаются проверки на экране.
+ * Номер телефона однозначен и не проверяется. Если телефонная книга по мосту не ответила (нет разрешения,
+ * ошибка, непонятный ответ) — единственность не доказана, и по имени не пишем (fail closed).
+ * Отладочный WebSocket-путь (не HTTPHands) телефонной книги не имеет: там остаются проверки на экране.
  */
-async function ambiguousContact(hands: unknown, contact: string): Promise<boolean> {
+async function checkContact(hands: unknown, contact: string): Promise<ContactCheck> {
   const want = contact.trim().toLowerCase();
-  if (!want || /^\+?[\d\s().-]{5,}$/.test(want)) return false;
-  if (!(hands instanceof HTTPHands)) return false;
+  if (!want) return 'unverified';
+  if (/^\+?[\d\s().-]{5,}$/.test(want)) return 'unique';
+  if (!(hands instanceof HTTPHands)) return 'unique';
   try {
     const page = await hands.listContacts({ query: contact.trim(), limit: 50 });
-    const list: unknown[] = Array.isArray(page?.contacts) ? page.contacts : [];
-    const matches = list.filter(c => {
+    if (!page || !Array.isArray(page.contacts)) return 'unverified';
+    const matches = (page.contacts as unknown[]).filter(c => {
       const name = String((c as { name?: unknown } | null)?.name ?? '').trim().toLowerCase();
       return name === want || name.startsWith(`${want} `);
     });
-    return matches.length > 1;
-  } catch { return false; }
+    return matches.length > 1 ? 'ambiguous' : 'unique';
+  } catch { return 'unverified'; }
 }
 
 const UNKNOWN_APP: ToolResult = { success: false, error: 'Cannot determine which app is on screen. Stopped for safety.' };
@@ -136,6 +141,7 @@ const FIELD_CHANGED: ToolResult = { success: false, error: 'The input field chan
 const NO_CHAT_INPUT: ToolResult = { success: false, error: 'Message field is not focused in the chat. Stopped for safety.' };
 const WRONG_RECIPIENT: ToolResult = { success: false, error: 'The open chat is not with the requested contact. Stopped for safety.' };
 const AMBIGUOUS_CONTACT: ToolResult = { success: false, error: 'There are several contacts with this name. Use the phone number or the full name.' };
+const CONTACT_UNVERIFIED: ToolResult = { success: false, error: 'Could not check the phone contacts for this name. Use the phone number instead.' };
 
 export const openAppTool: Tool = {
   id: 'open_app', name: 'Open Application', description: 'Launch an Android application by package name', category: 'navigation', riskLevel: 'low',
@@ -260,8 +266,11 @@ export const sendMessageTool: Tool = {
   inputSchema: { type: 'object', properties: { app: { type: 'string', description: 'Messaging app package name', enum: ['org.telegram.messenger', 'com.whatsapp', 'com.viber.voip'] }, contact: { type: 'string', description: 'Contact name or phone number' }, message: { type: 'string', description: 'Message text to send' } }, required: ['app', 'contact', 'message'] },
   async execute(params: { app: string; contact: string; message: string }): Promise<ToolResult> {
     await requireHands(); const hands = handsManager.getHands(); if (!hands) return { success: false, error: 'Hands not available' };
-    // Несколько контактов с таким именем — неизвестно, кому писать: ничего не открываем и не печатаем.
-    if (await ambiguousContact(hands, params.contact)) return AMBIGUOUS_CONTACT;
+    // Несколько контактов с таким именем (или книгу не удалось проверить) — неизвестно, кому писать:
+    // ничего не открываем и не печатаем.
+    const check = await checkContact(hands, params.contact);
+    if (check === 'ambiguous') return AMBIGUOUS_CONTACT;
+    if (check === 'unverified') return CONTACT_UNVERIFIED;
     const moved = () => movedFrom(params.app);
     const launch = await hands.launchApp(params.app); if (!launch.success) return { success: false, error: `Failed to launch ${params.app}` };
     await new Promise(r => setTimeout(r, 2000));
