@@ -3,8 +3,11 @@
 // This file only defines the contract and registry - NO stub implementations
 // Безопасность: КАЖДЫЙ вызов инструмента проходит через ActionGate (единая точка разрешений).
 // Источник по умолчанию — 'unknown': изменения данных и действия на устройстве требуют подтверждения человека.
+// На последней границе перед выполнением аргументы строго проверяются по схеме (лишние поля — отказ),
+// а журнал выполнения хранит только замаскированные параметры и результаты (без скриншотов и секретов).
 import { authorizeAction, summarizeAction, type ActionSource, type UserGesture } from './security/ActionGate';
 import { sanitizeArgs } from './security/SafeData';
+import { redactValue } from './security/Redact';
 
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 export interface ToolInputSchema { type:'object'; properties:Record<string,{type:string;description:string;required?:boolean;enum?:string[]}>; required?:string[]; }
@@ -13,14 +16,18 @@ export interface Tool { id:string; name:string; description:string; inputSchema:
 export interface ToolExecutionContext { platform:'android'|'ios'|'windows'|'macos'|'web'; permissions:string[]; environment:Record<string,any>; }
 export interface StructuredToolCall { tool:string; arguments:Record<string,any>; requestId:string; timestamp:number; }
 export interface ExecuteOptions { source?:ActionSource; gesture?:UserGesture }
+export interface ExecutionLogEntry { requestId:string; toolId:string; params:unknown; result:unknown; timestamp:number }
 
 /** Глубокая копия уже проверенных и подтверждённых аргументов: инструмент не может изменить подтверждённый объект. */
 function copyArgs(args:Record<string,unknown>):Record<string,any>{return JSON.parse(JSON.stringify(args));}
 
+const LOG_LIMIT = 200;
+const LOG_TTL_MS = 60 * 60 * 1000;
+
 class ToolRegistry {
   private tools:Map<string,Tool>=new Map();
   private context:ToolExecutionContext={platform:'web',permissions:[],environment:{}};
-  private executionLog:Array<{requestId:string;toolId:string;params:any;result:ToolResult;timestamp:number}>=[];
+  private executionLog:ExecutionLogEntry[]=[];
   registerTool(tool:Tool){this.tools.set(tool.id,tool)}
   unregisterTool(id:string){this.tools.delete(id)}
   getTool(id:string){return this.tools.get(id)}
@@ -41,7 +48,6 @@ class ToolRegistry {
     // Разрешение — до любых других шагов: ни один путь (агент, оркестратор, повтор) не выполняет инструмент в обход шлюза.
     const denied=await this.gate(requestId,id,args,opts); if(denied)return denied;
     if(!tool)return this.record(requestId,id,args,{success:false,error:`Tool ${id} not found in registry`,requestId,timestamp:Date.now()});
-    // Validate first so malformed requests are deterministic and do not require a device connection.
     const validation=this.validateInput(tool,args);
     if(!validation.valid)return this.record(requestId,id,args,{success:false,error:validation.error,requestId,timestamp:Date.now()});
     const available=await tool.isAvailable();
@@ -53,6 +59,9 @@ class ToolRegistry {
   }
 
   private async executeValidated(tool:Tool,id:string,params:Record<string,any>,requestId:string):Promise<ToolResult>{
+    // Последняя граница: повторная строгая проверка именно тех аргументов, что уйдут в инструмент.
+    const validation=this.validateInput(tool,params);
+    if(!validation.valid)return this.record(requestId,id,params,{success:false,error:validation.error,requestId,timestamp:Date.now()});
     try{
       const result=await tool.execute(params); result.requestId=requestId; result.timestamp=Date.now();
       if(tool.verify&&result.success){const verified=await tool.verify(params,result); result.verification={status:verified?'PASS':'FAIL',confidence:verified?1:0,details:verified?'Verified via observation':'Verification failed'}; if(!verified){result.success=false;result.error='Verification failed after execution';}}
@@ -73,13 +82,26 @@ class ToolRegistry {
   }
 
   private getConfirmationMessage(tool:Tool,params:Record<string,any>):string{const riskLabels:Record<RiskLevel,string>={low:'Low risk',medium:'Medium risk',high:'⚡ HIGH RISK',critical:'⚠️ CRITICAL'};return `${riskLabels[tool.riskLevel]}: ${tool.name}\n\nThis action will be performed on your Android device.\nParameters: ${JSON.stringify(params,null,2)}\n\nDo you confirm?`;}
-  private validateInput(tool:Tool,params:Record<string,any>):{valid:boolean;error?:string}{const schema=tool.inputSchema;if(schema.required){for(const field of schema.required){if(!(field in params)||params[field]===undefined||params[field]===null)return{valid:false,error:`Missing required parameter: ${field}`};}}for(const[key,prop]of Object.entries(schema.properties)){if(key in params&&params[key]!==undefined&&params[key]!==null){const value=params[key];if(prop.type==='string'&&typeof value!=='string')return{valid:false,error:`Parameter ${key} must be a string`};if(prop.type==='number'&&typeof value!=='number')return{valid:false,error:`Parameter ${key} must be a number`};if(prop.type==='boolean'&&typeof value!=='boolean')return{valid:false,error:`Parameter ${key} must be a boolean`};if(prop.enum&&!prop.enum.includes(value))return{valid:false,error:`Parameter ${key} must be one of: ${prop.enum.join(', ')}`};}}return{valid:true};}
+
+  /** Строгая проверка по схеме: обязательные поля, типы, enum и НИКАКИХ лишних полей. */
+  private validateInput(tool:Tool,params:Record<string,any>):{valid:boolean;error?:string}{
+    const schema=tool.inputSchema;
+    for(const key of Object.keys(params)){if(!(key in schema.properties))return{valid:false,error:`Unknown parameter: ${key}`};}
+    if(schema.required){for(const field of schema.required){if(!(field in params)||params[field]===undefined||params[field]===null)return{valid:false,error:`Missing required parameter: ${field}`};}}
+    for(const[key,prop]of Object.entries(schema.properties)){if(key in params&&params[key]!==undefined&&params[key]!==null){const value=params[key];if(prop.type==='string'&&typeof value!=='string')return{valid:false,error:`Parameter ${key} must be a string`};if(prop.type==='number'&&(typeof value!=='number'||!Number.isFinite(value)))return{valid:false,error:`Parameter ${key} must be a number`};if(prop.type==='boolean'&&typeof value!=='boolean')return{valid:false,error:`Parameter ${key} must be a boolean`};if(prop.enum&&!prop.enum.includes(value))return{valid:false,error:`Parameter ${key} must be one of: ${prop.enum.join(', ')}`};}}
+    return{valid:true};
+  }
   private record(requestId:string,toolId:string,params:any,result:ToolResult){this.logExecution(requestId,toolId,params,result);return result;}
-  private logExecution(requestId:string,toolId:string,params:any,result:ToolResult){this.executionLog.push({requestId,toolId,params,result,timestamp:Date.now()});if(this.executionLog.length>1000)this.executionLog.shift();}
+  /** В журнал попадают только замаскированные копии (ключи, карты, телефоны, скриншоты скрыты); старые записи удаляются. */
+  private logExecution(requestId:string,toolId:string,params:any,result:ToolResult){
+    const now=Date.now();
+    this.executionLog.push({requestId,toolId,params:redactValue(params),result:redactValue(result),timestamp:now});
+    this.executionLog=this.executionLog.filter(e=>now-e.timestamp<=LOG_TTL_MS).slice(-LOG_LIMIT);
+  }
   setContext(context:Partial<ToolExecutionContext>){this.context={...this.context,...context}}
   getContext(){return{...this.context}}
-  getExecutionLog(limit:number=50){return this.executionLog.slice(-limit)}
+  getExecutionLog(limit:number=50):ExecutionLogEntry[]{const now=Date.now();return this.executionLog.filter(e=>now-e.timestamp<=LOG_TTL_MS).slice(-limit)}
   generateToolDescriptions():string{return this.getAllTools().map(tool=>{const params=Object.entries(tool.inputSchema.properties).map(([key,prop])=>`    - ${key}: ${prop.description}${prop.required?' (required)':''}`).join('\n');return `${tool.id}: ${tool.description}\n  Risk: ${tool.riskLevel}\n  Category: ${tool.category}\n  Parameters:\n${params}`}).join('\n\n')}
-  generateFunctionCallingSchema():object[]{return this.getAllTools().map(tool=>({type:'function',function:{name:tool.id,description:tool.description,parameters:{type:'object',properties:tool.inputSchema.properties,required:tool.inputSchema.required}}}))}
+  generateFunctionCallingSchema():object[]{return this.getAllTools().map(tool=>({type:'function',function:{name:tool.id,description:tool.description,parameters:{type:'object',properties:tool.inputSchema.properties,required:tool.inputSchema.required,additionalProperties:false}}}))}
 }
 export const toolRegistry=new ToolRegistry();

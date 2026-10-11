@@ -3,8 +3,17 @@ import type { PlatformHands, PlatformHandsConfig, ConnectionStatus } from './Pla
 import { WebSocketHands } from './WebSocketHands';
 import { HTTPHands } from './HTTPHands';
 
-/** WebSocket-транспорт не защищён шифрованием: только для отладки на этом же компьютере. */
+/** WebSocket-транспорт не защищён шифрованием и не проверяет собеседника: только для отладки на этом же компьютере. */
 const LOOPBACK_WS_RE = /^wss?:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?(\/[A-Za-z0-9._~-]*)*$/;
+
+/**
+ * Отладочный WebSocket доступен ТОЛЬКО в сборке для разработки (vite dev / тесты). В боевой сборке
+ * (сайт и Windows) управление телефоном идёт только через защищённый HTTP-мост v2
+ * (шифрование, подпись, защита от повтора).
+ */
+export function debugTransportAllowed(): boolean {
+  return import.meta.env.DEV === true;
+}
 
 export class HandsManager {
   private hands: PlatformHands | null = null;
@@ -19,6 +28,9 @@ export class HandsManager {
 
     try {
       if (config.transport === 'websocket') {
+        if (!debugTransportAllowed()) {
+          throw new Error('Отладочное подключение WebSocket отключено. Для телефона выберите защищённое подключение HTTP.');
+        }
         if (!LOOPBACK_WS_RE.test(config.endpoint.trim())) {
           throw new Error('WebSocket доступен только для отладки на этом компьютере. Для телефона выберите защищённое подключение HTTP.');
         }
