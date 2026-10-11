@@ -1,5 +1,9 @@
 // MCP (Model Context Protocol) - Minimal implementation for Android communication
 // This is a JSON-RPC 2.0 based protocol for tool execution
+import { safeJsonParse } from './security/SafeData';
+
+/** Максимальный размер одного сообщения: защита от переполнения памяти гигантскими кадрами. */
+export const MCP_MAX_MESSAGE_CHARS = 5 * 1024 * 1024;
 
 export interface MCPRequest {
   jsonrpc: '2.0';
@@ -107,12 +111,13 @@ export function createMCPError(code: number, message: string, data?: any): MCPEr
   };
 }
 
-// Parse MCP message
+// Parse MCP message (с ограничением размера и без опасных ключей __proto__/constructor)
 export function parseMCPMessage(data: string): MCPRequest | MCPResponse | null {
   try {
-    const parsed = JSON.parse(data);
-    if (parsed.jsonrpc === '2.0') {
-      if ('method' in parsed) {
+    if (typeof data !== 'string' || data.length > MCP_MAX_MESSAGE_CHARS) return null;
+    const parsed = safeJsonParse(data, MCP_MAX_MESSAGE_CHARS) as any;
+    if (parsed && typeof parsed === 'object' && parsed.jsonrpc === '2.0') {
+      if ('method' in parsed && typeof parsed.method === 'string') {
         return parsed as MCPRequest;
       } else if ('id' in parsed) {
         return parsed as MCPResponse;
@@ -141,8 +146,8 @@ export interface MCPClient {
 // Documentation
 export const MCP_DOCUMENTATION = {
   protocol: 'JSON-RPC 2.0',
-  transport: ['WebSocket', 'HTTP'],
-  authentication: 'None (local network only)',
+  transport: ['WebSocket (loopback only)', 'HTTP (bridge protocol v2, encrypted)'],
+  authentication: 'Bridge v2: PBKDF2 + AES-GCM from the pairing code; WebSocket: loopback debug only',
   
   methods: {
     'device.getInfo': {
@@ -207,9 +212,9 @@ export const MCP_DOCUMENTATION = {
   
   security: {
     notes: [
-      'MCP server should only listen on local network',
-      'No authentication implemented - assume trusted network',
-      'For production: add authentication and encryption',
+      'Phone bridge uses protocol v2: every request and reply is encrypted and authenticated',
+      'WebSocket transport is allowed only to 127.0.0.1/localhost (debug)',
+      'All side-effecting tools go through ActionGate confirmation',
     ],
   },
 };

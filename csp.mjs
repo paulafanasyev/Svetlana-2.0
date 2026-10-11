@@ -1,16 +1,18 @@
 // Единая политика безопасности контента (CSP) для веб-сборки и Windows (Tauri).
 // Разрешены только нужные адреса: облачные ИИ, распознавание речи, DaData, ФНС, локальные модели и мост с телефоном.
 // Любой другой адрес (в т.ч. подменённый «свой» сервер ИИ) браузер заблокирует. Картинки — только свои (без внешних ссылок-маячков).
-// Порты 8080/8443 в локальной сети нужны мосту с телефоном (адрес вводит пользователь); их сузим после защищённого сопряжения.
+// Мост с телефоном: только http на порт 8080 (протокол v2 сам шифрует и подписывает каждый запрос).
+// CSP не умеет выразить «только домашняя сеть», поэтому адрес дополнительно проверяет BridgeCrypto.validateBridgeEndpoint
+// (10.x, 172.16–31.x, 192.168.x). WebSocket и порт 8443 в локальной сети больше не разрешены.
 export const CLOUD_ORIGINS = [
   'https://api.openai.com', 'https://api.anthropic.com', 'https://api.groq.com', 'https://openrouter.ai',
   'https://api.deepseek.com', 'https://generativelanguage.googleapis.com', 'https://api.mistral.ai',
   'https://suggestions.dadata.ru', 'https://statusnpd.nalog.ru',
 ];
-// Локальные модели (Ollama, LM Studio, llama.cpp, vLLM), Windows MCP и мост Svetlana-home (порт 8080 в домашней сети).
+// Локальные модели (Ollama, LM Studio, llama.cpp, vLLM), Windows MCP на этом ПК и мост Svetlana-home (порт 8080 в домашней сети).
 export const LOCAL_ORIGINS = [
   'http://127.0.0.1:*', 'http://localhost:*', 'ws://127.0.0.1:*', 'ws://localhost:*',
-  'http://*:8080', 'ws://*:8080', 'https://*:8443', 'wss://*:8443',
+  'http://*:8080',
 ];
 
 export function buildCsp({ desktop = false } = {}) {
