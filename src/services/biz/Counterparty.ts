@@ -182,7 +182,7 @@ export async function checkCounterparty(innRaw: string, opts: { now?: number; ke
   } else {
     report.notes.push('Для названия, адреса, руководителя и статуса добавьте бесплатный ключ DaData. Пока проверена только контрольная сумма ИНН.');
   }
-  if (inn.length === 12 && report.party?.kind !== 'ip') {
+  if (inn.length === 12) { // ИП тоже может быть самозанятым
     const npd = await checkSelfEmployed(inn, now, opts.fetchImpl === undefined ? defaultFetch() : opts.fetchImpl);
     if (npd !== null) {
       report.selfEmployed = npd;

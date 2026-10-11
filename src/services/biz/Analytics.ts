@@ -1,5 +1,6 @@
 // Svetlana Business — финансовая аналитика: динамика по месяцам, клиенты, расходы, прогноз до конца года и подсказки.
-import { bizStore, BizStore, NPD_LIMIT, formatRub, round2, type LedgerEntry } from './BizStore';
+import { bizStore, BizStore, NPD_LIMIT, formatRub, round2, isTaxable, type LedgerEntry } from './BizStore';
+import { onePercent, NPD_RECEIPT_FINE } from './TaxRules';
 
 export interface MonthStat { month: string; label: string; income: number; expenses: number; profit: number; tax: number; payments: number }
 export interface ClientStat { name: string; amount: number; share: number; payments: number; lastPaid: number; contactId?: string }
@@ -64,7 +65,8 @@ export function computeAnalytics(store: BizStore = bizStore): Analytics {
   const year = new Date(now).getFullYear();
   const profile = store.getProfile();
   const regime = profile.regime;
-  const all = store.listEntries();
+  // Переводы себе, займы и возвраты (taxable = false) — не выручка: в аналитике их не считаем.
+  const all = store.listEntries().filter(isTaxable);
   const npd = regime === 'npd' ? npdTaxByMonth(store, [year - 1, year]) : new Map<string, number>();
 
   // 13 месяцев: нужен позапрошлый для сравнения; год назад считаем отдельно.
@@ -130,11 +132,28 @@ export function computeAnalytics(store: BizStore = bizStore): Analytics {
   const forecastIncome = round2(ytdIncome + Math.max(0, avgMonth - current.income) + avgMonth * remainingFull);
   const forecastExpenses = ytdExpenses + Math.max(0, avgExp - current.expenses) + avgExp * remainingFull;
   let forecastTax = 0;
-  if (regime === 'npd') forecastTax = ytdIncome > 0 ? round2(ytdTax * (forecastIncome / ytdIncome)) : round2(forecastIncome * 0.05);
-  if (regime === 'usn6') forecastTax = round2(Math.max(0, forecastIncome * 0.06 - profile.fixedContributions - Math.max(0, forecastIncome - 300_000) * 0.01));
-  if (regime === 'usn15') forecastTax = round2(Math.max((forecastIncome - forecastExpenses) * 0.15, forecastIncome * 0.01, 0));
+  if (regime === 'npd') {
+    // Остаток года: доля оплат от компаний/ИП как в этом году (6%), остальное — от физлиц (4%), минус остаток вычета.
+    const n = store.npdSummary(year);
+    const fromCompanies = n.months.reduce((sum, m) => sum + m.fromCompanies, 0);
+    const share = n.income > 0 ? fromCompanies / n.income : 0;
+    const rest = Math.max(0, forecastIncome - ytdIncome);
+    const gross = rest * (0.04 * (1 - share) + 0.06 * share);
+    const deduction = Math.min(n.deductionLeft, rest * (0.01 * (1 - share) + 0.02 * share));
+    forecastTax = round2(ytdTax + gross - deduction);
+  }
+  if (regime === 'usn6' || regime === 'usn15') {
+    const u = store.usnSummary(year);
+    if (regime === 'usn6') {
+      const gross = forecastIncome * 0.06;
+      forecastTax = round2(gross - Math.min(u.contributionsFixed + u.contributionsPrevExtra, profile.hasEmployees ? gross * 0.5 : gross));
+    } else {
+      const extra = onePercent(forecastIncome - forecastExpenses, year);
+      forecastTax = round2(Math.max((forecastIncome - forecastExpenses - u.contributionsFixed - extra) * 0.15, forecastIncome * 0.01, 0));
+    }
+  }
   let npdLimitDate: number | undefined;
-  const npdLimitReached = regime === 'npd' && ytdIncome >= NPD_LIMIT;
+  const npdLimitReached = regime === 'npd' && ytdIncome > NPD_LIMIT;
   if (regime === 'npd' && !npdLimitReached && avgMonth > 0) {
     const monthsLeft = (NPD_LIMIT - ytdIncome) / avgMonth;
     const t = now + monthsLeft * 30.4 * DAY;
@@ -151,11 +170,14 @@ export function computeAnalytics(store: BizStore = bizStore): Analytics {
   if (changeVsPrev !== null && changeVsPrev >= 25) insights.push(`Доход за ${lastName} вырос на ${changeVsPrev}% к предыдущему месяцу. Так держать!`);
   if (lastFull.income > 0 && lastFull.expenses > lastFull.income) insights.push(`В ${lastName} расходы (${formatRub(lastFull.expenses)}) превысили доходы (${formatRub(lastFull.income)}).`);
   if (topClients[0] && active.length >= 2 && topClients[0].share >= 50) insights.push(`«${topClients[0].name}» приносит ${topClients[0].share}% дохода. Если он уйдёт, просядете сильно: ищите ещё клиентов.`);
-  if (npdLimitReached) insights.push('Лимит НПД 2,4 млн ₽ превышен: с этого момента нужно сменить режим (ИП на УСН) в течение 20 дней.');
+  if (npdLimitReached) insights.push('Доход превысил лимит НПД 2,4 млн ₽: с этого момента вы не самозанятый, ФНС снимет с учёта. Если вы ИП — подайте уведомление о переходе на УСН в течение 20 дней с даты снятия, иначе будет общий режим. Если не ИП — для продолжения работы зарегистрируйте ИП.');
+  else if (regime === 'npd' && ytdIncome === NPD_LIMIT) insights.push('Лимит НПД 2,4 млн ₽ исчерпан ровно: следующий же доход лишит права на НПД.');
   else if (npdLimitDate) insights.push(`При текущем темпе лимит НПД 2,4 млн ₽ закончится примерно в ${new Date(npdLimitDate).toLocaleDateString('ru-RU', { month: 'long' })}. Заранее подумайте об ИП на УСН.`);
   if (regime === 'npd') {
     const missing = store.npdSummary(year).receiptsMissing;
-    if (missing) insights.push(`Не выбито чеков: ${missing}. Без чека штраф 20% от суммы.`);
+    const overdue = store.overdueReceipts().length;
+    if (overdue) insights.push(`Просрочено чеков: ${overdue} (срок — 9-е число следующего месяца при безналичной оплате, сразу — при наличной). За это ${NPD_RECEIPT_FINE}.`);
+    else if (missing) insights.push(`Не выбито чеков: ${missing}. При безналичной оплате чек нужен до 9-го числа следующего месяца, при наличной — сразу.`);
   }
   const rec = store.receivables();
   const overdue = rec.filter(r => r.daysOverdue > 0);

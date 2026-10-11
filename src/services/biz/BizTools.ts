@@ -310,7 +310,7 @@ export function describeBizResult(tool: string, result: ToolResult): string {
           + (d.receiptsMissing ? ` Чеков не выбито: ${d.receiptsMissing}.` : '') + dl;
       }
       if (d.regime === 'usn6' || d.regime === 'usn15') {
-        return `🧮 УСН ${d.regime === 'usn6' ? '6%' : '15%'} ${d.year}: доход ${formatRub(d.income)}${d.regime === 'usn15' ? `, расходы ${formatRub(d.expenses)}` : ''}, налог (оценка) ${formatRub(d.taxAfterContributions)}. Взносы: фикс. ${formatRub(d.contributionsFixed)} + 1% ${formatRub(d.contributionsExtra)}.${dl}`;
+        return `🧮 УСН ${d.regime === 'usn6' ? '6%' : '15%'} ${d.year}: доход ${formatRub(d.income)}${d.regime === 'usn15' ? `, расходы ${formatRub(d.expenses)}` : ''}, налог (оценка) ${formatRub(d.taxAfterContributions)}. Взносы: фикс. ${formatRub(d.contributionsFixed)} + 1% ${formatRub(d.contributionsExtra)}${d.regime === 'usn6' ? `, уменьшили налог на ${formatRub(d.contributionsDeducted ?? 0)}${d.hasEmployees ? ' (лимит 50%, есть работники)' : ''}` : ''}.${d.vat?.text ? ` НДС: ${d.vat.text}` : ''}${dl}`;
       }
       return `ℹ️ ${d.note}${dl}`;
     }
