@@ -2,7 +2,7 @@
 // пишем звук с микрофона и сверяем каждую фразу с отпечатком голоса (VoicePrint).
 // Защита от записи: перед первой командой Светлана просит сказать 3 случайные цифры (Liveness),
 // цифры и голос проверяются по одному и тому же звуку. Без записанного голоса управление выключено.
-import { listen, type ListenOptions, type Listener } from './SpeechEngine';
+import { listen, getCloudStt, transcribe, type ListenOptions, type Listener } from './SpeechEngine';
 import { computeVoicePrint, loadTemplate, verifyPrint, type VerifyResult, type VoicePrint, type VoiceTemplate } from './VoicePrint';
 import { speakText, stopSpeaking } from './Tts';
 import { generateChallenge, matchesChallenge, templateId, VoiceLockout, VoiceTrust, type Challenge } from './Liveness';
@@ -26,7 +26,10 @@ export async function startCapture(): Promise<PcmCapture> {
     chunks.push(c); total += c.length;
     while (total - chunks[0].length > max) total -= chunks.shift()!.length;
   };
-  src.connect(proc); proc.connect(ctx.destination);
+  // ScriptProcessor работает, только если подключён к выходу; глушим его, чтобы звук микрофона не шёл в колонки.
+  const sink = ctx.createGain();
+  sink.gain.value = 0;
+  src.connect(proc); proc.connect(sink); sink.connect(ctx.destination);
   return {
     take(seconds) {
       const want = Math.min(total, Math.round(seconds * ctx.sampleRate));
@@ -40,7 +43,7 @@ export async function startCapture(): Promise<PcmCapture> {
       return { pcm: out, sampleRate: ctx.sampleRate };
     },
     stop() {
-      try { proc.disconnect(); src.disconnect(); } catch { /* уже отключено */ }
+      try { proc.disconnect(); src.disconnect(); sink.disconnect(); } catch { /* уже отключено */ }
       stream.getTracks().forEach(t => t.stop());
       void ctx.close().catch(() => undefined);
     },
@@ -58,6 +61,21 @@ export async function recordPrint(seconds = 4): Promise<VoicePrint | null> {
 }
 
 export function voiceEnrolled(): boolean { return !!loadTemplate(); }
+
+/** PCM (-1..1) в WAV 16 бит моно: так облачное распознавание получает ровно тот звук, по которому проверен голос. */
+export function pcmToWav(pcm: Float32Array, sampleRate: number): Blob {
+  const n = pcm.length;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const str = (o: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  const rate = Math.round(sampleRate);
+  str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE');
+  str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) { const x = Math.max(-1, Math.min(1, pcm[i])); v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true); }
+  return new Blob([buf], { type: 'audio/wav' });
+}
 
 export const NOT_ENROLLED = 'Голосовые команды выполняются только по вашему голосу. Запишите голос: кнопка «Голос» → настройки (шестерёнка) → «Записать мой голос».';
 
@@ -83,6 +101,12 @@ export interface GuardDeps {
   computePrint(pcm: Float32Array, sampleRate: number): VoicePrint | null;
   verify(p: VoicePrint, t: VoiceTemplate): VerifyResult;
   generate(): Challenge;
+  /**
+   * Облачное распознавание записанного нами же звука (null, если не настроено). Если есть, ответ с цифрами
+   * распознаётся из той же записи, по которой проверяется голос: подменить звук для одной из проверок нельзя.
+   * Без него остаётся встроенное распознавание браузера: оно слушает тот же микрофон одновременно с нами.
+   */
+  cloudTranscribe(): ((wav: Blob) => Promise<string>) | null;
   trust: VoiceTrust;
   lockout: VoiceLockout;
   setTimeout(fn: () => void, ms: number): unknown;
@@ -91,6 +115,7 @@ export interface GuardDeps {
 
 export const CHALLENGE_TIMEOUT_MS = 20_000;
 const ANSWER_DELAY_MS = 350; // пауза после озвучки цифр, чтобы микрофон не поймал хвост своей речи
+export const ANSWER_RECORD_MS = 4500; // окно записи ответа для облачного распознавания
 
 export function createVoiceGuard(d: GuardDeps) {
   return function listenVerified(opts: VerifiedListenOptions, onVerify?: (r: VerifyResult) => void): Listener | null {
@@ -170,7 +195,10 @@ export function createVoiceGuard(d: GuardDeps) {
 
     const onPhrase = (text: string, capP: Promise<PcmCapture | null>) => {
       if (closed || challenge) return;
-      if (opts.accept && !opts.accept(text)) return;
+      if (opts.accept && !opts.accept(text)) {
+        void capP.then(c => c?.take(0)); // звук отброшенной фразы не должен попасть в проверку следующей
+        return;
+      }
       busy++;
       void (async () => {
         try {
@@ -222,10 +250,9 @@ export function createVoiceGuard(d: GuardDeps) {
       };
       challenge = { cancel: () => { if (!done) { cleanup(); d.stopSpeaking(); } } };
 
-      const evaluate = () => {
+      const evaluate = (text: string | null, pcm: Float32Array, sampleRate: number) => {
         if (done) return;
-        if (answer === null || !cap2) { end(false, 'Не расслышала цифры. Скажите команду ещё раз.'); return; }
-        const { pcm, sampleRate } = cap2.take(8);
+        if (!text) { end(false, 'Не расслышала цифры. Скажите команду ещё раз.'); return; }
         const t = currentTemplate();
         if (!t) { end(false, 'Голос владельца изменён. Команда не выполнена.'); return; }
         const print = d.computePrint(pcm, sampleRate);
@@ -233,7 +260,7 @@ export function createVoiceGuard(d: GuardDeps) {
         const r = d.verify(print, t);
         onVerify?.(r);
         if (!r.ok) { end(false, r.reason ?? 'Голос не узнан. Команда не выполнена.', true); return; }
-        if (!matchesChallenge(answer, ch)) { end(false, 'Цифры не совпали. Команда не выполнена.', true); return; }
+        if (!matchesChallenge(text, ch)) { end(false, 'Цифры не совпали. Команда не выполнена.', true); return; }
         end(true);
       };
 
@@ -244,12 +271,32 @@ export function createVoiceGuard(d: GuardDeps) {
         try { c = await d.startCapture(); } catch { end(false, 'Нет доступа к микрофону для проверки голоса. Команда не выполнена.'); return; }
         if (done) { c.stop(); return; }
         cap2 = c;
+        const cloud = d.cloudTranscribe();
+        if (cloud) {
+          // Одна запись: из неё и текст, и отпечаток голоса.
+          opts.onPartial?.('Слушаю цифры…');
+          timers.push(d.setTimeout(() => {
+            if (done || !cap2) return;
+            const { pcm, sampleRate } = cap2.take(ANSWER_RECORD_MS / 1000 + 1);
+            cap2.stop(); cap2 = null;
+            opts.onPartial?.('Проверяю…');
+            cloud(pcmToWav(pcm, sampleRate)).then(
+              text => evaluate(text, pcm, sampleRate),
+              () => end(false, 'Не удалось распознать цифры. Скажите команду ещё раз.'),
+            );
+          }, ANSWER_RECORD_MS));
+          return;
+        }
         const l = d.listen({
           continuous: false,
           onPartial: p => { if (!done) opts.onPartial?.(p); },
           onFinal: a => { if (answer === null) answer = a; },
           onError: () => undefined,
-          onEnd: () => evaluate(),
+          onEnd: () => {
+            if (done || !cap2) return;
+            const { pcm, sampleRate } = cap2.take(8);
+            evaluate(answer, pcm, sampleRate);
+          },
         });
         if (!l) { end(false, 'Распознавание речи недоступно. Команда не выполнена.'); return; }
         if (!done) l2 = l;
@@ -296,6 +343,10 @@ export const listenVerified = createVoiceGuard({
   computePrint: computeVoicePrint,
   verify: (p, t) => verifyPrint(p, t),
   generate: () => generateChallenge(),
+  cloudTranscribe: () => {
+    const cfg = getCloudStt();
+    return cfg ? (wav: Blob) => transcribe(wav, cfg) : null;
+  },
   trust: sharedTrust,
   lockout: sharedLockout,
   setTimeout: (fn, ms) => setTimeout(fn, ms),
