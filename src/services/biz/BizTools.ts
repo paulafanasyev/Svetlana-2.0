@@ -89,6 +89,7 @@ export function createBizTools(store: BizStore = bizStore): Tool[] {
         description: { type: 'string', description: 'What was paid for' },
         client: { type: 'string', description: 'Payer name' },
         payerType: { type: 'string', description: 'person or company', enum: ['person', 'company'] },
+        payMethod: { type: 'string', description: 'transfer (to account), card (terminal/acquiring) or cash; affects НПД receipt deadline', enum: ['transfer', 'card', 'cash'] },
         date: { type: 'string', description: 'YYYY-MM-DD, default today' },
       }, required: ['amount'] },
       async execute(p) {
@@ -96,7 +97,7 @@ export function createBizTools(store: BizStore = bizStore): Tool[] {
           const c = clientFrom(p);
           const e = store.addEntry({
             kind: 'income', amount: Number(p.amount), description: p.description ?? '', date: parseDate(p.date),
-            payerType: p.payerType ?? guessPayerType(c.name), contactId: c.contactId, counterparty: c.name || undefined,
+            payerType: p.payerType ?? guessPayerType(c.name), contactId: c.contactId, counterparty: c.name || undefined, payMethod: p.payMethod,
           });
           if (c.contactId) crmStore.addActivity({ type: 'note', text: `Оплата ${formatRub(e.amount)}${e.description ? `: ${e.description}` : ''}`, contactId: c.contactId });
           return ok({ id: e.id, amount: e.amount, client: c.name, payerType: e.payerType, receipt: e.receipt, linked: !!c.contactId });

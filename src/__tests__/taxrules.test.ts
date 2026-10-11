@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { BizStore } from '../services/biz/BizStore';
 import {
   contributionsFor, onePercent, isWorkingDay, dueDate, npdReceiptDeadline, vatExemptThreshold, vatStatusUsn, patentPayments,
+  vatGeneralRateFor, NPD_RECEIPT_FINE,
 } from '../services/biz/TaxRules';
 import { rublesInWords, paymentString, renderDocumentHTML } from '../services/biz/DocTemplates';
 import { findSupport } from '../services/biz/SupportCatalog';
@@ -63,6 +64,37 @@ describe('VAT on УСН', () => {
     expect(vatStatusUsn(2026, 25_000_000, Array(12).fill(0), true).rate).toBe(22);
     expect(vatStatusUsn(2026, 0, Array(12).fill(1_000_000)).status).toBe('exempt');
   });
+  it('switches 5% → 7% the month after 272.5M and loses УСН in the month above 490.5M', () => {
+    const m = Array(12).fill(0); m[0] = 25_000_000; m[5] = 260_000_000;
+    const v = vatStatusUsn(2026, 0, m);
+    expect(v.rateByMonth[0]).toBe(0);
+    expect(v.rateByMonth[1]).toBe(5);
+    expect(v.rateByMonth[5]).toBe(5);
+    expect(v.rateByMonth[6]).toBe(7);
+    const l = Array(12).fill(0); l[0] = 25_000_000; l[3] = 470_000_000;
+    const lost = vatStatusUsn(2026, 0, l);
+    expect(lost.status).toBe('lost_usn');
+    expect(lost.lostUsnFromMonth).toBe(3);
+    expect(lost.rateByMonth[2]).toBe(5);
+    expect(lost.rateByMonth[3]).toBe(22);
+    expect(vatStatusUsn(2026, 500_000_000, Array(12).fill(0))).toMatchObject({ status: 'lost_usn', lostUsnFromMonth: 0 });
+  });
+  it('uses 20% general rate before 2026 and 22% from 2026', () => {
+    expect(vatGeneralRateFor(2025)).toBe(20);
+    expect(vatGeneralRateFor(2026)).toBe(22);
+    expect(vatStatusUsn(2025, 70_000_000, Array(12).fill(0), true).rate).toBe(20);
+  });
+  it('prints VAT on documents by the month of the document and declares only VAT quarters', () => {
+    store.updateProfile({ regime: 'usn6' });
+    store.addEntry({ kind: 'income', amount: 21_000_000, description: 'контракт', date: day(2026, 5, 15) });
+    const may = store.createDocument({ type: 'invoice', clientName: 'ООО А', items: [{ name: 'x', qty: 1, price: 100 }], date: day(2026, 5, 20) });
+    const jun = store.createDocument({ type: 'invoice', clientName: 'ООО А', items: [{ name: 'x', qty: 1, price: 105 }], date: day(2026, 6, 2) });
+    expect(may.vatRate).toBeUndefined();
+    expect(jun.vatRate).toBe(5);
+    // июльская декларация (за II кв.) уже прошла; в 2027 доход 2026 > 15 млн, НДС весь год
+    const titles = store.deadlines(300).filter(d => d.title === 'Декларация по НДС');
+    expect(titles.map(d => ymd(d.date))).toEqual(['2026-10-26', '2027-1-25', '2027-4-26', '2027-7-26']);
+  });
 });
 
 describe('УСН summary', () => {
@@ -95,6 +127,38 @@ describe('УСН summary', () => {
     const e = store.addEntry({ kind: 'income', amount: 500_000, description: 'перевод себе', date: day(2026, 3, 1) });
     store.setTaxable(e.id, false);
     expect(store.usnSummary(2026).income).toBe(0);
+  });
+});
+
+describe('НПД receipts', () => {
+  it('requires a receipt at once for cash/card and by the 9th for transfers', () => {
+    const paid = day(2026, 10, 5);
+    expect(ymd(npdReceiptDeadline(paid, 'cash'))).toBe('2026-10-5');
+    expect(ymd(npdReceiptDeadline(paid, 'card'))).toBe('2026-10-5');
+    expect(ymd(npdReceiptDeadline(paid, 'transfer'))).toBe('2026-11-9');
+    expect(NPD_RECEIPT_FINE).toContain('не менее 200 ₽');
+    store.updateProfile({ regime: 'npd' });
+    store.addEntry({ kind: 'income', amount: 1000, description: 'наличные', date: day(2026, 10, 9), payMethod: 'cash' });
+    store.addEntry({ kind: 'income', amount: 1000, description: 'перевод', date: day(2026, 10, 9), payMethod: 'transfer' });
+    expect(store.overdueReceipts().map(e => e.description)).toEqual(['наличные']);
+  });
+});
+
+describe('profile per year', () => {
+  it('ignores a fixed-contribution amount saved for another year', () => {
+    store.updateProfile({ regime: 'usn6', fixedContributions: 53_658, fixedContributionsYear: 2025 });
+    store.addEntry({ kind: 'income', amount: 2_000_000, description: 'x', date: day(2026, 2, 1) });
+    expect(store.usnSummary(2026).contributionsFixed).toBe(57_390);
+    store.updateProfile({ fixedContributions: 60_000, fixedContributionsYear: 2026 });
+    expect(store.usnSummary(2026).contributionsFixed).toBe(60_000);
+  });
+  it('УСН 15%: counts the 1% once, in the accrual or the payment year', () => {
+    store.updateProfile({ regime: 'usn15' });
+    store.addEntry({ kind: 'income', amount: 1_300_000, description: 'прошлый', date: day(2025, 5, 1) });
+    store.addEntry({ kind: 'income', amount: 2_300_000, description: 'этот', date: day(2026, 5, 1) });
+    expect(store.usnSummary(2026).contributionsDeducted).toBe(57_390 + 20_000);
+    store.updateProfile({ usn15OnePercentTiming: 'next' });
+    expect(store.usnSummary(2026).contributionsDeducted).toBe(57_390 + 10_000);
   });
 });
 
@@ -163,5 +227,10 @@ describe('support catalog', () => {
     expect(ids).toContain('youth-grant');
     store.updateProfile({ regime: 'npd' });
     expect(findSupport(store.getProfile(), now).map(m => m.measure.id)).not.toContain('agro');
+  });
+  it('warns about the lower age bound when the birthday is unknown', () => {
+    store.updateProfile({ regime: 'npd', birthYear: 2012 });
+    const r = findSupport(store.getProfile(), now).find(m => m.measure.id === 'rosmol');
+    expect(r?.reasons.join(' ')).toContain('проверьте, исполнилось ли 14');
   });
 });
