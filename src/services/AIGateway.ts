@@ -3,6 +3,8 @@
 // Безопасность: API-ключи хранятся зашифрованными (SecretStore), в localStorage — только настройки без ключей.
 // Адреса проверяются: локальные модели — только 127.0.0.1/localhost, облачные — только официальные адреса,
 // прокси — только свой сервер. Подменённый адрес не получит ни ключ, ни переписку.
+// Локальная модель при ошибке НИКОГДА не переключается на облако сама: переписка не покидает
+// компьютер без явного выбора облачного провайдера пользователем (см. fallbackCandidates).
 import { getSecret, setSecret } from './security/SecretStore';
 import { safeJsonParse, stripControl, MAX_BYTES } from './security/SafeData';
 
@@ -85,6 +87,20 @@ export function validateProxyUrl(url: string): string {
   if (/^\/[A-Za-z0-9/_-]*$/.test(u) && !u.startsWith('//')) return u;
   if (/^http:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?(\/[A-Za-z0-9/_-]*)?$/.test(u)) return u;
   throw new Error('Прокси может быть только на своём сервере (/api/...) или на этом компьютере');
+}
+
+const FALLBACK_ORDER = ['ollama', 'lmstudio', 'groq', 'openai', 'anthropic', 'deepseek'];
+
+/**
+ * Запасные провайдеры при ошибке [failed]. Только включённые и только ТОГО ЖЕ типа:
+ * локальная модель → только другая локальная (переписка не уходит в интернет),
+ * облачная → другая облачная, которую пользователь сам включил.
+ */
+export function fallbackCandidates(all: AIProvider[], failed: Pick<AIProvider, 'id' | 'type'>): AIProvider[] {
+  const byId = new Map(all.map(p => [p.id, p] as const));
+  return FALLBACK_ORDER
+    .map(id => byId.get(id))
+    .filter((p): p is AIProvider => !!p && p.enabled && p.id !== failed.id && p.type === failed.type);
 }
 
 const secretName = (id: string) => `ai.${id}`;
@@ -256,7 +272,8 @@ class AIGateway {
       return await this.callProvider(provider, messages, options);
     } catch (error: any) {
       if (!providerId && this.providers.size > 1) {
-        const fallbackProviders = this.getFallbackProviders(provider.id);
+        // Только тот же тип: локальная модель не отправляет переписку в облако молча.
+        const fallbackProviders = fallbackCandidates(this.getAllProviders(), provider);
         for (const fallback of fallbackProviders) {
           try {
             console.warn(`Provider ${provider.name} failed, trying fallback: ${fallback.name}`);
@@ -327,14 +344,6 @@ class AIGateway {
     }
 
     return await response.json();
-  }
-
-  private getFallbackProviders(excludeId: string): AIProvider[] {
-    const fallbackOrder = ['ollama', 'lmstudio', 'groq', 'openai', 'anthropic', 'deepseek'];
-    return fallbackOrder
-      .filter(id => id !== excludeId && this.providers.has(id))
-      .map(id => this.providers.get(id)!)
-      .filter(p => p.enabled);
   }
 
   private async callOllama(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
