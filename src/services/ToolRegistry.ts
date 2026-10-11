@@ -1,13 +1,21 @@
 // Tool Registry - Tool abstraction layer
 // Real tool implementations are in RealTools.ts and use PlatformHands via HandsManager
 // This file only defines the contract and registry - NO stub implementations
+// Безопасность: КАЖДЫЙ вызов инструмента проходит через ActionGate (единая точка разрешений).
+// Источник по умолчанию — 'unknown': изменения данных и действия на устройстве требуют подтверждения человека.
+import { authorizeAction, summarizeAction, type ActionSource, type UserGesture } from './security/ActionGate';
+import { sanitizeArgs } from './security/SafeData';
 
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 export interface ToolInputSchema { type:'object'; properties:Record<string,{type:string;description:string;required?:boolean;enum?:string[]}>; required?:string[]; }
-export interface ToolResult { success:boolean; data?:any; error?:string; requiresConfirmation?:boolean; confirmationMessage?:string; observation?:any; verification?:{status:'PASS'|'FAIL'|'PENDING';confidence:number;details?:string}; requestId?:string; timestamp?:number; }
+export interface ToolResult { success:boolean; data?:any; error?:string; requiresConfirmation?:boolean; confirmationMessage?:string; observation?:any; verification?:{status:'PASS'|'FAIL'|'PENDING';confidence:number;details?:string}; requestId?:string; timestamp?:number; denied?:boolean; }
 export interface Tool { id:string; name:string; description:string; inputSchema:ToolInputSchema; riskLevel:RiskLevel; category:'navigation'|'interaction'|'data'|'system'|'communication'; execute(params:Record<string,any>):Promise<ToolResult>; verify?(params:Record<string,any>,result:ToolResult):Promise<boolean>; isAvailable():Promise<boolean>; }
 export interface ToolExecutionContext { platform:'android'|'ios'|'windows'|'macos'|'web'; permissions:string[]; environment:Record<string,any>; }
 export interface StructuredToolCall { tool:string; arguments:Record<string,any>; requestId:string; timestamp:number; }
+export interface ExecuteOptions { source?:ActionSource; gesture?:UserGesture }
+
+/** Глубокая копия уже проверенных и подтверждённых аргументов: инструмент не может изменить подтверждённый объект. */
+function copyArgs(args:Record<string,unknown>):Record<string,any>{return JSON.parse(JSON.stringify(args));}
 
 class ToolRegistry {
   private tools:Map<string,Tool>=new Map();
@@ -20,18 +28,28 @@ class ToolRegistry {
   getToolsByCategory(category:Tool['category']){return this.getAllTools().filter(t=>t.category===category)}
   getToolsByRiskLevel(riskLevel:RiskLevel){return this.getAllTools().filter(t=>t.riskLevel===riskLevel)}
 
-  async executeTool(id:string,params:Record<string,any>):Promise<ToolResult>{
+  /** Разрешение через ActionGate; возвращает отказ или null, если можно выполнять. */
+  private async gate(requestId:string,id:string,args:Record<string,unknown>,opts:ExecuteOptions):Promise<ToolResult|null>{
+    const req={tool:id,args,source:opts.source??'unknown' as ActionSource,gesture:opts.gesture};
+    if(await authorizeAction(req))return null;
+    return this.record(requestId,id,args,{success:false,denied:true,error:`Не выполнено без вашего подтверждения: ${summarizeAction(req).title}`,requestId,timestamp:Date.now()});
+  }
+
+  async executeTool(id:string,params:Record<string,any>,opts:ExecuteOptions={}):Promise<ToolResult>{
     const requestId=`exec_${Date.now()}_${Math.random().toString(36).substr(2,9)}`; const tool=this.tools.get(id);
-    if(!tool)return this.record(requestId,id,params,{success:false,error:`Tool ${id} not found in registry`,requestId,timestamp:Date.now()});
+    const args=sanitizeArgs(params);
+    // Разрешение — до любых других шагов: ни один путь (агент, оркестратор, повтор) не выполняет инструмент в обход шлюза.
+    const denied=await this.gate(requestId,id,args,opts); if(denied)return denied;
+    if(!tool)return this.record(requestId,id,args,{success:false,error:`Tool ${id} not found in registry`,requestId,timestamp:Date.now()});
     // Validate first so malformed requests are deterministic and do not require a device connection.
-    const validation=this.validateInput(tool,params);
-    if(!validation.valid)return this.record(requestId,id,params,{success:false,error:validation.error,requestId,timestamp:Date.now()});
+    const validation=this.validateInput(tool,args);
+    if(!validation.valid)return this.record(requestId,id,args,{success:false,error:validation.error,requestId,timestamp:Date.now()});
     const available=await tool.isAvailable();
-    if(!available)return this.record(requestId,id,params,{success:false,error:`Tool ${id} is not available. Ensure Android device is connected via Android Connection page.`,requestId,timestamp:Date.now()});
+    if(!available)return this.record(requestId,id,args,{success:false,error:`Tool ${id} is not available. Ensure Android device is connected via Android Connection page.`,requestId,timestamp:Date.now()});
     if(tool.riskLevel==='critical'||tool.riskLevel==='high'){
-      return this.record(requestId,id,params,{success:false,requiresConfirmation:true,confirmationMessage:this.getConfirmationMessage(tool,params),requestId,timestamp:Date.now()});
+      return this.record(requestId,id,args,{success:false,requiresConfirmation:true,confirmationMessage:this.getConfirmationMessage(tool,args),requestId,timestamp:Date.now()});
     }
-    return this.executeValidated(tool,id,params,requestId);
+    return this.executeValidated(tool,id,copyArgs(args),requestId);
   }
 
   private async executeValidated(tool:Tool,id:string,params:Record<string,any>,requestId:string):Promise<ToolResult>{
@@ -42,14 +60,16 @@ class ToolRegistry {
     }catch(error:any){return this.record(requestId,id,params,{success:false,error:error?.message||'Tool execution failed',requestId,timestamp:Date.now()});}
   }
 
-  async executeWithConfirmation(id:string,params:Record<string,any>):Promise<ToolResult>{
+  /** Для опасных (high/critical) действий после подтверждения в интерфейсе. Всё равно проходит шлюз: обойти его нельзя. */
+  async executeWithConfirmation(id:string,params:Record<string,any>,opts:ExecuteOptions={}):Promise<ToolResult>{
     const requestId=`exec_${Date.now()}_${Math.random().toString(36).substr(2,9)}`; const tool=this.tools.get(id);
-    if(!tool)return this.record(requestId,id,params,{success:false,error:`Tool ${id} not found`,requestId,timestamp:Date.now()});
-    const validation=this.validateInput(tool,params);
-    if(!validation.valid)return this.record(requestId,id,params,{success:false,error:validation.error,requestId,timestamp:Date.now()});
-    if(tool.riskLevel!=='high'&&tool.riskLevel!=='critical')return this.executeValidated(tool,id,params,requestId);
-    if(!(await tool.isAvailable()))return this.record(requestId,id,params,{success:false,error:`Tool ${id} not available`,requestId,timestamp:Date.now()});
-    return this.executeValidated(tool,id,params,requestId);
+    const args=sanitizeArgs(params);
+    const denied=await this.gate(requestId,id,args,opts); if(denied)return denied;
+    if(!tool)return this.record(requestId,id,args,{success:false,error:`Tool ${id} not found`,requestId,timestamp:Date.now()});
+    const validation=this.validateInput(tool,args);
+    if(!validation.valid)return this.record(requestId,id,args,{success:false,error:validation.error,requestId,timestamp:Date.now()});
+    if(!(await tool.isAvailable()))return this.record(requestId,id,args,{success:false,error:`Tool ${id} not available`,requestId,timestamp:Date.now()});
+    return this.executeValidated(tool,id,copyArgs(args),requestId);
   }
 
   private getConfirmationMessage(tool:Tool,params:Record<string,any>):string{const riskLabels:Record<RiskLevel,string>={low:'Low risk',medium:'Medium risk',high:'⚡ HIGH RISK',critical:'⚠️ CRITICAL'};return `${riskLabels[tool.riskLevel]}: ${tool.name}\n\nThis action will be performed on your Android device.\nParameters: ${JSON.stringify(params,null,2)}\n\nDo you confirm?`;}

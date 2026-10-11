@@ -2,7 +2,46 @@
 // Принцип: текст модели — не согласие пользователя. Любое изменение данных из ответа модели
 // или по голосу выполняется только после явного подтверждения с показом точных параметров.
 
-export type ActionSource = 'user' | 'voice' | 'llm';
+import { safeJsonParse, stripControl } from './SafeData';
+
+/**
+ * Происхождение действия. 'user' засчитывается только вместе с жестом пользователя (см. userGesture):
+ * без него действие считается 'unknown' и требует подтверждения. По умолчанию везде 'unknown'.
+ */
+export type ActionSource = 'user' | 'voice' | 'llm' | 'unknown';
+
+/** Неподделываемое подтверждение «это сделал человек»: выдаётся только по настоящему (isTrusted) событию браузера. */
+export interface UserGesture { readonly __gesture: true }
+const gestures = new WeakSet<object>();
+const GESTURE_TTL_MS = 5_000;
+export function userGesture(event: { isTrusted?: boolean } | null | undefined): UserGesture | undefined {
+  if (!event || event.isTrusted !== true) return undefined;
+  const g = Object.freeze({ __gesture: true as const, at: Date.now() });
+  gestures.add(g);
+  return g;
+}
+function validGesture(g: UserGesture | undefined, now: number): boolean {
+  if (!g || !gestures.has(g)) return false;
+  const at = (g as unknown as { at: number }).at;
+  gestures.delete(g); // одноразовый
+  return now - at <= GESTURE_TTL_MS;
+}
+
+/** Самый строгий из источников: если хоть один не 'user', действие не считается командой пользователя. */
+export function stricterSource(a: ActionSource | undefined, b: ActionSource | undefined): ActionSource {
+  const list = [a ?? 'unknown', b ?? 'unknown'];
+  if (list.every(x => x === 'user')) return 'user';
+  return list.find(x => x !== 'user') ?? 'unknown';
+}
+
+/** Глубоко замороженная копия: подтверждается и выполняется один и тот же неизменяемый объект. */
+export function deepFreeze<T>(v: T): T {
+  if (v && typeof v === 'object' && !Object.isFrozen(v)) {
+    Object.values(v as Record<string, unknown>).forEach(deepFreeze);
+    Object.freeze(v);
+  }
+  return v;
+}
 
 /** Инструменты, которые только читают данные и ничего не меняют. */
 const READ_ONLY = new Set([
@@ -34,18 +73,20 @@ export function needsConfirmation(tool: string, source: ActionSource): boolean {
   return source !== 'user' && !READ_ONLY.has(tool);
 }
 
-export interface ActionRequest { tool: string; args: Record<string, unknown>; source: ActionSource }
+export interface ActionRequest { tool: string; args: Record<string, unknown>; source: ActionSource; gesture?: UserGesture }
 export interface ActionSummary { title: string; lines: string[]; sourceLabel: string }
 
 export function summarizeAction(req: ActionRequest): ActionSummary {
+  // Показываем ВСЕ параметры, которые будут выполнены, без обрезки (строки уже ограничены 2000 символами),
+  // массивы и вложенные объекты — как JSON; управляющие и bidi-символы удаляются, чтобы текст нельзя было замаскировать.
   const lines = Object.entries(req.args)
-    .filter(([, v]) => v !== undefined && v !== '' && typeof v !== 'object')
-    .slice(0, 12)
-    .map(([k, v]) => `${ARG_LABELS[k] ?? k}: ${String(v).slice(0, 200)}`);
+    .filter(([, v]) => v !== undefined && v !== '')
+    .map(([k, v]) => `${ARG_LABELS[k] ?? stripControl(k, false)}: ${stripControl(typeof v === 'object' ? JSON.stringify(v) : String(v), false)}`);
   return {
-    title: LABELS[req.tool] ?? req.tool,
+    title: LABELS[req.tool] ?? stripControl(req.tool, false),
     lines,
-    sourceLabel: req.source === 'llm' ? 'Предложено нейросетью' : req.source === 'voice' ? 'Распознано голосом' : 'Команда пользователя',
+    sourceLabel: req.source === 'llm' ? 'Предложено нейросетью' : req.source === 'voice' ? 'Распознано голосом'
+      : req.source === 'user' ? 'Команда пользователя' : 'Автоматическое действие',
   };
 }
 
@@ -73,7 +114,14 @@ function logStorage(): Storage | null {
 }
 
 export function actionLog(): ActionLogEntry[] {
-  try { const v = JSON.parse(logStorage()?.getItem(LOG_KEY) ?? '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+  try {
+    const v = safeJsonParse(logStorage()?.getItem(LOG_KEY) ?? '[]', 200_000);
+    if (!Array.isArray(v)) return [];
+    const sources: ActionSource[] = ['user', 'voice', 'llm', 'unknown'];
+    return v.slice(-200).filter((e): e is ActionLogEntry => !!e && typeof e === 'object' && typeof e.t === 'number' && typeof e.tool === 'string'
+      && sources.includes(e.source) && ['auto', 'approved', 'denied'].includes(e.decision))
+      .map(e => ({ t: e.t, tool: stripControl(e.tool, false).slice(0, 60), source: e.source, decision: e.decision }));
+  } catch { return []; }
 }
 
 function record(e: ActionLogEntry): void {
@@ -84,11 +132,14 @@ function record(e: ActionLogEntry): void {
 
 // ---------- ограничение частоты для действий не от пользователя ----------
 const WINDOW_MS = 60_000;
-const MAX_PER_WINDOW = 10;
+const MAX_PER_WINDOW = 20;
 let recent: number[] = [];
 
-/** true — действие можно выполнять. */
-export async function authorizeAction(req: ActionRequest, now: number = Date.now()): Promise<boolean> {
+/** true — действие можно выполнять. Все инструменты проходят сюда из ToolRegistry.executeTool. */
+export async function authorizeAction(input: ActionRequest, now: number = Date.now()): Promise<boolean> {
+  // 'user' без настоящего жеста пользователя понижаем до 'unknown': источник нельзя просто вписать строкой.
+  const source: ActionSource = input.source === 'user' && !validGesture(input.gesture, now) ? 'unknown' : input.source;
+  const req: ActionRequest = { tool: input.tool, args: deepFreeze(input.args), source };
   if (!needsConfirmation(req.tool, req.source)) {
     record({ t: now, tool: req.tool, source: req.source, decision: 'auto' });
     return true;
