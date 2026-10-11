@@ -29,11 +29,20 @@ function validGesture(g: UserGesture | undefined, now: number): boolean {
   return now - at <= GESTURE_TTL_MS;
 }
 
-/** Самый строгий из источников: если хоть один не 'user', действие не считается командой пользователя. */
+/** Строгость источника: голос строже всех (даже чтение — по нажатию), затем модель, затем неизвестный. */
+const STRICTNESS: Record<ActionSource, number> = { user: 0, unknown: 1, llm: 2, voice: 3 };
+
+/**
+ * Самый строгий из источников: если хоть один не 'user', действие не считается командой пользователя,
+ * а действие, предложенное моделью в голосовом разговоре, остаётся голосовым ('voice' не понижается до 'llm').
+ */
 export function stricterSource(a: ActionSource | undefined, b: ActionSource | undefined): ActionSource {
-  const list = [a ?? 'unknown', b ?? 'unknown'];
-  if (list.every(x => x === 'user')) return 'user';
-  return list.find(x => x !== 'user') ?? 'unknown';
+  const x = a ?? 'unknown';
+  const y = b ?? 'unknown';
+  const sx = STRICTNESS[x] ?? STRICTNESS.voice;
+  const sy = STRICTNESS[y] ?? STRICTNESS.voice;
+  if (sx === 0 && sy === 0) return 'user';
+  return sx >= sy ? x : y;
 }
 
 /** Глубоко замороженная копия: подтверждается и выполняется один и тот же неизменяемый объект. */
