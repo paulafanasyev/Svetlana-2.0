@@ -8,6 +8,7 @@ import BankInnPage from '../pages/BankInnPage';
 import AnalyticsPage from '../pages/AnalyticsPage';
 import BookingPage from '../pages/BookingPage';
 import VoiceButton from './VoiceButton';
+import ActionConfirmHost from './ActionConfirmHost';
 
 type Section = 'crm' | 'biz' | 'bank' | 'stats' | 'booking';
 
@@ -49,6 +50,7 @@ export default function CRMLauncher() {
 
   return (
     <>
+      <ActionConfirmHost />
       {!section && (
         <div className="fixed bottom-5 left-5 z-40 flex gap-2">
           <button onClick={() => setSection('crm')} className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium shadow-lg shadow-indigo-900/40" aria-label="Открыть CRM">
