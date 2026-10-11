@@ -9,7 +9,7 @@ import {
   type TaxRegime, type DocType, type PayerType, type EntryKind, type BizProfile,
 } from '../services/biz/BizStore';
 import { renderDocumentHTML, paymentString } from '../services/biz/DocTemplates';
-import { PAY_METHOD_LABELS, contributionsFor, type PayMethod } from '../services/biz/TaxRules';
+import { PAY_METHOD_LABELS, USN_RATE_LIMITS, contributionsFor, type PayMethod } from '../services/biz/TaxRules';
 import {
   findSupport, regionalSearchUrl, SUPPORT_KIND_LABELS, SECTOR_LABELS, FLAG_LABELS, RUSSIAN_REGIONS, type SupportKind,
 } from '../services/biz/SupportCatalog';
@@ -55,6 +55,30 @@ function CopyButton({ text, label = 'Копировать' }: { text: string; la
     <button className={btnGhost} onClick={async () => {
       try { await navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 1500); } catch { window.prompt('Скопируйте текст:', text); }
     }}>{done ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}{done ? 'Скопировано' : label}</button>
+  );
+}
+
+/** Кнопка «Оплачен»: для самозанятого сначала спрашивает способ оплаты (от него зависит срок чека). */
+function PaidButton({ docId, label = 'Оплачен' }: { docId: string; label?: string }) {
+  const npd = bizStore.getProfile().regime === 'npd';
+  const [method, setMethod] = useState<PayMethod | ''>('');
+  const [err, setErr] = useState<string | null>(null);
+  const pay = () => {
+    setErr(null);
+    if (npd && !method) { setErr('Выберите, как заплатили'); return; }
+    try { bizStore.markPaid(docId, { payMethod: method || undefined }); } catch (e: any) { setErr(e?.message || 'Ошибка'); }
+  };
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {npd && (
+        <select className="px-2 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white" aria-label="Способ оплаты" value={method} onChange={e => setMethod(e.target.value as PayMethod | '')}>
+          <option value="">Как заплатили?</option>
+          {(Object.keys(PAY_METHOD_LABELS) as PayMethod[]).map(m => <option key={m} value={m}>{PAY_METHOD_LABELS[m]}</option>)}
+        </select>
+      )}
+      <button className={btnPrimary} onClick={pay}><Check className="w-4 h-4" />{label}</button>
+      {err && <span className="text-xs text-amber-300">{err}</span>}
+    </span>
   );
 }
 
@@ -117,7 +141,7 @@ function MoneyTab() {
         )}
         {kind === 'income' && profile.regime === 'npd' && (
           <select className={`${input} md:col-span-2`} aria-label="Способ оплаты" value={payMethod} onChange={e => setPayMethod(e.target.value as PayMethod)}>
-            {(Object.keys(PAY_METHOD_LABELS) as PayMethod[]).map(m => <option key={m} value={m}>{PAY_METHOD_LABELS[m]}{m === 'transfer' ? ' (чек до 9-го числа)' : ' (чек сразу)'}</option>)}
+            {(Object.keys(PAY_METHOD_LABELS) as PayMethod[]).map(m => <option key={m} value={m}>{PAY_METHOD_LABELS[m]}{m === 'transfer' ? ' (чек до 9-го числа)' : ' (чек в момент оплаты)'}</option>)}
           </select>
         )}
         <button type="submit" className={`${btnPrimary} justify-center`} disabled={!amount.trim()}><Plus className="w-4 h-4" />Записать</button>
@@ -136,6 +160,11 @@ function MoneyTab() {
             <button className="text-xs text-slate-400 hover:underline" title="Перевод себе, займ, возврат и т.п. не учитываются в налоге" onClick={() => bizStore.setTaxable(e.id, !isTaxable(e))}>
               {isTaxable(e) ? (e.kind === 'income' ? 'не доход?' : 'не расход?') : 'учитывать'}
             </button>
+            {e.kind === 'expense' && isTaxable(e) && profile.regime === 'usn15' && (
+              <button className={`text-xs hover:underline ${e.noDocs ? 'text-amber-300' : 'text-slate-400'}`} title="Расход уменьшает налог УСН 15% только при подтверждающих документах: чек, акт, накладная, выписка" onClick={() => bizStore.setNoDocs(e.id, !e.noDocs)}>
+                {e.noDocs ? 'нет документов' : 'есть документы'}
+              </button>
+            )}
             {e.kind === 'income' && isTaxable(e) && profile.regime === 'npd' && (
               e.receipt === 'issued'
                 ? <span className="text-xs text-emerald-300">чек {e.receiptNumber ?? '✓'}</span>
@@ -214,7 +243,7 @@ function DocsTab() {
               <button className={btnGhost} onClick={() => download(`${DOC_LABELS[d.type]}-${d.number}.html`, html(), 'text/html;charset=utf-8')}><Download className="w-4 h-4" />Файл</button>
               {d.type === 'invoice' && d.status !== 'cancelled' && profile.account && (() => { try { return <CopyButton text={paymentString(profile, d.total, `Оплата по счёту № ${d.number} от ${date(d.date)}`)} label="Строка для QR" />; } catch (err: any) { return <span className="text-xs text-amber-300">{err?.message}</span>; } })()}
               {d.type === 'invoice' && d.status === 'draft' && <button className={btnGhost} onClick={() => bizStore.setDocumentStatus(d.id, 'sent')}><Send className="w-4 h-4" />Отправлен</button>}
-              {d.type === 'invoice' && d.status !== 'paid' && d.status !== 'cancelled' && <button className={btnPrimary} onClick={() => bizStore.markPaid(d.id)}><Check className="w-4 h-4" />Оплачен</button>}
+              {d.type === 'invoice' && d.status !== 'paid' && d.status !== 'cancelled' && <PaidButton docId={d.id} />}
               <button onClick={() => { if (window.confirm('Удалить документ?')) bizStore.deleteDocument(d.id); }} className="p-1 text-slate-500 hover:text-red-300" aria-label="Удалить"><Trash2 className="w-4 h-4" /></button>
             </div>
           );
@@ -252,7 +281,7 @@ function DebtsTab() {
               <a className={btnGhost} href={`https://t.me/share/url?url=&text=${encodeURIComponent(text)}`} target="_blank" rel="noreferrer"><Send className="w-4 h-4" />Telegram</a>
               {phone && <a className={btnGhost} href={`https://wa.me/${phone.replace('+', '')}?text=${encodeURIComponent(text)}`} target="_blank" rel="noreferrer">WhatsApp</a>}
               {phone && <a className={btnGhost} href={`sms:${phone}?body=${encodeURIComponent(text)}`}>SMS</a>}
-              <button className={btnPrimary} onClick={() => bizStore.markPaid(d.id)}><Check className="w-4 h-4" />Оплатили</button>
+              <PaidButton docId={d.id} label="Оплатили" />
             </div>
           </div>
         );
@@ -307,7 +336,7 @@ function TaxesTab() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <Stat label={`Доход ${u.year}`} value={formatRub(u.income)} />
               {u.regime === 'usn15' && <Stat label="Расходы" value={formatRub(u.expenses)} />}
-              <Stat label="Налог до вычета взносов" value={formatRub(u.taxGross)} />
+              <Stat label={`Налог ${u.rate}% до вычета взносов`} value={formatRub(u.taxGross)} />
               <Stat label="Налог к уплате (оценка)" value={formatRub(u.taxAfterContributions)} tone="text-amber-300" />
             </div>
             <div className={`${card} p-4 text-sm space-y-1`}>
@@ -315,6 +344,8 @@ function TaxesTab() {
               {u.regime === 'usn6'
                 ? <p className="text-slate-400">Налог УСН 6% уменьшается на взносы, уплачиваемые в {u.year} году: фиксированные {formatRub(u.contributionsFixed)}{u.contributionsPrevExtra ? ` + 1% за ${u.year - 1} год ${formatRub(u.contributionsPrevExtra)}` : ''}. {u.hasEmployees ? 'Есть работники: уменьшить можно не более чем на 50% налога.' : 'ИП без работников уменьшает налог на всю сумму.'} Уменьшено на {formatRub(u.contributionsDeducted)}.</p>
                 : <p className="text-slate-400">На УСН 15% взносы за себя ({formatRub(u.contributionsDeducted)}) входят в расходы; минимальный налог 1% дохода ({formatRub(u.minTax)}) платится, если он больше обычного.</p>}
+              <p className="text-slate-400">Ставка {u.rate}%{u.rate !== (u.regime === 'usn6' ? 6 : 15) ? ' (региональная льгота из профиля)' : ' (базовая; в вашем регионе для вашего вида деятельности может быть ниже — проверьте закон субъекта и укажите ставку в профиле)'}.</p>
+              {u.regime === 'usn15' && <p className="text-slate-400">В расходы взяты только операции с документами (чек, акт, накладная, выписка) и связанные с бизнесом.{u.expensesNoDocs ? ` Без документов и не учтено: ${formatRub(u.expensesNoDocs)}.` : ''}</p>}
               <p className={u.vat.status === 'exempt' ? 'text-slate-400' : 'text-amber-300'}>НДС: {u.vat.text}</p>
               {u.quarters.map(q => <p key={q.quarter} className="text-slate-300">{q.quarter === 4 ? 'Год' : `${q.quarter * 3} мес.`}: доход {formatRub(q.income)}, налог нарастающим итогом до вычета взносов {formatRub(q.taxCumulative)}</p>)}
             </div>
@@ -442,6 +473,13 @@ function ProfileTab() {
         {(draft.regime === 'usn6' || draft.regime === 'usn15') && (
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.vatGeneralRate} onChange={e => setDraft(d => ({ ...d, vatGeneralRate: e.target.checked }))} />НДС по общей ставке (22% с 2026 года) с вычетами вместо 5%/7%</label>
         )}
+        {(draft.regime === 'usn6' || draft.regime === 'usn15') && (() => {
+          const l = draft.regime === 'usn15' ? USN_RATE_LIMITS.usn15 : USN_RATE_LIMITS.usn6;
+          return (
+            <label className="text-sm space-y-1"><span className="text-slate-400">Ставка УСН в вашем регионе, % (пусто — {l.base}%; допустимо {l.min}–{l.max}%)</span>
+              <input className={input} inputMode="decimal" placeholder={String(l.base)} value={draft.usnRate ?? ''} onChange={e => setDraft(d => ({ ...d, usnRate: e.target.value.trim() ? Number(e.target.value.replace(',', '.')) : undefined }))} /></label>
+          );
+        })()}
         {draft.regime === 'usn15' && (
           <label className="text-sm space-y-1"><span className="text-slate-400">1% взносов учитывать в расходах</span>
             <select className={input} value={draft.usn15OnePercentTiming} onChange={e => setDraft(d => ({ ...d, usn15OnePercentTiming: e.target.value === 'next' ? 'next' : 'same' }))}>
