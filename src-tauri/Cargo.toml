@@ -18,3 +18,7 @@ keyring = { version = "3", features = ["windows-native"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 # Нативное окно подтверждения Windows: скрипт на странице не может нажать его за пользователя
 tauri-plugin-dialog = "2"
+# Проверка подлинности скачанных моделей
+sha2 = "0.10"
+# Локальное распознавание речи (GigaAM-v3) через ONNX Runtime; версия зафиксирована
+ort = "=2.0.0-rc.10"
