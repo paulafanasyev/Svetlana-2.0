@@ -2,7 +2,9 @@
 // Безопасность: действия на экране «прикалываются» к приложению, которое было на экране в начале,
 // и перед самим нажатием/вводом/свайпом/клавишей проверяется, что оно всё ещё на экране (оверлей/подмена = отказ).
 // Перед нажатием элемент ищется ещё раз и сравнивается (id, текст, границы): подмена кнопки внутри того же
-// приложения = отказ. Проверка результата (verify) тоже считает доказательством только экран того же приложения.
+// приложения = отказ. Ввод идёт только в то поле, которое было в фокусе в начале (фокус ушёл = отказ).
+// Сообщение уходит только в чат, где виден именно этот собеседник, и только той же кнопкой «Отправить».
+// Проверка результата (verify) тоже считает доказательством только экран того же приложения.
 import type { Tool, ToolResult } from './ToolRegistry';
 import { handsManager } from './HandsManager';
 import { HTTPHands } from './HTTPHands';
@@ -32,9 +34,54 @@ function sameElement(a: ElementLike | null | undefined, b: ElementLike | null | 
     && a.bounds.width === b.bounds.width && a.bounds.height === b.bounds.height;
 }
 
+function isEditable(node: any): boolean {
+  return node?.type === 'EditText' || node?.type === 'TextField' || (typeof node?.className === 'string' && node.className.includes('EditText'));
+}
+
+/** Поле ввода в фокусе (или null). */
+function findFocusedInput(node: any): any {
+  if (node?.focused && isEditable(node)) return node;
+  for (const child of node?.children || []) { const found = findFocusedInput(child); if (found) return found; }
+  return null;
+}
+
+/** Поле в фокусе на экране прямо сейчас. */
+async function focusedField(hands: { getAccessibilityTree(): Promise<any> }): Promise<any> {
+  try { const tree = await hands.getAccessibilityTree(); return findFocusedInput(tree?.root); } catch { return null; }
+}
+
+interface FieldLike { id?: unknown; type?: unknown; className?: unknown; bounds?: unknown }
+
+/** То же поле: совпадают id, тип и границы (текст при вводе меняется). */
+function sameField(a: FieldLike | null | undefined, b: FieldLike | null | undefined): boolean {
+  if (!a || !b) return false;
+  return a.id === b.id && a.type === b.type && a.className === b.className
+    && JSON.stringify(a.bounds ?? null) === JSON.stringify(b.bounds ?? null);
+}
+
+function fieldIdentity(f: any): FieldLike {
+  return { id: f?.id, type: f?.type, className: f?.className, bounds: f?.bounds };
+}
+
+/** На экране есть нередактируемый элемент с именем собеседника (заголовок чата). Поле ввода не считается. */
+function showsRecipient(node: any, contact: string): boolean {
+  if (!node) return false;
+  const want = contact.trim().toLowerCase();
+  if (!isEditable(node) && typeof node.text === 'string' && node.text.trim().toLowerCase() === want) return true;
+  return (node.children || []).some((c: any) => showsRecipient(c, contact));
+}
+
+async function recipientOnScreen(hands: { getAccessibilityTree(): Promise<any> }, contact: string): Promise<boolean> {
+  try { const tree = await hands.getAccessibilityTree(); return showsRecipient(tree?.root, contact); } catch { return false; }
+}
+
 const UNKNOWN_APP: ToolResult = { success: false, error: 'Cannot determine which app is on screen. Stopped for safety.' };
 const movedFrom = (app: string): ToolResult => ({ success: false, error: `Another app is on screen instead of ${app}. Stopped for safety.` });
 const ELEMENT_CHANGED: ToolResult = { success: false, error: 'The element changed right before the tap. Stopped for safety.' };
+const NO_FIELD: ToolResult = { success: false, error: 'No focused input field. Tap the field first.' };
+const FIELD_CHANGED: ToolResult = { success: false, error: 'The input field changed right before typing. Stopped for safety.' };
+const NO_CHAT_INPUT: ToolResult = { success: false, error: 'Message field is not focused in the chat. Stopped for safety.' };
+const WRONG_RECIPIENT: ToolResult = { success: false, error: 'The open chat is not with the requested contact. Stopped for safety.' };
 
 export const openAppTool: Tool = {
   id: 'open_app', name: 'Open Application', description: 'Launch an Android application by package name', category: 'navigation', riskLevel: 'low',
@@ -114,21 +161,26 @@ export const typeTextTool: Tool = {
   async execute(params: { text: string; clearFirst?: boolean }): Promise<ToolResult> {
     await requireHands(); const hands = handsManager.getHands(); if (!hands) return { success: false, error: 'Hands not available' };
     const pinned = await pinApp(hands); if (!pinned) return UNKNOWN_APP;
+    // Поле фиксируется в начале; перед очисткой и перед вводом фокус должен быть всё ещё в нём.
+    const field = await focusedField(hands);
+    if (!field) return NO_FIELD;
     if (params.clearFirst) {
       if (!(await stillIn(hands, pinned))) return movedFrom(pinned);
+      if (!sameField(field, await focusedField(hands))) return FIELD_CHANGED;
       const clear = await hands.clearText(); if (!clear.success) return { success: false, error: clear.error || 'Failed to clear text' };
     }
     if (!(await stillIn(hands, pinned))) return movedFrom(pinned);
+    if (!sameField(field, await focusedField(hands))) return FIELD_CHANGED;
     const result = await hands.type(params.text); if (!result.success) return { success: false, error: result.error || 'Failed to type text' };
-    return { success: true, data: { typed: params.text, length: params.text.length, app: pinned, timestamp: Date.now() } };
+    return { success: true, data: { typed: params.text, length: params.text.length, app: pinned, field: fieldIdentity(field), timestamp: Date.now() } };
   },
   async verify(params, result) {
     if (!result.success || typeof result.data?.app !== 'string') return false; const hands = handsManager.getHands(); if (!hands) return false;
     // Читаем поле только если на экране то же приложение (иначе «подтверждение» может прийти из оверлея).
     if (!(await stillIn(hands, result.data.app))) return false;
-    const tree = await hands.getAccessibilityTree();
-    const findFocusedInput = (node: any): any => { if (node?.focused && (node.type === 'EditText' || node.type === 'TextField' || node.className?.includes('EditText'))) return node; for (const child of node?.children || []) { const found = findFocusedInput(child); if (found) return found; } return null; };
-    const input = findFocusedInput(tree.root); return !!input && String(input.text || '').includes(params.text);
+    const input = await focusedField(hands);
+    // И только из того же поля, в которое вводили.
+    return !!input && sameField(input, result.data.field) && String(input.text || '').includes(params.text);
   },
   async isAvailable() { return await handsManager.isConnected(); },
 };
@@ -158,13 +210,27 @@ export const sendMessageTool: Tool = {
     const launch = await hands.launchApp(params.app); if (!launch.success) return { success: false, error: `Failed to launch ${params.app}` };
     await new Promise(r => setTimeout(r, 2000));
     if (!(await stillIn(hands, params.app))) return moved();
-    const contact = await hands.findElementByText(params.contact); if (!contact) return { success: false, error: `Contact not found: ${params.contact}` };
+    const findContact = () => hands.findElementByText(params.contact);
+    const contact = await findContact(); if (!contact) return { success: false, error: `Contact not found: ${params.contact}` };
+    // Строка чата ищется ещё раз прямо перед нажатием: подмена или сдвиг = отказ.
+    if (!sameElement(contact, await findContact())) return ELEMENT_CHANGED;
     if (!(await stillIn(hands, params.app))) return moved();
     const tap = await hands.tap(contact.bounds.x + contact.bounds.width / 2, contact.bounds.y + contact.bounds.height / 2); if (!tap.success) return { success: false, error: 'Failed to tap contact' };
     await new Promise(r => setTimeout(r, 1000));
     if (!(await stillIn(hands, params.app))) return moved();
+    // Открыт чат именно с этим собеседником, и в нём поле ввода в фокусе.
+    const field = await focusedField(hands);
+    if (!field) return NO_CHAT_INPUT;
+    if (!(await recipientOnScreen(hands, params.contact))) return WRONG_RECIPIENT;
+    if (!(await stillIn(hands, params.app))) return moved();
+    if (!sameField(field, await focusedField(hands))) return FIELD_CHANGED;
     const type = await hands.type(params.message); if (!type.success) return { success: false, error: 'Failed to type message' };
-    await new Promise(r => setTimeout(r, 500)); const send = await hands.findElementByText('Send') || await hands.findElementByText('Отправить'); if (!send) return { success: false, error: 'Send button not found. Message typed but not sent.', data: { messageTyped: true, sent: false } };
+    await new Promise(r => setTimeout(r, 500));
+    const findSend = async () => (await hands.findElementByText('Send')) || (await hands.findElementByText('Отправить'));
+    const send = await findSend(); if (!send) return { success: false, error: 'Send button not found. Message typed but not sent.', data: { messageTyped: true, sent: false } };
+    // Перед отправкой: та же кнопка и тот же собеседник на экране.
+    if (!sameElement(send, await findSend())) return { ...ELEMENT_CHANGED, data: { messageTyped: true, sent: false } };
+    if (!(await recipientOnScreen(hands, params.contact))) return { ...WRONG_RECIPIENT, data: { messageTyped: true, sent: false } };
     if (!(await stillIn(hands, params.app))) return moved();
     const sent = await hands.tap(send.bounds.x + send.bounds.width / 2, send.bounds.y + send.bounds.height / 2); if (!sent.success) return { success: false, error: 'Failed to tap send button' };
     await new Promise(r => setTimeout(r, 500)); const tree = await hands.getAccessibilityTree();

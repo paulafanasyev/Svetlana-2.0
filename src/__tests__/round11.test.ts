@@ -50,17 +50,22 @@ describe('send_message final screen check', () => {
 
   it('does not accept the result tree from another app after sending', async () => {
     const app = 'org.telegram.messenger';
+    const contact = { id: 'c', text: 'John', bounds: { x: 0, y: 0, width: 10, height: 10 } };
+    const send = { id: 's', text: 'Send', bounds: { x: 0, y: 0, width: 10, height: 10 } };
     const hands = {
       launchApp: vi.fn().mockResolvedValue({ success: true }),
+      // 5 проверок до отправки — тот же мессенджер, после отправки — подсунутое окно.
       getCurrentApp: vi.fn()
-        .mockResolvedValueOnce(app).mockResolvedValueOnce(app).mockResolvedValueOnce(app).mockResolvedValueOnce(app)
+        .mockResolvedValueOnce(app).mockResolvedValueOnce(app).mockResolvedValueOnce(app).mockResolvedValueOnce(app).mockResolvedValueOnce(app)
         .mockResolvedValue('com.evil.overlay'),
-      findElementByText: vi.fn()
-        .mockResolvedValueOnce({ id: 'c', text: 'John', bounds: { x: 0, y: 0, width: 10, height: 10 } })
-        .mockResolvedValueOnce({ id: 's', text: 'Send', bounds: { x: 0, y: 0, width: 10, height: 10 } }),
+      findElementByText: vi.fn(async (t: string) => (t === 'John' ? contact : t === 'Send' ? send : null)),
       tap: vi.fn().mockResolvedValue({ success: true }),
       type: vi.fn().mockResolvedValue({ success: true }),
-      getAccessibilityTree: vi.fn().mockResolvedValue({ root: { children: [{ text: 'Hello John!', children: [] }] } }),
+      getAccessibilityTree: vi.fn().mockResolvedValue({ root: { children: [
+        { text: 'John', children: [] },
+        { type: 'EditText', focused: true, id: 'msg', text: '', children: [] },
+        { text: 'Hello John!', children: [] },
+      ] } }),
     };
     vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
     vi.spyOn(handsManager, 'getHands').mockReturnValue(hands as any);
