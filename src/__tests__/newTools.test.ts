@@ -6,6 +6,8 @@ import { registerRealTools } from '../services/RealTools';
 import { handsManager } from '../services/HandsManager';
 
 const APP = 'com.example.app';
+// Поле адреса браузера в фокусе (search_web вводит запрос только в него).
+const urlBar = () => vi.fn().mockResolvedValue({ root: { children: [{ type: 'EditText', focused: true, id: 'url_bar', bounds: { x: 0, y: 0, width: 500, height: 60 }, text: '', children: [] }] } });
 
 describe('New Tools', () => {
   beforeEach(() => {
@@ -130,6 +132,7 @@ describe('New Tools', () => {
       const mockHands = {
         launchApp: vi.fn().mockResolvedValue({ success: true }),
         getCurrentApp: vi.fn().mockResolvedValue('com.android.chrome'),
+        getAccessibilityTree: urlBar(),
         type: vi.fn().mockResolvedValue({ success: true }),
         pressKey: vi.fn().mockResolvedValue({ success: true }),
       };
@@ -147,6 +150,7 @@ describe('New Tools', () => {
       const mockHands = {
         launchApp: vi.fn().mockResolvedValue({ success: true }),
         getCurrentApp: vi.fn().mockResolvedValue('com.evil.overlay'),
+        getAccessibilityTree: urlBar(),
         type: vi.fn().mockResolvedValue({ success: true }),
         pressKey: vi.fn().mockResolvedValue({ success: true }),
       };
@@ -161,6 +165,7 @@ describe('New Tools', () => {
       const mockHands = {
         launchApp: vi.fn().mockResolvedValue({ success: true }),
         getCurrentApp: vi.fn().mockResolvedValueOnce('com.android.chrome').mockResolvedValue('com.evil.overlay'),
+        getAccessibilityTree: urlBar(),
         type: vi.fn().mockResolvedValue({ success: true }),
         pressKey: vi.fn().mockResolvedValue({ success: true }),
       };
