@@ -5,6 +5,7 @@ import { crmStore, type CRMContact } from '../crm/CRMStore';
 import { bizStore, BizStore, REGIME_LABELS, formatRub, type PayerType, type TaxRegime, type DocType } from './BizStore';
 import { findSupport, regionalSearchUrl, SUPPORT_KIND_LABELS, type SupportKind } from './SupportCatalog';
 import { checkCounterparty, reportText } from './Counterparty';
+import { computeAnalytics, analyticsText } from './Analytics';
 
 const REGIMES: TaxRegime[] = ['npd', 'usn6', 'usn15', 'patent', 'ooo', 'none'];
 const DOC_TYPES: DocType[] = ['invoice', 'act', 'contract'];
@@ -217,6 +218,16 @@ export function createBizTools(store: BizStore = bizStore): Tool[] {
       },
       isAvailable: always,
     },
+    {
+      id: 'biz_analytics', name: 'Business: financial analytics', category: 'data', riskLevel: 'low',
+      description: 'Financial summary: income/expenses/profit by month, change vs previous month, top clients and expenses, idle clients, year-end forecast of income and tax, tips.',
+      inputSchema: { type: 'object', properties: {} },
+      async execute() {
+        const a = computeAnalytics(store);
+        return ok({ ytd: a.ytd, last12: a.last12, lastMonth: a.lastFull, changeVsPrev: a.changeVsPrev, topClients: a.topClients, topExpenses: a.topExpenses, forecast: a.forecast, insights: a.insights, text: analyticsText(a) });
+      },
+      isAvailable: always,
+    },
   ];
 }
 
@@ -257,6 +268,7 @@ export function detectBizIntent(text: string): BizAction | null {
   if (inn && /(инн|контрагент|провер|компани|организаци)/.test(low)) return { tool: 'biz_check_inn', args: { inn } };
   if (/(кто|сколько)\s+(мне\s+)?долж|должник|дебитор|неоплаченн/.test(low)) return { tool: 'biz_receivables', args: {} };
   if (/(налог|нпд|усн)/.test(low) && /(сколько|какой|посчитай|сводк|когда|платить)/.test(low)) return { tool: 'biz_tax_summary', args: {} };
+  if (/(аналитик|финансов\S* (сводк|отчет)|сводк\S* по деньгам|отчет по деньгам|как (идут )?дела с деньгами|прибыл|сколько (я )?заработал|прогноз (дохода|на год))/.test(low)) return { tool: 'biz_analytics', args: {} };
   if (/(субсид|грант|господдерж|меры поддержк|поддержк[ауи] (бизнес|самозанят|ип))/.test(low)) return { tool: 'biz_find_support', args: {} };
   return null;
 }
@@ -275,6 +287,7 @@ export function describeBizResult(tool: string, result: ToolResult): string {
       return `✅ ${label} № ${d.number} для «${d.client}» на ${formatRub(d.total)} готов. Распечатать или сохранить в PDF: кнопка «Бизнес» → Документы.`;
     }
     case 'biz_check_inn': return `🔍 ${d.text}`;
+    case 'biz_analytics': return d.text;
     case 'biz_mark_paid': return `✅ Счёт № ${d.number} (${d.client}) оплачен, доход ${formatRub(d.total)} записан.`;
     case 'biz_receivables':
       return d.items?.length
@@ -318,5 +331,6 @@ ${store.summaryForAI()}
 - biz_tax_summary {}
 - biz_find_support {"kind": "grant|subsidy|loan|...", "query": "..."}
 - biz_check_inn {"inn": "10 или 12 цифр"} — проверить контрагента перед сделкой
+- biz_analytics {} — финансовая сводка, топ клиентов, прогноз на год и советы
 Правила: налоги считай только через biz_tax_summary; про субсидии называй только программы из biz_find_support и давай ссылки на официальные сайты; не выдумывай суммы, сроки и законы. Чек НПД выбивается в приложении «Мой налог» — напоминай об этом.`;
 }
