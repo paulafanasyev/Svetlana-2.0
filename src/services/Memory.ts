@@ -1,5 +1,6 @@
 // Memory Module - Short-term and long-term memory with RAG-like retrieval
 import { safeJsonParse, stripControl, MAX_BYTES } from './security/SafeData';
+import { redactSecrets, redactDeep } from './security/Redact';
 
 export interface MemoryItem {
   id: string;
@@ -20,6 +21,10 @@ export interface ConversationContext {
 
 const MEMORY_TYPES: MemoryItem['type'][] = ['conversation', 'action', 'preference', 'fact'];
 const ROLES = ['user', 'assistant', 'system'];
+const DAY = 24 * 60 * 60 * 1000;
+/** Сколько храним на диске: переписку — 7 дней, записи о разговорах и действиях — 30 дней. */
+export const MESSAGE_TTL_MS = 7 * DAY;
+export const EPISODIC_TTL_MS = 30 * DAY;
 const num = (v: unknown, def: number, min: number, max: number): number => (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : def);
 
 /** Память из localStorage считается недоверенной: собираем запись поле за полем, мусор отбрасываем. */
@@ -47,6 +52,16 @@ function toMessage(v: unknown): ConversationContext['messages'][number] | undefi
   return { role: r.role as string, content: stripControl(r.content).slice(0, 20_000), timestamp: num(r.timestamp, Date.now(), 0, 4_102_444_800_000) };
 }
 
+/** Протухла ли запись: предпочтения и факты храним, разговоры и действия — 30 дней. */
+export function isExpired(item: Pick<MemoryItem, 'type' | 'timestamp'>, now = Date.now()): boolean {
+  return (item.type === 'conversation' || item.type === 'action') && now - item.timestamp > EPISODIC_TTL_MS;
+}
+
+/** Запись в том виде, в котором она ложится на диск: без секретов. */
+export function persistable(item: MemoryItem): MemoryItem {
+  return { ...item, content: redactSecrets(item.content), metadata: item.metadata ? redactDeep(item.metadata) : undefined };
+}
+
 class Memory {
   private shortTermMemory: MemoryItem[] = [];
   private longTermMemory: Map<string, MemoryItem> = new Map();
@@ -66,16 +81,18 @@ class Memory {
       if (!stored) return;
       const data = safeJsonParse(stored, MAX_BYTES.storage) as { longTerm?: unknown; conversationContext?: unknown } | null;
       if (!data || typeof data !== 'object') return;
+      const now = Date.now();
       if (Array.isArray(data.longTerm)) {
         for (const pair of data.longTerm.slice(0, 5000)) {
           const item = Array.isArray(pair) ? toMemoryItem(pair[1]) : undefined;
-          if (item) this.longTermMemory.set(item.id, item);
+          if (item && !isExpired(item, now)) this.longTermMemory.set(item.id, item);
         }
       }
       const ctx = data.conversationContext as { messages?: unknown; currentTopic?: unknown; userMood?: unknown } | undefined;
       if (ctx && typeof ctx === 'object' && Array.isArray(ctx.messages)) {
         this.conversationContext = {
-          messages: ctx.messages.slice(-20).map(toMessage).filter((m): m is ConversationContext['messages'][number] => !!m),
+          messages: ctx.messages.slice(-20).map(toMessage)
+            .filter((m): m is ConversationContext['messages'][number] => !!m && now - m.timestamp <= MESSAGE_TTL_MS),
           currentTopic: typeof ctx.currentTopic === 'string' ? stripControl(ctx.currentTopic).slice(0, 200) : undefined,
           userMood: typeof ctx.userMood === 'string' ? stripControl(ctx.userMood).slice(0, 50) : undefined,
         };
@@ -89,9 +106,20 @@ class Memory {
 
   private saveToStorage() {
     try {
+      if (typeof localStorage === 'undefined') return;
+      const now = Date.now();
+      const ctx = this.conversationContext;
       const data = {
-        longTerm: Array.from(this.longTermMemory.entries()),
-        conversationContext: this.conversationContext,
+        longTerm: Array.from(this.longTermMemory.entries())
+          .filter(([, item]) => !isExpired(item, now))
+          .map(([id, item]) => [id, persistable(item)]),
+        conversationContext: {
+          messages: ctx.messages
+            .filter(m => now - m.timestamp <= MESSAGE_TTL_MS)
+            .map(m => ({ ...m, content: redactSecrets(m.content) })),
+          currentTopic: ctx.currentTopic ? redactSecrets(ctx.currentTopic) : undefined,
+          userMood: ctx.userMood,
+        },
       };
       localStorage.setItem(this.STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
