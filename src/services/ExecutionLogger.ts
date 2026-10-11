@@ -1,4 +1,9 @@
 // Execution Logger - Detailed logging for debugging and monitoring
+// Безопасность: всё, что попадает в журнал, проходит маскировку (security/Redact): API-ключи, токены,
+// код подключения телефона, номера карт и телефонов, скриншоты и поля вроде password/apiKey не
+// сохраняются ни в памяти журнала, ни в экспорте. Импорт журнала проверяется и тоже маскируется.
+import { redactText, redactValue } from './security/Redact';
+import { safeJsonParse } from './security/SafeData';
 
 export interface LogEntry {
   timestamp: number;
@@ -9,6 +14,19 @@ export interface LogEntry {
   requestId?: string;
 }
 
+const LEVELS: LogEntry['level'][] = ['info', 'warn', 'error', 'debug'];
+
+function clean(level: LogEntry['level'], category: unknown, message: unknown, data?: unknown, requestId?: unknown, timestamp = Date.now()): LogEntry {
+  return {
+    timestamp,
+    level,
+    category: redactText(category).slice(0, 60),
+    message: redactText(message).slice(0, 2000),
+    data: data === undefined ? undefined : redactValue(data),
+    requestId: requestId == null ? undefined : String(requestId).slice(0, 100),
+  };
+}
+
 class ExecutionLogger {
   private logs: LogEntry[] = [];
   private maxLogs = 1000;
@@ -17,14 +35,7 @@ class ExecutionLogger {
   log(level: LogEntry['level'], category: string, message: string, data?: any, requestId?: string) {
     if (!this.enabled) return;
 
-    const entry: LogEntry = {
-      timestamp: Date.now(),
-      level,
-      category,
-      message,
-      data,
-      requestId,
-    };
+    const entry = clean(level, category, message, data, requestId);
 
     this.logs.push(entry);
 
@@ -33,21 +44,21 @@ class ExecutionLogger {
       this.logs = this.logs.slice(-this.maxLogs);
     }
 
-    // Console output for development
+    // Console output for development (already redacted)
     if (typeof window !== 'undefined' && (window as any).__DEV__) {
-      const prefix = `[${level.toUpperCase()}] [${category}]`;
+      const prefix = `[${level.toUpperCase()}] [${entry.category}]`;
       switch (level) {
         case 'error':
-          console.error(prefix, message, data || '');
+          console.error(prefix, entry.message, entry.data || '');
           break;
         case 'warn':
-          console.warn(prefix, message, data || '');
+          console.warn(prefix, entry.message, entry.data || '');
           break;
         case 'debug':
-          console.debug(prefix, message, data || '');
+          console.debug(prefix, entry.message, entry.data || '');
           break;
         default:
-          console.log(prefix, message, data || '');
+          console.log(prefix, entry.message, entry.data || '');
       }
     }
   }
@@ -174,17 +185,20 @@ class ExecutionLogger {
     return stats;
   }
 
-  // Export logs
+  // Export logs (entries were redacted on write)
   exportLogs(): string {
     return JSON.stringify(this.logs, null, 2);
   }
 
-  // Import logs
+  // Import logs: size-limited, validated and redacted again
   importLogs(json: string) {
     try {
-      const logs = JSON.parse(json);
+      const logs = safeJsonParse(json, 10 * 1024 * 1024);
       if (Array.isArray(logs)) {
-        this.logs = logs;
+        this.logs = logs
+          .filter((e: any) => e && typeof e === 'object' && LEVELS.includes(e.level) && typeof e.message === 'string')
+          .slice(-this.maxLogs)
+          .map((e: any) => clean(e.level, e.category, e.message, e.data, e.requestId, Number.isFinite(e.timestamp) ? e.timestamp : Date.now()));
       }
     } catch (error) {
       this.error('logger', 'Failed to import logs', { error });
