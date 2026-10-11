@@ -37,7 +37,7 @@ export default function ActionConfirmHost() {
       <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-amber-400/40 p-5 text-white space-y-3 shadow-2xl">
         <div className="flex items-center gap-2 text-amber-300 text-sm"><ShieldAlert className="w-5 h-5" aria-hidden="true" />{s.sourceLabel}</div>
         <h2 id="action-confirm-title" className="text-lg font-semibold">{s.title}?</h2>
-        <ul id="action-confirm-body" className="text-sm text-slate-200 space-y-1 bg-black/30 rounded-lg p-3 break-words">
+        <ul id="action-confirm-body" className="text-sm text-slate-200 space-y-1 bg-black/30 rounded-lg p-3 break-words whitespace-pre-wrap max-h-80 overflow-y-auto">
           {s.lines.length ? s.lines.map((l, i) => <li key={i}>{l}</li>) : <li>Без параметров</li>}
         </ul>
         <p className="text-xs text-slate-400">Проверьте данные. Светлана выполнит действие только после вашего подтверждения.</p>

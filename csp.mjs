@@ -1,6 +1,7 @@
 // Единая политика безопасности контента (CSP) для веб-сборки и Windows (Tauri).
 // Разрешены только нужные адреса: облачные ИИ, распознавание речи, DaData, ФНС, локальные модели и мост с телефоном.
-// Любой другой адрес (в т.ч. подменённый «свой» сервер ИИ) браузер заблокирует.
+// Любой другой адрес (в т.ч. подменённый «свой» сервер ИИ) браузер заблокирует. Картинки — только свои (без внешних ссылок-маячков).
+// Порты 8080/8443 в локальной сети нужны мосту с телефоном (адрес вводит пользователь); их сузим после защищённого сопряжения.
 export const CLOUD_ORIGINS = [
   'https://api.openai.com', 'https://api.anthropic.com', 'https://api.groq.com', 'https://openrouter.ai',
   'https://api.deepseek.com', 'https://generativelanguage.googleapis.com', 'https://api.mistral.ai',
@@ -21,7 +22,7 @@ export function buildCsp({ desktop = false } = {}) {
     "form-action 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https:",
+    "img-src 'self' data: blob:",
     "font-src 'self' data:",
     "media-src 'self' data: blob:",
     "worker-src 'self' blob:",

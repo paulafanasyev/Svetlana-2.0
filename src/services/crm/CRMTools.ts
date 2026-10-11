@@ -1,6 +1,6 @@
 // Svetlana CRM — tools for the AI (ToolRegistry) + chat integration helpers.
-import { authorizeAction, summarizeAction, type ActionSource } from '../security/ActionGate';
-import { sanitizeArgs } from '../security/SafeData';
+import { stricterSource, type ActionSource, type UserGesture } from '../security/ActionGate';
+import { sanitizeArgs, safeJsonParse } from '../security/SafeData';
 import type { Tool, ToolResult } from '../ToolRegistry';
 import { toolRegistry } from '../ToolRegistry';
 import { handsManager } from '../HandsManager';
@@ -264,7 +264,7 @@ export function parseCRMActions(text: string): { clean: string; actions: CRMActi
   let invalid = 0;
   const clean = text.replace(CRM_ACTION_RE, (_m, json: string) => {
     try {
-      const parsed = JSON.parse(json);
+      const parsed = safeJsonParse(json, 20_000) as { tool?: unknown; args?: unknown } | null;
       if (parsed && typeof parsed.tool === 'string' && /^(crm|biz)_[a-z_]{2,40}$/.test(parsed.tool) && actions.length < MAX_LLM_ACTIONS) {
         // Действия из ответа модели помечаются как недоверенные: перед изменением данных нужно подтверждение.
         actions.push({ tool: parsed.tool, args: sanitizeArgs(parsed.args), source: 'llm' });
@@ -306,21 +306,22 @@ export function describeResult(tool: string, result: ToolResult): string {
 }
 
 /**
- * Выполняет действия. source задаёт происхождение для действий без пометки:
- * 'user' — команда, которую человек сам набрал; 'voice' — голос; 'llm' — ответ модели.
- * Изменения данных от модели и голоса требуют подтверждения (см. ActionGate).
+ * Выполняет действия через ToolRegistry (там единый шлюз ActionGate). Источник берётся самый строгий из
+ * пометки действия и параметра; по умолчанию 'unknown' — любое изменение данных требует подтверждения.
+ * 'user' без жеста пользователя (userGesture от настоящего события) шлюз всё равно считает 'unknown'.
  */
-export async function runCRMActions(actions: CRMAction[], source: ActionSource = 'user'): Promise<string[]> {
+export async function runCRMActions(actions: CRMAction[], source: ActionSource = 'unknown', gesture?: UserGesture): Promise<string[]> {
   const lines: string[] = [];
-  for (const a of actions.slice(0, 10)) {
-    const req = { tool: a.tool, args: sanitizeArgs(a.args), source: a.source ?? source };
-    if (!(await authorizeAction(req))) {
-      lines.push(`⏸ Не выполнено без вашего подтверждения: ${summarizeAction(req).title}.`);
+  for (const a of actions.slice(0, MAX_LLM_ACTIONS)) {
+    const src = stricterSource(a.source ?? source, source);
+    const result = await toolRegistry.executeTool(a.tool, sanitizeArgs(a.args), { source: src, gesture: src === 'user' ? gesture : undefined });
+    if (result.denied) {
+      lines.push(`⏸ ${result.error ?? 'Не выполнено без вашего подтверждения'}.`);
       continue;
     }
-    const result = await toolRegistry.executeTool(a.tool, req.args);
     lines.push(describeResult(a.tool, result));
   }
+  if (actions.length > MAX_LLM_ACTIONS) lines.push(`⚠️ Пропущено действий: ${actions.length - MAX_LLM_ACTIONS} (за раз не больше ${MAX_LLM_ACTIONS}).`);
   return lines;
 }
 
