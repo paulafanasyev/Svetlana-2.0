@@ -6,6 +6,8 @@ import { bizStore, BizStore, REGIME_LABELS, formatRub, type PayerType, type TaxR
 import { findSupport, regionalSearchUrl, SUPPORT_KIND_LABELS, type SupportKind } from './SupportCatalog';
 import { checkCounterparty, reportText } from './Counterparty';
 import { computeAnalytics, analyticsText } from './Analytics';
+import { bookingStore } from './Booking';
+import { createBookingTools, detectBookingIntent, describeBookingResult, bookingPrompt } from './BookingTools';
 
 const REGIMES: TaxRegime[] = ['npd', 'usn6', 'usn15', 'patent', 'ooo', 'none'];
 const DOC_TYPES: DocType[] = ['invoice', 'act', 'contract'];
@@ -232,7 +234,7 @@ export function createBizTools(store: BizStore = bizStore): Tool[] {
 }
 
 export function registerBizTools(store: BizStore = bizStore): void {
-  createBizTools(store).forEach(t => toolRegistry.registerTool(t));
+  [...createBizTools(store), ...createBookingTools(bookingStore, findContactFuzzy, store)].forEach(t => toolRegistry.registerTool(t));
 }
 registerBizTools();
 
@@ -264,6 +266,8 @@ export function detectBizIntent(text: string): BizAction | null {
     const amount = parseAmount(doc[3], doc[4]);
     if (amount > 0) return { tool: 'biz_create_document', args: { type, client: doc[2].trim(), amount, service: doc[5]?.trim() || 'Услуги' } };
   }
+  const booking = detectBookingIntent(t);
+  if (booking) return booking;
   const inn = low.match(/(?:^|\D)(\d{12}|\d{10})(?!\d)/)?.[1];
   if (inn && /(инн|контрагент|провер|компани|организаци)/.test(low)) return { tool: 'biz_check_inn', args: { inn } };
   if (/(кто|сколько)\s+(мне\s+)?долж|должник|дебитор|неоплаченн/.test(low)) return { tool: 'biz_receivables', args: {} };
@@ -274,6 +278,8 @@ export function detectBizIntent(text: string): BizAction | null {
 }
 
 export function describeBizResult(tool: string, result: ToolResult): string {
+  const booking = describeBookingResult(tool, result);
+  if (booking !== null) return booking;
   if (!result.success) return `⚠️ ${result.error || 'Не получилось'}`;
   const d = result.data ?? {};
   switch (tool) {
@@ -332,5 +338,5 @@ ${store.summaryForAI()}
 - biz_find_support {"kind": "grant|subsidy|loan|...", "query": "..."}
 - biz_check_inn {"inn": "10 или 12 цифр"} — проверить контрагента перед сделкой
 - biz_analytics {} — финансовая сводка, топ клиентов, прогноз на год и советы
-Правила: налоги считай только через biz_tax_summary; про субсидии называй только программы из biz_find_support и давай ссылки на официальные сайты; не выдумывай суммы, сроки и законы. Чек НПД выбивается в приложении «Мой налог» — напоминай об этом.`;
+Правила: налоги считай только через biz_tax_summary; про субсидии называй только программы из biz_find_support и давай ссылки на официальные сайты; не выдумывай суммы, сроки и законы. Чек НПД выбивается в приложении «Мой налог» — напоминай об этом.${bookingPrompt()}`;
 }
