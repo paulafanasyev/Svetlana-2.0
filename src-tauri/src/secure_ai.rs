@@ -127,8 +127,15 @@ pub fn secret_has(name: String) -> Result<bool, String> {
     has_secret(&entry(&name)?)
 }
 
-fn valid_model(m: &str) -> bool {
-    !m.is_empty() && m.len() <= 100 && m.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-' || b == b'/' || b == b':')
+/// Имя модели. Для Google оно вставляется в адрес, поэтому там запрещены `/`, `:` и `..`.
+fn valid_model(provider: &str, m: &str) -> bool {
+    if m.is_empty() || m.len() > 100 {
+        return false;
+    }
+    if provider == "google" {
+        return !m.contains("..") && m.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-');
+    }
+    m.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-' || b == b'/' || b == b':')
 }
 
 fn is_text(v: Option<&Value>) -> bool {
@@ -193,7 +200,7 @@ fn check_message(provider: &str, m: &Value) -> Result<(), String> {
 /// Строгая рекурсивная проверка тела запроса: обычный чат, без инструментов и потоков.
 fn validate_body(provider: &str, model: &str, body: &Value) -> Result<(), String> {
     let obj = body.as_object().ok_or("Тело запроса должно быть объектом")?;
-    if !valid_model(model) {
+    if !valid_model(provider, model) {
         return Err("Недопустимое имя модели".into());
     }
     let list_key = if provider == "google" { "contents" } else { "messages" };
@@ -330,12 +337,15 @@ mod tests {
         assert!(validate_body("openai", "m", &json!({"model": "m", "messages": [{"role": "user", "content": {"a": 1}}]})).is_err());
         assert!(validate_body("anthropic", "m", &json!({"model": "m", "messages": [{"role": "system", "content": "x"}]})).is_err());
         assert!(validate_body("openai", "m", &json!({"model": "m", "messages": [{"role": "user", "content": "x"}], "temperature": 9})).is_err());
-        // Google
+        // OpenRouter-модели вида vendor/model:tag допустимы
+        assert!(validate_body("openrouter", "meta-llama/llama-3:free", &json!({"model": "meta-llama/llama-3:free", "messages": [{"role": "user", "content": "x"}]})).is_ok());
+        // Google: имя модели в адресе — без символов пути
         let g = json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}], "generationConfig": {"temperature": 0.5}});
         assert!(validate_body("google", "gemini-1.5-flash", &g).is_ok());
         let bad = json!({"contents": [{"role": "user", "parts": [{"inlineData": {}}]}]});
         assert!(validate_body("google", "gemini-1.5-flash", &bad).is_err());
         assert!(validate_body("google", "../evil", &g).is_err());
+        assert!(validate_body("google", "x:streamGenerateContent", &g).is_err());
     }
 
     #[test]
