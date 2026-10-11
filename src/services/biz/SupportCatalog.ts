@@ -152,7 +152,10 @@ export function findSupport(profile: BizProfile, now: number, opts: { kind?: Sup
         ? `на границе по возрасту (${age - 1}–${age}), проверьте точную дату рождения`
         : `подходит по возрасту (${age - 1}–${age})`);
     }
-    if (m.minAge !== undefined && (age === undefined || age < m.minAge)) continue;
+    if (m.minAge !== undefined) {
+      if (age === undefined || age < m.minAge) continue;
+      if (age - 1 < m.minAge) reasons.push(`на границе по возрасту (${age - 1}–${age}): проверьте, исполнилось ли ${m.minAge}`);
+    }
     if (m.sectors) {
       const hit = m.sectors.filter(s => profile.sectors.includes(s));
       if (!hit.length) continue;
