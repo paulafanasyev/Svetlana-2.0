@@ -16,16 +16,22 @@ export type ActionSource = 'user' | 'voice' | 'llm' | 'unknown';
 export interface UserGesture { readonly __gesture: true }
 const gestures = new WeakSet<object>();
 const GESTURE_TTL_MS = 5_000;
-export function userGesture(event: { isTrusted?: boolean } | null | undefined): UserGesture | undefined {
+
+/**
+ * Жест по настоящему событию. Если указан [tool], жест привязан к этому действию: нажатие на кнопку
+ * «Записать доход» нельзя потратить на другой инструмент.
+ */
+export function userGesture(event: { isTrusted?: boolean } | null | undefined, tool?: string): UserGesture | undefined {
   if (!event || event.isTrusted !== true) return undefined;
-  const g = Object.freeze({ __gesture: true as const, at: Date.now() });
+  const g = Object.freeze({ __gesture: true as const, at: Date.now(), tool: typeof tool === 'string' && tool ? tool : null });
   gestures.add(g);
   return g;
 }
-function validGesture(g: UserGesture | undefined, now: number): boolean {
+function validGesture(g: UserGesture | undefined, now: number, tool: string): boolean {
   if (!g || !gestures.has(g)) return false;
-  const at = (g as unknown as { at: number }).at;
+  const { at, tool: boundTo } = g as unknown as { at: number; tool: string | null };
   gestures.delete(g); // одноразовый
+  if (boundTo !== null && boundTo !== tool) return false; // жест для другого действия
   return now - at <= GESTURE_TTL_MS;
 }
 
@@ -155,8 +161,8 @@ let recent: number[] = [];
 
 /** true — действие можно выполнять. Все инструменты проходят сюда из ToolRegistry.executeTool. */
 export async function authorizeAction(input: ActionRequest, now: number = Date.now()): Promise<boolean> {
-  // 'user' без настоящего жеста пользователя понижаем до 'unknown': источник нельзя просто вписать строкой.
-  const source: ActionSource = input.source === 'user' && !validGesture(input.gesture, now) ? 'unknown' : input.source;
+  // 'user' без настоящего жеста пользователя (или с жестом для другого действия) понижаем до 'unknown'.
+  const source: ActionSource = input.source === 'user' && !validGesture(input.gesture, now, input.tool) ? 'unknown' : input.source;
   const req: ActionRequest = { tool: input.tool, args: deepFreeze(input.args), source };
   if (!needsConfirmation(req.tool, req.source)) {
     record({ t: now, tool: req.tool, source: req.source, decision: 'auto' });
