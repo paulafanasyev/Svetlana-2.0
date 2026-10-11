@@ -119,6 +119,7 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
 // Voice Control Component: Web Speech API where available, otherwise cloud speech-to-text (see services/voice).
 // Hands-free mode: always listening, reacts to phrases that start with «Светлана, …».
 // Every phrase is checked against the owner's voiceprint (VoiceGuard): other voices are ignored.
+// The first command also needs 3 random digits spoken aloud (protection against a recorded voice).
 export function VoiceControl({ onCommand }: { onCommand?: (command: string) => void }) {
   const [isListening, setIsListening] = useState(false);
   const [handsFree, setHandsFree] = useState(false);
@@ -139,6 +140,8 @@ export function VoiceControl({ onCommand }: { onCommand?: (command: string) => v
     tokenRef.current = token;
     const listener = listenVerified({
       continuous,
+      // не слушаем саму себя; в режиме «без рук» проверяем только фразы «Светлана, …»
+      accept: t => !(typeof window !== 'undefined' && window.speechSynthesis?.speaking) && (!continuous || hasWakeWord(t)),
       onPartial: t => setTranscript(t),
       onFinal: t => {
         if (typeof window !== 'undefined' && window.speechSynthesis?.speaking) return; // не слушаем саму себя
