@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mic, MicOff, Volume2, VolumeX, Settings, X } from 'lucide-react';
 import { SVETLANA_IDENTITY, getAvatarStateOverlay, getAvatarStateFromEmotion } from '../services/AvatarIdentity';
+import { listen, sttSupport, type Listener } from '../services/voice/SpeechEngine';
+import { hasWakeWord, normalizeSpoken, pickRussianVoice } from '../services/voice/VoiceText';
+import { speakText, stopSpeaking, ttsAvailable } from '../services/voice/Tts';
 
 type Emotion = 'neutral' | 'happy' | 'sad' | 'laughing' | 'crying' | 'surprised' | 'talking';
 
@@ -112,47 +115,61 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
   );
 }
 
-// Voice Control Component
+// Voice Control Component: Web Speech API where available, otherwise cloud speech-to-text (see services/voice).
+// Hands-free mode: always listening, reacts to phrases that start with «Светлана, …».
 export function VoiceControl({ onCommand }: { onCommand?: (command: string) => void }) {
   const [isListening, setIsListening] = useState(false);
+  const [handsFree, setHandsFree] = useState(false);
   const [transcript, setTranscript] = useState('');
-  const recognitionRef = useRef<any>(null);
+  const [error, setError] = useState<string | null>(null);
+  const listenerRef = useRef<Listener | null>(null);
+  const tokenRef = useRef<object | null>(null);
+  const onCommandRef = useRef(onCommand);
+  const support = sttSupport();
 
-  useEffect(() => {
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = 'ru-RU';
+  useEffect(() => { onCommandRef.current = onCommand; }, [onCommand]);
+  useEffect(() => () => listenerRef.current?.stop(), []);
 
-      recognitionRef.current.onresult = (event: any) => {
-        const text = Array.from(event.results)
-          .map((result: any) => result[0].transcript)
-          .join('');
-        setTranscript(text);
-      };
-
-      recognitionRef.current.onend = () => {
+  const start = (continuous: boolean) => {
+    setError(null);
+    setTranscript('');
+    const token = {};
+    tokenRef.current = token;
+    const listener = listen({
+      continuous,
+      onPartial: t => setTranscript(t),
+      onFinal: t => {
+        if (typeof window !== 'undefined' && window.speechSynthesis?.speaking) return; // не слушаем саму себя
+        setTranscript(t);
+        if (continuous && !hasWakeWord(t)) return;
+        const command = normalizeSpoken(t);
+        if (command) onCommandRef.current?.(command);
+      },
+      onError: m => setError(m),
+      onEnd: () => {
+        if (tokenRef.current !== token) return;
+        listenerRef.current = null;
         setIsListening(false);
-        if (transcript && onCommand) {
-          onCommand(transcript);
-        }
-      };
-    }
-  }, [onCommand, transcript]);
+        setHandsFree(false);
+      },
+    });
+    listenerRef.current = listener;
+    setIsListening(!!listener);
+    setHandsFree(!!listener && continuous);
+  };
+
+  const stopListening = () => {
+    listenerRef.current?.stop();
+    if (handsFree) { tokenRef.current = null; listenerRef.current = null; setIsListening(false); setHandsFree(false); }
+  };
 
   const toggleListening = () => {
-    if (!recognitionRef.current) return;
+    if (listenerRef.current) stopListening(); else start(false);
+  };
 
-    if (isListening) {
-      recognitionRef.current.stop();
-      setIsListening(false);
-    } else {
-      setTranscript('');
-      recognitionRef.current.start();
-      setIsListening(true);
-    }
+  const toggleHandsFree = () => {
+    if (handsFree) stopListening();
+    else { listenerRef.current?.stop(); start(true); }
   };
 
   return (
@@ -164,6 +181,7 @@ export function VoiceControl({ onCommand }: { onCommand?: (command: string) => v
             ? 'bg-red-500/20 border-2 border-red-500 shadow-lg shadow-red-500/30'
             : 'bg-indigo-500/20 border-2 border-indigo-500/50 hover:bg-indigo-500/30'
         }`}
+        aria-label={isListening ? 'Остановить' : 'Говорить'}
       >
         {isListening ? (
           <MicOff className="w-8 h-8 text-red-400" />
@@ -180,13 +198,20 @@ export function VoiceControl({ onCommand }: { onCommand?: (command: string) => v
         )}
       </button>
 
-      <div className="text-center">
+      <div className="text-center space-y-1">
         <p className="text-sm text-sv-muted">
-          {isListening ? 'Слушаю...' : 'Нажмите для голосового ввода'}
+          {handsFree ? 'Слушаю постоянно. Начните со слова «Светлана»' : isListening ? 'Слушаю...' : 'Нажмите и скажите команду'}
         </p>
-        {transcript && (
-          <p className="text-sm text-indigo-300 mt-1 italic">"{transcript}"</p>
+        {transcript && <p className="text-sm text-indigo-300 italic">"{transcript}"</p>}
+        {error && <p className="text-xs text-amber-300">{error}</p>}
+        {support.web && (
+          <button onClick={toggleHandsFree} className={`text-xs px-3 py-1 rounded-full border ${handsFree ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-white/5 border-white/10 text-sv-muted hover:bg-white/10'}`}>
+            {handsFree ? 'Режим «Светлана, …» включён' : 'Включить «Светлана, …» без рук'}
+          </button>
         )}
+        <p className="text-[11px] text-sv-muted opacity-60">
+          {support.mode === 'web' ? 'Распознавание: встроенное' : support.mode === 'cloud' ? 'Распознавание: облачное' : 'Распознавание не настроено: кнопка «Голос» внизу слева → настройки'}
+        </p>
       </div>
     </div>
   );
@@ -198,41 +223,20 @@ export function useSpeech() {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   useEffect(() => {
-    const loadVoices = () => {
-      const availableVoices = window.speechSynthesis.getVoices();
-      setVoices(availableVoices);
-    };
-
+    if (!ttsAvailable()) return;
+    const loadVoices = () => setVoices(window.speechSynthesis.getVoices());
     loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;
+    window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
   }, []);
 
   const speak = (text: string, voiceIndex?: number) => {
-    if (!('speechSynthesis' in window)) return;
-
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'ru-RU';
-    utterance.rate = 1.0;
-    utterance.pitch = 1.1;
-
-    if (voiceIndex !== undefined && voices[voiceIndex]) {
-      utterance.voice = voices[voiceIndex];
-    } else {
-      // Try to find a Russian female voice
-      const russianVoice = voices.find(v => v.lang.includes('ru') && v.name.toLowerCase().includes('female'));
-      if (russianVoice) utterance.voice = russianVoice;
-    }
-
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
-
-    window.speechSynthesis.speak(utterance);
+    const voice = voiceIndex !== undefined ? voices[voiceIndex] : pickRussianVoice(voices);
+    speakText(text, { voice, onStart: () => setIsSpeaking(true), onEnd: () => setIsSpeaking(false) });
   };
 
   const stop = () => {
-    window.speechSynthesis.cancel();
+    stopSpeaking();
     setIsSpeaking(false);
   };
 

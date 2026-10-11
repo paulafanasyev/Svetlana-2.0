@@ -7,6 +7,7 @@ import BizPage from '../pages/BizPage';
 import BankInnPage from '../pages/BankInnPage';
 import AnalyticsPage from '../pages/AnalyticsPage';
 import BookingPage from '../pages/BookingPage';
+import VoiceButton from './VoiceButton';
 
 type Section = 'crm' | 'biz' | 'bank' | 'stats' | 'booking';
 
@@ -56,6 +57,7 @@ export default function CRMLauncher() {
           <button onClick={() => setSection('biz')} className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium shadow-lg shadow-emerald-900/40" aria-label="Открыть Бизнес">
             <Briefcase className="w-4 h-4" />Бизнес
           </button>
+          <VoiceButton />
         </div>
       )}
       {section && (
