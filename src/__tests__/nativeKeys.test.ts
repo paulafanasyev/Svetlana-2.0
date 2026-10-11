@@ -1,10 +1,25 @@
 // Приложение для Windows: ключ облачного ИИ уходит в хранилище Windows и не живёт в JavaScript,
 // запрос в облако делает нативная часть (fetch из страницы не вызывается, ключа в аргументах нет).
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest';
 import { aiGateway } from '../services/AIGateway';
 import { NATIVE_KEY_PLACEHOLDER } from '../services/security/NativeBridge';
 
+function memoryStorage(): Storage {
+  const m = new Map<string, string>();
+  return {
+    get length() { return m.size; },
+    clear: () => m.clear(),
+    getItem: (k: string) => m.get(k) ?? null,
+    key: (i: number) => [...m.keys()][i] ?? null,
+    removeItem: (k: string) => { m.delete(k); },
+    setItem: (k: string, v: string) => { m.set(k, String(v)); },
+  } as Storage;
+}
+
 describe('desktop app keeps AI keys in the OS keychain', () => {
+  beforeAll(() => {
+    if (typeof (globalThis as any).localStorage === 'undefined') (globalThis as any).localStorage = memoryStorage();
+  });
   afterEach(() => { delete (globalThis as any).__TAURI_INTERNALS__; vi.restoreAllMocks(); });
 
   it('stores the key natively and calls the cloud through the native side', async () => {
@@ -21,6 +36,7 @@ describe('desktop app keeps AI keys in the OS keychain', () => {
     aiGateway.addProvider({ id: 'openai', name: 'OpenAI', type: 'online', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini', enabled: true, apiKey: 'sk-TEST-SECRET-KEY-123' });
     expect(aiGateway.getProvider('openai')!.apiKey).toBe(NATIVE_KEY_PLACEHOLDER);
     expect(calls).toContainEqual(['secret_set', { name: 'ai.openai', value: 'sk-TEST-SECRET-KEY-123' }]);
+    expect(String((globalThis as any).localStorage.getItem('svetlana_ai_providers'))).not.toContain('sk-TEST-SECRET-KEY-123');
 
     const r = await aiGateway.chat([{ role: 'user', content: 'hi' }], undefined, 'openai');
     expect(r.content).toBe('привет');
