@@ -3,6 +3,9 @@ import type { PlatformHands, PlatformHandsConfig, ConnectionStatus } from './Pla
 import { WebSocketHands } from './WebSocketHands';
 import { HTTPHands } from './HTTPHands';
 
+/** WebSocket-транспорт не защищён шифрованием: только для отладки на этом же компьютере. */
+const LOOPBACK_WS_RE = /^wss?:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?(\/[A-Za-z0-9._~-]*)*$/;
+
 export class HandsManager {
   private hands: PlatformHands | null = null;
   private config: PlatformHandsConfig | null = null;
@@ -10,11 +13,15 @@ export class HandsManager {
   private listeners: ((status: ConnectionStatus) => void)[] = [];
 
   async connect(config: PlatformHandsConfig): Promise<void> {
-    this.config = config;
+    // Код подключения в памяти не храним дольше, чем нужно для рукопожатия.
+    this.config = { ...config, token: undefined };
     this.setStatus('connecting');
 
     try {
       if (config.transport === 'websocket') {
+        if (!LOOPBACK_WS_RE.test(config.endpoint.trim())) {
+          throw new Error('WebSocket доступен только для отладки на этом компьютере. Для телефона выберите защищённое подключение HTTP.');
+        }
         this.hands = new WebSocketHands(config);
       } else if (config.transport === 'http') {
         this.hands = new HTTPHands(config);

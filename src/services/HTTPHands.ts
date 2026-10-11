@@ -1,82 +1,116 @@
-// HTTP Transport - connection to the Svetlana-home bridge on the Android phone
+// HTTP Transport - connection to the Svetlana-home bridge on the Android phone.
+// Защищённый протокол v2 (см. security/BridgeCrypto.ts): код подключения по сети не передаётся,
+// каждый запрос и ответ зашифрован и подписан, повтор перехваченного запроса невозможен,
+// ответ от чужого устройства в сети отклоняется. Адрес — только домашняя сеть.
 import type { PlatformHands, ActionResult, ScreenCapture, AccessibilityTree, UIElement, DeviceInfo, PlatformHandsConfig, ContactsPage } from './PlatformHands';
+import { BRIDGE_PROTOCOL, BAD_REPLY, deriveBridgeKey, openResponse, sealRequest, validateBridgeEndpoint } from './security/BridgeCrypto';
+import { safeJsonParse, stripControl } from './security/SafeData';
+
+const MAX_REPLY_BYTES = 20 * 1024 * 1024;
+const ROUTE_RE = /^[a-z]+\/[A-Za-z]+$/;
+
+interface RawReply { status: number; text: string }
+
+/** JSON без исключений: null, если ответ не JSON или слишком большой. */
+function parseJson(text: string, max: number): unknown {
+  try { return safeJsonParse(text, max); } catch { return null; }
+}
 
 export class HTTPHands implements PlatformHands {
   private config: PlatformHandsConfig;
   private connected = false;
+  private key: CryptoKey | null = null;
 
   constructor(config: PlatformHandsConfig) {
-    this.config = { ...config, endpoint: config.endpoint.replace(/\/+$/, '') };
+    this.config = { ...config, endpoint: validateBridgeEndpoint(config.endpoint) };
   }
 
-  private headers(): Record<string, string> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const token = this.config.token?.trim();
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    return headers;
+  /** Запрос без кук, без переходов на другие адреса, без кеша; ответ ограничен по размеру. */
+  private async raw(url: string, init: RequestInit): Promise<RawReply> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.config.timeout || 10000);
+    try {
+      const response = await fetch(url, { ...init, redirect: 'error', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', signal: controller.signal });
+      const text = await response.text();
+      if (text.length > MAX_REPLY_BYTES) throw new Error('Слишком большой ответ телефона');
+      return { status: response.status, text };
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw new Error(`Request timeout: ${url.split('/api/')[1] ?? 'health'}`);
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /** Проверка связи и получение соли; общий ключ выводится из кода подключения локально. */
+  private async handshake(): Promise<void> {
+    const r = await this.raw(`${this.config.endpoint}/health`, { method: 'GET' });
+    if (r.status !== 200) throw new Error('Health check failed');
+    const h = parseJson(r.text, 4096) as { service?: unknown; v?: unknown; salt?: unknown } | null;
+    if (!h || h.service !== 'svetlana-home') throw new Error('По этому адресу не Svetlana-home');
+    if (h.v !== BRIDGE_PROTOCOL || typeof h.salt !== 'string') {
+      throw new Error('Обновите Svetlana-home на телефоне: нужна версия с защищённым подключением (протокол v2)');
+    }
+    this.key = await deriveBridgeKey(this.config.token ?? '', h.salt);
   }
 
   async connect(): Promise<void> {
     try {
-      const response = await fetch(`${this.config.endpoint}/health`, { method: 'GET' });
-      if (!response.ok) throw new Error('Health check failed');
+      await this.handshake();
       this.connected = true;
-      // Verify the pairing code right away so the UI can report a wrong code.
+      // Сразу проверяем код, чтобы интерфейс сообщил о неверном коде.
       await this.sendRequest('device/info');
-      console.log('[HTTPHands] Connected to', this.config.endpoint);
     } catch (error) {
       this.connected = false;
+      this.key = null;
       throw error;
     }
   }
 
   async disconnect(): Promise<void> {
     this.connected = false;
+    this.key = null;
   }
 
   async isConnected(): Promise<boolean> {
     return this.connected;
   }
 
-  private async sendRequest(method: string, params: any = {}): Promise<any> {
-    if (!this.connected) {
+  private async sendRequest(method: string, params: any = {}, retried = false): Promise<any> {
+    if (!this.connected || !this.key) {
       throw new Error('Not connected to Android device');
     }
+    if (!ROUTE_RE.test(method)) throw new Error(`Bad method: ${method}`);
 
-    const timeout = this.config.timeout || 10000;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    const key = this.key;
+    const { body, nonce } = await sealRequest(key, method, JSON.stringify({ params, timestamp: Date.now() }));
+    const r = await this.raw(`${this.config.endpoint}/api/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
 
-    try {
-      const response = await fetch(`${this.config.endpoint}/api/${method}`, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify({
-          params,
-          timestamp: Date.now()
-        }),
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ message: 'Unknown error' }));
-        if (response.status === 401) {
-          throw new Error(error.message || 'Неверный код подключения');
-        }
-        throw new Error(error.message || `HTTP ${response.status}`);
-      }
-
-      const result = await response.json();
-      return result.data || result;
-    } catch (error) {
-      clearTimeout(timeoutId);
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error(`Request timeout: ${method}`);
-      }
-      throw error;
+    const outer = parseJson(r.text, MAX_REPLY_BYTES) as Record<string, unknown> | null;
+    if (outer && outer.v === BRIDGE_PROTOCOL && typeof outer.ct === 'string') {
+      // Зашифрованный ответ: доверяем только после проверки подлинности.
+      const inner = parseJson(await openResponse(key, method, nonce, r.text), MAX_REPLY_BYTES) as Record<string, any> | null;
+      if (!inner || typeof inner !== 'object') throw new Error(BAD_REPLY);
+      if (inner.success === false) throw new Error(stripControl(String(inner.message ?? inner.error ?? `HTTP ${r.status}`)).slice(0, 300));
+      return inner.data ?? inner;
     }
+
+    // Открытый ответ бывает только у ошибок до проверки кода. Успех без шифрования не принимаем.
+    if (r.status === 200) throw new Error(BAD_REPLY);
+    const code = typeof outer?.error === 'string' ? outer.error : '';
+    const message = stripControl(String(outer?.message ?? `HTTP ${r.status}`)).slice(0, 300);
+    if (code === 'UNAUTHORIZED' && !retried) {
+      // Телефон мог перезапуститься и сменить соль: обновляем ключ и пробуем один раз.
+      await this.handshake();
+      return this.sendRequest(method, params, true);
+    }
+    if (r.status === 401) throw new Error(message || 'Неверный код подключения');
+    if (r.status === 426) throw new Error('Версии Светланы на ПК и телефоне не совпадают: обновите обе');
+    throw new Error(message);
   }
 
   // Device info
