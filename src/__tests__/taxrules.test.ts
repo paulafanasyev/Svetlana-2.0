@@ -234,3 +234,44 @@ describe('support catalog', () => {
     expect(r?.reasons.join(' ')).toContain('проверьте, исполнилось ли 14');
   });
 });
+
+describe('round 2 tax fixes', () => {
+  it('uses last year limits (250/450 млн) for the rate from last year income', () => {
+    expect(vatStatusUsn(2026, 260_000_000, Array(12).fill(0)).rateByMonth[0]).toBe(7);
+    expect(vatStatusUsn(2026, 240_000_000, Array(12).fill(0)).rateByMonth[0]).toBe(5);
+    expect(vatStatusUsn(2026, 460_000_000, Array(12).fill(0))).toMatchObject({ status: 'lost_usn', lostUsnFromMonth: 0 });
+    expect(vatStatusUsn(2026, 460_000_000, Array(12).fill(0)).text).toContain('10% или 0%');
+  });
+  it('adds three VAT payments on the 28th after each VAT quarter', () => {
+    store.updateProfile({ regime: 'usn6' });
+    store.addEntry({ kind: 'income', amount: 21_000_000, description: 'контракт', date: day(2026, 5, 15) });
+    const pays = store.deadlines(120).filter(d => d.title === 'Уплата НДС').map(d => ymd(d.date));
+    expect(pays).toEqual(['2026-10-28', '2026-11-30', '2026-12-28', '2027-1-28']);
+  });
+  it('cash and card receipts are due at the moment of payment', () => {
+    const paid = day(2026, 10, 11);
+    expect(npdReceiptDeadline(paid, 'card')).toBe(paid);
+    store.updateProfile({ regime: 'npd' });
+    store.addEntry({ kind: 'income', amount: 500, description: 'карта', date: now - 60_000, payMethod: 'card' });
+    expect(store.overdueReceipts()).toHaveLength(1);
+  });
+  it('records the payment method when an invoice is paid', () => {
+    store.updateProfile({ regime: 'npd' });
+    const d = store.createDocument({ type: 'invoice', clientName: 'Иван', items: [{ name: 'Урок', qty: 1, price: 1000 }] });
+    expect(store.markPaid(d.id, { payMethod: 'cash' }).entry.payMethod).toBe('cash');
+  });
+  it('applies the regional УСН rate and skips expenses without documents', () => {
+    store.updateProfile({ regime: 'usn6', usnRate: 4 });
+    store.addEntry({ kind: 'income', amount: 1_000_000, description: 'x', date: day(2026, 2, 1) });
+    expect(store.usnSummary(2026)).toMatchObject({ rate: 4, taxGross: 40_000 });
+    expect(() => store.updateProfile({ usnRate: 7 })).toThrow();
+    store.updateProfile({ regime: 'usn15', usnRate: 10 });
+    const e = store.addEntry({ kind: 'expense', amount: 200_000, description: 'аренда', date: day(2026, 2, 2) });
+    const before = store.usnSummary(2026);
+    store.setNoDocs(e.id, true);
+    const after = store.usnSummary(2026);
+    expect(after.expenses).toBe(before.expenses - 200_000);
+    expect(after.expensesNoDocs).toBe(200_000);
+    expect(after.rate).toBe(10);
+  });
+});
