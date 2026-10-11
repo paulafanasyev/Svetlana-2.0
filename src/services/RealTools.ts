@@ -1,6 +1,7 @@
 // Real Tool Registry - Uses actual PlatformHands for device control
 // Безопасность: действия на экране «прикалываются» к приложению, которое было на экране в начале,
 // и перед самим нажатием/вводом/свайпом/клавишей проверяется, что оно всё ещё на экране (оверлей/подмена = отказ).
+// Проверка результата (verify) тоже считает доказательством только экран того же приложения.
 import type { Tool, ToolResult } from './ToolRegistry';
 import { handsManager } from './HandsManager';
 import { HTTPHands } from './HTTPHands';
@@ -80,13 +81,14 @@ export const tapElementTool: Tool = {
     if (!tapResult.success) return { success: false, error: tapResult.error || 'Tap failed' };
     await new Promise(r => setTimeout(r, 500));
     const afterTree = await hands.getAccessibilityTree(); const afterApp = await hands.getCurrentApp();
-    return { success: true, data: { element: { id: element.id, text: element.text, bounds: element.bounds }, tappedAt: { x: centerX, y: centerY }, beforeTree, afterTree, beforeApp, afterApp, timestamp: Date.now() } };
+    return { success: true, data: { element: { id: element.id, text: element.text, bounds: element.bounds }, tappedAt: { x: centerX, y: centerY }, beforeTree, afterTree, beforeApp, afterApp, pinned, timestamp: Date.now() } };
   },
   async verify(_params, result) {
     if (!result.success || !result.data?.beforeTree || !result.data?.afterTree) return false;
-    const beforeTree = result.data.beforeTree; const afterTree = result.data.afterTree;
-    const beforeCount = beforeTree.root?.children?.length || 0; const afterCount = afterTree.root?.children?.length || 0;
-    return beforeCount !== afterCount || result.data.beforeApp !== result.data.afterApp;
+    // Доказательство только из того же приложения: смена приложения после нажатия неотличима от оверлея — не подтверждено.
+    if (!result.data.pinned || result.data.afterApp !== result.data.pinned) return false;
+    const beforeCount = result.data.beforeTree.root?.children?.length || 0; const afterCount = result.data.afterTree.root?.children?.length || 0;
+    return beforeCount !== afterCount;
   },
   async isAvailable() { return await handsManager.isConnected(); },
 };
@@ -106,7 +108,9 @@ export const typeTextTool: Tool = {
     return { success: true, data: { typed: params.text, length: params.text.length, app: pinned, timestamp: Date.now() } };
   },
   async verify(params, result) {
-    if (!result.success) return false; const hands = handsManager.getHands(); if (!hands) return false;
+    if (!result.success || typeof result.data?.app !== 'string') return false; const hands = handsManager.getHands(); if (!hands) return false;
+    // Читаем поле только если на экране то же приложение (иначе «подтверждение» может прийти из оверлея).
+    if (!(await stillIn(hands, result.data.app))) return false;
     const tree = await hands.getAccessibilityTree();
     const findFocusedInput = (node: any): any => { if (node?.focused && (node.type === 'EditText' || node.type === 'TextField' || node.className?.includes('EditText'))) return node; for (const child of node?.children || []) { const found = findFocusedInput(child); if (found) return found; } return null; };
     const input = findFocusedInput(tree.root); return !!input && String(input.text || '').includes(params.text);
