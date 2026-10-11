@@ -1,7 +1,8 @@
 // Svetlana Business — profile, money ledger, documents (invoices/acts/contracts),
 // receivables and Russian tax estimates (НПД, УСН). Local-first, like the CRM.
 import type { KeyValueStorage } from '../crm/CRMStore';
-import { contributionsFor, onePercent, dueDate, npdReceiptDeadline, vatStatusUsn, patentPayments, type VatStatus } from './TaxRules';
+import { safeJsonParse, csvSafe, stripControl, MAX_BYTES } from '../security/SafeData';
+import { contributionsFor, onePercent, dueDate, npdReceiptDeadline, vatStatusUsn, patentPayments, type VatStatus, type PayMethod } from './TaxRules';
 
 export type TaxRegime = 'npd' | 'usn6' | 'usn15' | 'patent' | 'ooo' | 'none';
 export type PayerType = 'person' | 'company';
@@ -33,7 +34,9 @@ export interface BizProfile {
   birthYear?: number;
   sectors: string[];         // e.g. tech, agro, export, social, education, services
   flags: string[];           // lowIncome, unemployed, newBusiness, socialEnterprise
-  fixedContributions: number; // фиксированные взносы ИП за текущий год (по умолчанию — из закона на этот год)
+  fixedContributions: number; // фиксированные взносы ИП за год fixedContributionsYear (по умолчанию — из закона)
+  fixedContributionsYear: number; // к какому году относится сумма выше; для других лет берётся сумма из закона
+  usn15OnePercentTiming: 'same' | 'next'; // УСН 15%: 1% учитывать в расходах года начисления или года уплаты
   contributionsPaid: number;  // уже уплачено взносов в этом году (для напоминаний)
   hasEmployees: boolean;      // есть работники: УСН 6% уменьшается на взносы не более чем на 50%
   vatGeneralRate: boolean;    // УСН с НДС: выбрана общая ставка 22% вместо 5/7%
@@ -57,6 +60,7 @@ export interface LedgerEntry {
   receipt: ReceiptStatus;
   receiptNumber?: string;
   taxable?: boolean;        // false — не доход/не расход для налога (перевод себе, займ, возврат)
+  payMethod?: PayMethod;    // способ расчёта: влияет на срок чека НПД
   createdAt: number;
 }
 
@@ -161,7 +165,8 @@ export function defaultProfile(): BizProfile {
   return {
     regime: 'none', region: '', fullName: '', inn: '', ogrn: '', address: '', phone: '', email: '',
     bankName: '', bik: '', account: '', corrAccount: '', sectors: [], flags: [],
-    fixedContributions: contributionsFor(new Date().getFullYear()).fixed, contributionsPaid: 0,
+    fixedContributions: contributionsFor(new Date().getFullYear()).fixed, fixedContributionsYear: new Date().getFullYear(),
+    usn15OnePercentTiming: 'same', contributionsPaid: 0,
     hasEmployees: false, vatGeneralRate: false, orgOnUsn: false, patentStart: '', patentEnd: '', patentCost: 0,
   };
 }
@@ -170,23 +175,82 @@ function emptyData(): BizData {
   return { version: 1, profile: defaultProfile(), ledger: [], documents: [], counters: {} };
 }
 
+const str = (v: unknown, max = 500): string => (typeof v === 'string' ? stripControl(v).slice(0, max) : typeof v === 'number' && Number.isFinite(v) ? String(v) : '');
+const optStr = (v: unknown, max = 500): string | undefined => { const x = str(v, max); return x || undefined; };
+const num = (v: unknown, min: number, max: number): number | undefined => { const n = Number(v); return Number.isFinite(n) && n >= min && n <= max ? n : undefined; };
+const MAX_TS = 4_102_444_800_000; // 2100-01-01
+const ts = (v: unknown): number | undefined => num(v, 0, MAX_TS);
+const oneOf = <T extends string>(v: unknown, list: readonly T[], def: T): T => (list.includes(v as T) ? (v as T) : def);
+const REGIMES_ALL = ['npd', 'usn6', 'usn15', 'patent', 'ooo', 'none'] as const;
+const DOC_TYPES_ALL = ['invoice', 'act', 'contract'] as const;
+const DOC_STATUSES_ALL = ['draft', 'sent', 'paid', 'cancelled'] as const;
+
+/** Строгая проверка данных из хранилища/резервной копии: объекты собираются поле за полем, мусор отбрасывается. */
 function sanitize(raw: unknown): BizData {
   const data = emptyData();
-  if (!raw || typeof raw !== 'object') return data;
-  const r = raw as Partial<BizData>;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return data;
+  const r = raw as Record<string, any>;
   if (r.profile && typeof r.profile === 'object') {
-    data.profile = { ...defaultProfile(), ...r.profile };
-    data.profile.sectors = Array.isArray(r.profile.sectors) ? r.profile.sectors.map(String) : [];
-    data.profile.flags = Array.isArray(r.profile.flags) ? r.profile.flags.map(String) : [];
+    const p = r.profile as Record<string, unknown>;
+    const d = defaultProfile();
+    data.profile = {
+      regime: oneOf(p.regime, REGIMES_ALL, 'none'), region: str(p.region, 120), fullName: str(p.fullName, 300),
+      inn: str(p.inn, 12), ogrn: str(p.ogrn, 15), address: str(p.address, 500), phone: str(p.phone, 40), email: str(p.email, 200),
+      bankName: str(p.bankName, 200), bik: str(p.bik, 9), account: str(p.account, 20), corrAccount: str(p.corrAccount, 20),
+      birthYear: num(p.birthYear, 1900, 2100),
+      sectors: Array.isArray(p.sectors) ? p.sectors.slice(0, 30).map(x => str(x, 40)).filter(Boolean) : [],
+      flags: Array.isArray(p.flags) ? p.flags.slice(0, 30).map(x => str(x, 40)).filter(Boolean) : [],
+      fixedContributions: num(p.fixedContributions, 0, 10_000_000) ?? d.fixedContributions,
+      fixedContributionsYear: num(p.fixedContributionsYear, 2000, 2100) ?? 0,
+      usn15OnePercentTiming: p.usn15OnePercentTiming === 'next' ? 'next' : 'same',
+      contributionsPaid: num(p.contributionsPaid, 0, 10_000_000) ?? 0,
+      hasEmployees: p.hasEmployees === true, vatGeneralRate: p.vatGeneralRate === true, orgOnUsn: p.orgOnUsn === true,
+      patentStart: /^\d{4}-\d{2}-\d{2}$/.test(String(p.patentStart ?? '')) ? String(p.patentStart) : '',
+      patentEnd: /^\d{4}-\d{2}-\d{2}$/.test(String(p.patentEnd ?? '')) ? String(p.patentEnd) : '',
+      patentCost: num(p.patentCost, 0, 100_000_000) ?? 0,
+    };
   }
   if (Array.isArray(r.ledger)) {
-    data.ledger = r.ledger.filter(e => e && typeof e.id === 'string' && Number.isFinite(Number(e.amount)))
-      .map(e => ({ ...e, amount: Number(e.amount), kind: (e.kind === 'expense' ? 'expense' : 'income') as EntryKind, payerType: (e.payerType === 'company' ? 'company' : 'person') as PayerType, receipt: (e.receipt ?? 'none') as ReceiptStatus }));
+    for (const e of r.ledger.slice(0, 200_000)) {
+      if (!e || typeof e !== 'object') continue;
+      const amount = num(e.amount, 0.01, 1e12);
+      const date = ts(e.date);
+      if (typeof e.id !== 'string' || amount === undefined || date === undefined) continue;
+      data.ledger.push({
+        id: str(e.id, 80), kind: e.kind === 'expense' ? 'expense' : 'income', date, amount: round2(amount),
+        description: str(e.description, 500), payerType: e.payerType === 'company' ? 'company' : 'person',
+        contactId: optStr(e.contactId, 80), counterparty: optStr(e.counterparty, 300), documentId: optStr(e.documentId, 80),
+        category: optStr(e.category, 100), receipt: oneOf(e.receipt, ['none', 'pending', 'issued'] as const, 'none'),
+        receiptNumber: optStr(e.receiptNumber, 100), taxable: e.taxable === false ? false : undefined,
+        payMethod: e.payMethod === 'cash' || e.payMethod === 'card' || e.payMethod === 'transfer' ? e.payMethod : undefined,
+        createdAt: ts(e.createdAt) ?? date,
+      });
+    }
   }
   if (Array.isArray(r.documents)) {
-    data.documents = r.documents.filter(d => d && typeof d.id === 'string' && Array.isArray(d.items));
+    for (const d of r.documents.slice(0, 50_000)) {
+      if (!d || typeof d !== 'object' || typeof d.id !== 'string' || !Array.isArray(d.items)) continue;
+      const items = d.items.slice(0, 200)
+        .map((i: any) => ({ name: str(i?.name, 500), qty: num(i?.qty, 0.0001, 1e9) ?? 0, price: num(i?.price, 0, 1e12) ?? -1 }))
+        .filter((i: DocItem) => i.name && i.qty > 0 && i.price >= 0);
+      const date = ts(d.date);
+      if (!items.length || date === undefined) continue;
+      data.documents.push({
+        id: str(d.id, 80), type: oneOf(d.type, DOC_TYPES_ALL, 'invoice'), number: str(d.number, 40) || '?', date,
+        dueDate: ts(d.dueDate), contactId: optStr(d.contactId, 80), clientName: str(d.clientName, 300) || 'Клиент',
+        clientDetails: str(d.clientDetails, 2000), items, total: round2(items.reduce((s: number, i: DocItem) => s + i.qty * i.price, 0)),
+        status: oneOf(d.status, DOC_STATUSES_ALL, 'draft'), paidAt: ts(d.paidAt), basis: optStr(d.basis, 300),
+        vatRate: num(d.vatRate, 0, 30), vatNote: optStr(d.vatNote, 200),
+        createdAt: ts(d.createdAt) ?? date, updatedAt: ts(d.updatedAt) ?? date,
+      });
+    }
   }
-  if (r.counters && typeof r.counters === 'object') data.counters = { ...r.counters };
+  if (r.counters && typeof r.counters === 'object' && !Array.isArray(r.counters)) {
+    for (const [k, v] of Object.entries(r.counters as Record<string, unknown>).slice(0, 200)) {
+      const n = num(v, 0, 1e9);
+      if (/^(invoice|act|contract)-\d{4}$/.test(k) && n !== undefined) data.counters[k] = Math.floor(n);
+    }
+  }
   return data;
 }
 
@@ -222,7 +286,7 @@ export class BizStore {
   private load(): BizData {
     try {
       const raw = this.storage.getItem(STORAGE_KEY);
-      return raw ? sanitize(JSON.parse(raw)) : emptyData();
+      return raw ? sanitize(safeJsonParse(raw, MAX_BYTES.backupJson)) : emptyData();
     } catch {
       return emptyData();
     }
@@ -261,7 +325,7 @@ export class BizStore {
       .sort((a, b) => b.date - a.date);
   }
 
-  addEntry(input: { kind: EntryKind; amount: number; description: string; date?: number; payerType?: PayerType; contactId?: string; counterparty?: string; documentId?: string; category?: string; taxable?: boolean }): LedgerEntry {
+  addEntry(input: { kind: EntryKind; amount: number; description: string; date?: number; payerType?: PayerType; contactId?: string; counterparty?: string; documentId?: string; category?: string; taxable?: boolean; payMethod?: PayMethod }): LedgerEntry {
     const amount = round2(Number(input.amount));
     if (!Number.isFinite(amount) || amount <= 0) throw new Error('Сумма должна быть больше нуля');
     const description = input.description.trim() || (input.kind === 'income' ? 'Доход' : 'Расход');
@@ -275,6 +339,7 @@ export class BizStore {
       documentId: input.documentId, category: input.category,
       receipt: input.kind === 'income' && this.data.profile.regime === 'npd' && input.taxable !== false ? 'pending' : 'none',
       taxable: input.taxable === false ? false : undefined,
+      payMethod: input.payMethod === 'cash' || input.payMethod === 'card' || input.payMethod === 'transfer' ? input.payMethod : undefined,
       createdAt: now,
     };
     if (!Number.isFinite(entry.date)) throw new Error('Некорректная дата');
@@ -370,8 +435,8 @@ export class BizStore {
     if (p.regime === 'patent') return { vatNote: 'Без НДС (патентная система налогообложения)' };
     if (p.regime === 'usn6' || p.regime === 'usn15' || (p.regime === 'ooo' && p.orgOnUsn)) {
       const v = this.vatStatus(new Date(date).getFullYear());
-      const month = new Date(date).getMonth();
-      if (v.status !== 'exempt' && (v.fromMonth === undefined || month >= v.fromMonth)) return { vatRate: v.rate, vatNote: '' };
+      const rate = v.rateByMonth[new Date(date).getMonth()] ?? 0;
+      if (rate > 0) return { vatRate: rate, vatNote: '' };
       return { vatNote: 'Без НДС (освобождение по ст. 145 НК РФ)' };
     }
     return { vatNote: 'Без НДС' };
@@ -501,8 +566,7 @@ export class BizStore {
     };
     const { income, expenses } = totals(ofYear(year));
     const prev = totals(ofYear(year - 1));
-    const thisYear = new Date(this.clock()).getFullYear();
-    const contributionsFixed = year === thisYear ? p.fixedContributions : contributionsFor(year).fixed;
+    const contributionsFixed = p.fixedContributionsYear === year ? p.fixedContributions : contributionsFor(year).fixed;
     const extraBase = (inc: number, exp: number) => (regime === 'usn6' ? inc : inc - exp);
     const contributionsExtra = round2(onePercent(extraBase(income, expenses), year));
     const contributionsPrevExtra = round2(prev.income > 0 ? onePercent(extraBase(prev.income, prev.expenses), year - 1) : 0);
@@ -514,7 +578,8 @@ export class BizStore {
       deducted = round2(Math.min(canDeduct, p.hasEmployees ? taxGross * 0.5 : taxGross));
       tax = round2(taxGross - deducted);
     } else {
-      deducted = round2(contributionsFixed + contributionsExtra);
+      // 1% можно учесть в расходах года начисления или года уплаты, но только один раз (письмо ФНС СД-4-3/12916@).
+      deducted = round2(contributionsFixed + (p.usn15OnePercentTiming === 'next' ? contributionsPrevExtra : contributionsExtra));
       base = round2(Math.max(0, income - expenses - deducted));
       taxGross = round2(base * 0.15);
       minTax = round2(income * 0.01);
@@ -563,8 +628,9 @@ export class BizStore {
         add(y, 9, 25, 'Уведомление по УСН', 'Об авансе за 9 месяцев');
         add(y, 9, 28, 'Аванс УСН за 9 месяцев', '');
         const vat = this.vatStatus(y);
-        if (vat.status === 'vat') {
-          for (const m of [0, 3, 6, 9]) add(y, m, 25, 'Декларация по НДС', `За прошлый квартал (ставка ${vat.rate}%); налог — равными долями до 28-го числа трёх следующих месяцев`);
+        for (let q = 0; q < 4; q++) {
+          const qr = vat.rateByMonth.slice(q * 3, q * 3 + 3).filter(r => r > 0);
+          if (qr.length) add(y, q * 3 + 3, 25, 'Декларация по НДС', `За ${q + 1} квартал ${y} (ставка ${[...new Set(qr)].join('/')}%); налог — равными долями до 28-го числа трёх следующих месяцев`);
         }
       }
       if (ip) {
@@ -583,7 +649,7 @@ export class BizStore {
   /** Доходы НПД, по которым срок чека (9-е число следующего месяца) уже прошёл. */
   overdueReceipts(): LedgerEntry[] {
     const now = this.clock();
-    return this.data.ledger.filter(e => e.kind === 'income' && e.receipt === 'pending' && npdReceiptDeadline(e.date) + DAY <= now);
+    return this.data.ledger.filter(e => e.kind === 'income' && e.receipt === 'pending' && npdReceiptDeadline(e.date, e.payMethod) < now);
   }
 
   /** Money overview for the current month and year. */
@@ -633,7 +699,8 @@ export class BizStore {
 
   importJSON(json: string): void {
     let parsed: unknown;
-    try { parsed = JSON.parse(json); } catch { throw new Error('Файл не похож на резервную копию (неверный JSON)'); }
+    try { parsed = safeJsonParse(json, MAX_BYTES.backupJson); } catch { throw new Error('Файл не похож на резервную копию (неверный JSON или слишком большой)'); }
+    if (!parsed || typeof parsed !== 'object' || (parsed as { version?: unknown }).version !== 1) throw new Error('Это не резервная копия раздела «Бизнес»');
     this.data = sanitize(parsed);
     this.commit();
   }
@@ -646,10 +713,7 @@ export class BizStore {
       e.amount.toFixed(2).replace('.', ','), e.receiptNumber ?? '',
     ]);
     const header = ['№', 'Дата', 'Тип', 'Содержание операции', 'Контрагент', 'Плательщик', 'Сумма, ₽', 'Чек'];
-    const cell = (v: string) => {
-      const safe = /^[=+\-@]/.test(v) ? `'${v}` : v;
-      return /[";\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-    };
+    const cell = (v: string) => csvSafe(v, ';');
     return [header, ...rows].map(r => r.map(cell).join(';')).join('\r\n');
   }
 }
