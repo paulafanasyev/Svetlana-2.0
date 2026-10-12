@@ -2,8 +2,8 @@
 // Безопасность: действия на экране «прикалываются» к приложению, которое было на экране в начале,
 // и перед самим нажатием/вводом/свайпом/клавишей проверяется, что оно всё ещё на экране (оверлей/подмена = отказ).
 // Перед нажатием элемент ищется ещё раз и сравнивается (id, текст, границы, описание, нажимаемость):
-// подмена кнопки внутри того же приложения = отказ. После этого читается самое свежее дерево экрана,
-// и по нему проверяется, кто получит нажатие: если сам элемент не нажимается, а его нажимаемый
+// подмена кнопки внутри того же приложения = отказ. После этого читается самое свежее дерево экрана:
+// элемента в нём нет = отказ (координаты устарели); если сам элемент не нажимается, а его нажимаемый
 // родитель подписан опасно («Удалить», «Оплатить»…), а у элемента безобидная подпись («Продолжить») — отказ.
 // Ввод идёт только в то поле, которое было в фокусе в начале (фокус ушёл = отказ).
 // Сообщение уходит только в чат, в ЗАГОЛОВКЕ которого (самый верхний текст) именно этот собеседник,
@@ -80,12 +80,11 @@ function pathTo(root: any, el: ElementLike): any[] | null {
  * Нажатие уйдёт не тому, что проверяли: сам элемент не нажимается, а его ближайший нажимаемый
  * родитель подписан опасно («Удалить аккаунт» вокруг «Продолжить»), хотя подпись элемента — нет.
  * Узел в дереве должен совпадать с элементом и по нажимаемости (если она известна у обоих).
- * Если элемента нет в дереве — отказ только если известно, что он сам не нажимается
- * (тогда неизвестно, кто получит нажатие).
+ * Элемента нет в дереве — тоже отказ (неизвестно, что сейчас под этими координатами).
  */
 function tapEscalates(tree: any, el: ElementLike & { clickable?: unknown }): boolean {
   const path = pathTo(tree?.root, el);
-  if (!path) return el?.clickable === false;
+  if (!path) return true;
   const node = path[path.length - 1];
   if (typeof node?.clickable === 'boolean' && typeof el?.clickable === 'boolean' && node.clickable !== el.clickable) return true;
   if (node?.clickable !== false) return false;
@@ -212,6 +211,7 @@ async function checkContact(hands: unknown, contact: string): Promise<ContactChe
 const UNKNOWN_APP: ToolResult = { success: false, error: 'Cannot determine which app is on screen. Stopped for safety.' };
 const movedFrom = (app: string): ToolResult => ({ success: false, error: `Another app is on screen instead of ${app}. Stopped for safety.` });
 const ELEMENT_CHANGED: ToolResult = { success: false, error: 'The element changed right before the tap. Stopped for safety.' };
+const NOT_ON_SCREEN: ToolResult = { success: false, error: 'The element is no longer on the current screen. Stopped for safety.' };
 const TAP_ESCALATES: ToolResult = { success: false, error: 'This label is inside a button with a different, risky action. Stopped for safety: tap the button itself.' };
 const NO_FIELD: ToolResult = { success: false, error: 'No focused input field. Tap the field first.' };
 const FIELD_CHANGED: ToolResult = { success: false, error: 'The input field changed right before typing. Stopped for safety.' };
@@ -272,8 +272,10 @@ export const tapElementTool: Tool = {
     if (!element) return { success: false, error: `Element not found: ${params.elementText || params.elementId}` };
     // Элемент ищем ещё раз: другая кнопка на том же месте, сдвиг или смена описания/нажимаемости = отказ.
     if (!sameTapElement(element, await find())) return ELEMENT_CHANGED;
-    // Самое свежее дерево (после повторной проверки): безобидная подпись внутри опасной кнопки — отказ.
+    // Самое свежее дерево (после повторной проверки): элемента в нём нет — отказ;
+    // безобидная подпись внутри опасной кнопки — отказ.
     const beforeTree = await hands.getAccessibilityTree();
+    if (!pathTo(beforeTree?.root, element)) return NOT_ON_SCREEN;
     if (tapEscalates(beforeTree, element)) return TAP_ESCALATES;
     const beforeApp = await hands.getCurrentApp();
     // И сразу перед нажатием: на экране то же приложение.

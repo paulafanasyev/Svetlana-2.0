@@ -58,7 +58,7 @@ describe('round 15: tap re-checks the element', () => {
       isConnected: () => true,
       getCurrentApp: vi.fn().mockResolvedValue('com.example.app'),
       findElementByText: vi.fn().mockResolvedValue({ ...el, bounds: { ...el.bounds } }),
-      getAccessibilityTree: vi.fn().mockResolvedValue({ root: { children: [] } }),
+      getAccessibilityTree: vi.fn().mockResolvedValue({ root: { children: [{ ...el, bounds: { ...el.bounds } }] } }),
       tap,
     };
     vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);

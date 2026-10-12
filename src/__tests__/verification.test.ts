@@ -2,6 +2,7 @@
 // Tests the BEFORE → ACTION → AFTER → COMPARE pattern
 // tap/type прикалываются к приложению на экране: первый getCurrentApp — «закреплённое» приложение.
 // Доказательство результата принимается только с экрана того же приложения.
+// tap_element: элемент должен быть в дереве экрана (иначе отказ), поэтому в моках он есть в первом дереве.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { toolRegistry } from '../services/ToolRegistry';
@@ -115,7 +116,8 @@ describe('Verification Logic', () => {
   });
 
   describe('tap_element verification', () => {
-    const button = (text: string) => vi.fn().mockResolvedValue({ id: 'button_1', text, bounds: { x: 100, y: 200, width: 200, height: 50 } });
+    const el = (text: string) => ({ id: 'button_1', text, bounds: { x: 100, y: 200, width: 200, height: 50 } });
+    const button = (text: string) => vi.fn().mockResolvedValue(el(text));
 
     it('should verify UI changed after tap', async () => {
       const tool = toolRegistry.getTool('tap_element');
@@ -124,7 +126,7 @@ describe('Verification Logic', () => {
         findElementByText: button('Click Me'),
         tap: vi.fn().mockResolvedValue({ success: true }),
         getAccessibilityTree: vi.fn()
-          .mockResolvedValueOnce({ root: { children: [{ id: '1' }, { id: '2' }] } })
+          .mockResolvedValueOnce({ root: { children: [{ id: '1' }, el('Click Me')] } })
           .mockResolvedValueOnce({ root: { children: [{ id: '1' }, { id: '2' }, { id: '3' }] } }),
         getCurrentApp: vi.fn().mockResolvedValue('com.app.before')
       };
@@ -145,7 +147,7 @@ describe('Verification Logic', () => {
         findElementByText: button('Click Me'),
         tap: vi.fn().mockResolvedValue({ success: true }),
         getAccessibilityTree: vi.fn()
-          .mockResolvedValueOnce({ root: { children: [{ id: '1' }, { id: '2' }] } })
+          .mockResolvedValueOnce({ root: { children: [{ id: '1' }, el('Click Me')] } })
           .mockResolvedValueOnce({ root: { children: [{ id: '1' }, { id: '2' }] } }),
         getCurrentApp: vi.fn().mockResolvedValue('com.app.same')
       };
@@ -163,7 +165,7 @@ describe('Verification Logic', () => {
         findElementByText: button('Settings'),
         tap: vi.fn().mockResolvedValue({ success: true }),
         getAccessibilityTree: vi.fn()
-          .mockResolvedValueOnce({ root: { children: [{ id: '1' }] } })
+          .mockResolvedValueOnce({ root: { children: [el('Settings')] } })
           .mockResolvedValueOnce({ root: { children: [{ id: '1' }, { id: '2' }] } }),
         getCurrentApp: vi.fn()
           .mockResolvedValueOnce('com.app.home')
@@ -184,7 +186,7 @@ describe('Verification Logic', () => {
         isConnected: () => true,
         findElementByText: button('OK'),
         tap: vi.fn().mockResolvedValue({ success: true }),
-        getAccessibilityTree: vi.fn().mockResolvedValue({ root: { children: [] } }),
+        getAccessibilityTree: vi.fn().mockResolvedValue({ root: { children: [el('OK')] } }),
         getCurrentApp: vi.fn().mockResolvedValueOnce('com.app.home').mockResolvedValue('com.evil.overlay')
       };
       vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
@@ -192,6 +194,23 @@ describe('Verification Logic', () => {
       const result = await tool!.execute({ elementText: 'OK' });
       expect(result.success).toBe(false);
       expect(result.error).toContain('Another app');
+      expect(mockHands.tap).not.toHaveBeenCalled();
+    });
+
+    it('refuses to tap when the element is missing from the current screen tree', async () => {
+      const tool = toolRegistry.getTool('tap_element');
+      const mockHands = {
+        isConnected: () => true,
+        findElementByText: button('OK'),
+        tap: vi.fn().mockResolvedValue({ success: true }),
+        getAccessibilityTree: vi.fn().mockResolvedValue({ root: { children: [{ id: 'other', text: 'Pay', bounds: { x: 100, y: 200, width: 200, height: 50 } }] } }),
+        getCurrentApp: vi.fn().mockResolvedValue('com.app.home')
+      };
+      vi.spyOn(handsManager, 'isConnected').mockResolvedValue(true);
+      vi.spyOn(handsManager, 'getHands').mockReturnValue(mockHands as any);
+      const result = await tool!.execute({ elementText: 'OK' });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('no longer on the current screen');
       expect(mockHands.tap).not.toHaveBeenCalled();
     });
   });

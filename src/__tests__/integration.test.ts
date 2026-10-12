@@ -1,5 +1,6 @@
 // Integration Tests - Full execution chain
 // Tests the complete flow: Tool → Policy → Hands → Verification
+// tap_element: элемент должен быть в дереве экрана (иначе отказ), поэтому в моках он есть в первом дереве.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { toolRegistry } from '../services/ToolRegistry';
@@ -22,14 +23,16 @@ describe('Integration Tests', () => {
     });
 
     it('should execute tap_element with BEFORE/AFTER verification', async () => {
-      const mockHands = { isConnected: () => true, findElementByText: vi.fn().mockResolvedValue({ id:'button_1',text:'Settings',bounds:{x:100,y:200,width:200,height:50} }), tap: vi.fn().mockResolvedValue({success:true}), getAccessibilityTree: vi.fn().mockResolvedValueOnce({root:{children:[{id:'1'}]}}).mockResolvedValueOnce({root:{children:[{id:'1'},{id:'2'}]}}), getCurrentApp: vi.fn().mockResolvedValue('com.app.home') };
+      const el = { id:'button_1',text:'Settings',bounds:{x:100,y:200,width:200,height:50} };
+      const mockHands = { isConnected: () => true, findElementByText: vi.fn().mockResolvedValue(el), tap: vi.fn().mockResolvedValue({success:true}), getAccessibilityTree: vi.fn().mockResolvedValueOnce({root:{children:[{...el}]}}).mockResolvedValueOnce({root:{children:[{id:'1'},{id:'2'}]}}), getCurrentApp: vi.fn().mockResolvedValue('com.app.home') };
       vi.spyOn(handsManager,'isConnected').mockResolvedValue(true); vi.spyOn(handsManager,'getHands').mockReturnValue(mockHands as any);
       const result=await toolRegistry.executeTool('tap_element',{elementText:'Settings'});
       expect(result.success).toBe(true); expect(result.verification?.status).toBe('PASS'); expect(result.data.beforeTree).toBeDefined(); expect(result.data.beforeApp).toBe('com.app.home'); expect(mockHands.getAccessibilityTree).toHaveBeenCalledTimes(2); expect(mockHands.findElementByText).toHaveBeenCalledWith('Settings'); expect(mockHands.tap).toHaveBeenCalled();
     });
 
     it('does not treat a different app after the tap as proof (overlay cannot fake success)', async () => {
-      const mockHands = { isConnected: () => true, findElementByText: vi.fn().mockResolvedValue({ id:'b',text:'OK',bounds:{x:0,y:0,width:10,height:10} }), tap: vi.fn().mockResolvedValue({success:true}), getAccessibilityTree: vi.fn().mockResolvedValueOnce({root:{children:[{id:'1'}]}}).mockResolvedValueOnce({root:{children:[{id:'1'},{id:'2'}]}}), getCurrentApp: vi.fn().mockResolvedValueOnce('com.app.home').mockResolvedValueOnce('com.app.home').mockResolvedValue('com.evil.overlay') };
+      const el = { id:'b',text:'OK',bounds:{x:0,y:0,width:10,height:10} };
+      const mockHands = { isConnected: () => true, findElementByText: vi.fn().mockResolvedValue(el), tap: vi.fn().mockResolvedValue({success:true}), getAccessibilityTree: vi.fn().mockResolvedValueOnce({root:{children:[{...el}]}}).mockResolvedValueOnce({root:{children:[{id:'1'},{id:'2'}]}}), getCurrentApp: vi.fn().mockResolvedValueOnce('com.app.home').mockResolvedValueOnce('com.app.home').mockResolvedValue('com.evil.overlay') };
       vi.spyOn(handsManager,'isConnected').mockResolvedValue(true); vi.spyOn(handsManager,'getHands').mockReturnValue(mockHands as any);
       const result=await toolRegistry.executeTool('tap_element',{elementText:'OK'});
       expect(result.success).toBe(false); expect(result.verification?.status).toBe('FAIL');
@@ -70,7 +73,7 @@ describe('Integration Tests', () => {
   describe('Error Handling', () => {
     it('should handle connection failure', async () => { vi.spyOn(handsManager,'isConnected').mockResolvedValue(false); const result=await toolRegistry.executeTool('open_app',{packageName:'org.telegram.messenger'}); expect(result.success).toBe(false); expect(result.error).toContain('not available'); });
     it('should handle element not found', async () => { const mockHands={isConnected:()=>true,getCurrentApp:vi.fn().mockResolvedValue('com.example.app'),findElementByText:vi.fn().mockResolvedValue(null)}; vi.spyOn(handsManager,'isConnected').mockResolvedValue(true); vi.spyOn(handsManager,'getHands').mockReturnValue(mockHands as any); const result=await toolRegistry.executeTool('tap_element',{elementText:'NonExistent'}); expect(result.success).toBe(false); expect(result.error).toContain('Element not found'); });
-    it('should handle action failure', async () => { const mockHands={isConnected:()=>true,findElementByText:vi.fn().mockResolvedValue({id:'button_1',text:'Click',bounds:{x:100,y:200,width:200,height:50}}),getAccessibilityTree:vi.fn().mockResolvedValue({root:{children:[{id:'button_1',text:'Click'}]}}),getCurrentApp:vi.fn().mockResolvedValue('com.example.app'),tap:vi.fn().mockResolvedValue({success:false,error:'Tap failed'})}; vi.spyOn(handsManager,'isConnected').mockResolvedValue(true); vi.spyOn(handsManager,'getHands').mockReturnValue(mockHands as any); const result=await toolRegistry.executeTool('tap_element',{elementText:'Click'}); expect(result.success).toBe(false); expect(result.error).toContain('Tap failed'); expect(mockHands.getAccessibilityTree).toHaveBeenCalledTimes(1); expect(mockHands.tap).toHaveBeenCalled(); });
+    it('should handle action failure', async () => { const el={id:'button_1',text:'Click',bounds:{x:100,y:200,width:200,height:50}}; const mockHands={isConnected:()=>true,findElementByText:vi.fn().mockResolvedValue(el),getAccessibilityTree:vi.fn().mockResolvedValue({root:{children:[{...el}]}}),getCurrentApp:vi.fn().mockResolvedValue('com.example.app'),tap:vi.fn().mockResolvedValue({success:false,error:'Tap failed'})}; vi.spyOn(handsManager,'isConnected').mockResolvedValue(true); vi.spyOn(handsManager,'getHands').mockReturnValue(mockHands as any); const result=await toolRegistry.executeTool('tap_element',{elementText:'Click'}); expect(result.success).toBe(false); expect(result.error).toContain('Tap failed'); expect(mockHands.getAccessibilityTree).toHaveBeenCalledTimes(1); expect(mockHands.tap).toHaveBeenCalled(); });
     it('should handle verification failure', async () => { const mockHands={isConnected:()=>true,launchApp:vi.fn().mockResolvedValue({success:true}),getCurrentApp:vi.fn().mockResolvedValue('com.android.launcher')}; vi.spyOn(handsManager,'isConnected').mockResolvedValue(true); vi.spyOn(handsManager,'getHands').mockReturnValue(mockHands as any); const result=await toolRegistry.executeTool('open_app',{packageName:'org.telegram.messenger'}); expect(result.success).toBe(false); expect(result.error).toContain('Verification failed'); });
   });
 
