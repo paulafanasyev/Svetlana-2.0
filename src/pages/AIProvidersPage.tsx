@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { aiGateway, type AIProvider } from '../services/AIGateway';
+import { SVETLANA_CORE_ORIGIN, SVETLANA_CORE_MODEL } from '../services/SvetlanaCore';
 import {
   Cpu, Server, Settings, Key, Zap, Cloud, HardDrive,
   TestTube, AlertCircle, CheckCircle2, X, Plus, Trash2,
@@ -15,6 +16,8 @@ const PRESET_PROVIDERS: Omit<AIProvider, 'enabled' | 'apiKey'>[] = [
   { id: 'llamacpp', name: 'llama.cpp Server', type: 'offline', endpoint: 'http://127.0.0.1:8080', model: 'local-model' },
   { id: 'vllm', name: 'vLLM Local Server', type: 'offline', endpoint: 'http://127.0.0.1:8000', model: 'local-model' },
   // Online Cloud APIs
+  // Единая Светлана на своём сервере: одна обученная ИИ для всех сайтов, здесь — полный режим (код и команда).
+  { id: 'svetlana', name: '★ Светлана Сервер (единая)', type: 'online', endpoint: SVETLANA_CORE_ORIGIN, model: SVETLANA_CORE_MODEL },
   { id: 'openai', name: 'OpenAI (GPT-4o)', type: 'online', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
   { id: 'anthropic', name: 'Anthropic (Claude 3.5)', type: 'online', endpoint: 'https://api.anthropic.com/v1', model: 'claude-3-5-sonnet-20241022' },
   { id: 'groq', name: 'Groq (Ультрабыстрый)', type: 'online', endpoint: 'https://api.groq.com/openai/v1', model: 'llama-3.1-70b-versatile' },
@@ -34,6 +37,7 @@ const POPULAR_OFFLINE_MODELS = [
 ];
 
 const MODEL_OPTIONS: Record<string, string[]> = {
+  svetlana: [SVETLANA_CORE_MODEL],
   openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
   anthropic: ['claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307', 'claude-3-opus-20240229'],
   google: ['gemini-1.5-pro', 'gemini-1.5-flash'],
@@ -58,6 +62,7 @@ function ConfigModal({ provider, onSave, onClose }: {
   const [model, setModel] = useState(provider.model);
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testError, setTestError] = useState('');
+  const isCore = provider.id === 'svetlana';
 
   const handleTest = async () => {
     setTestStatus('testing');
@@ -115,7 +120,7 @@ function ConfigModal({ provider, onSave, onClose }: {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h3 className="text-lg font-semibold">{provider.name}</h3>
-            <p className="text-xs text-slate-400">{provider.type === 'offline' ? 'Офлайн / Локальный движок' : 'Внешний облачный ИИ'}</p>
+            <p className="text-xs text-slate-400">{provider.type === 'offline' ? 'Офлайн / Локальный движок' : isCore ? 'Единая Светлана на своём сервере (мир-самозанятых.рф)' : 'Внешний облачный ИИ'}</p>
           </div>
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400">
             <X className="w-5 h-5" />
@@ -125,17 +130,22 @@ function ConfigModal({ provider, onSave, onClose }: {
         <div className="space-y-4">
           {provider.type === 'online' && (
             <div>
-              <label className="text-sm text-slate-300 mb-1 block">Ключ API (API Key)</label>
+              <label className="text-sm text-slate-300 mb-1 block">{isCore ? 'Ключ Светланы (ASSISTANT_KEY_SVETLANA2)' : 'Ключ API (API Key)'}</label>
               <div className="relative">
                 <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                 <input
                   type="password"
                   value={apiKey}
                   onChange={e => setApiKey(e.target.value)}
-                  placeholder="sk-..."
+                  placeholder={isCore ? 'ключ с сервера Светланы' : 'sk-...'}
                   className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-indigo-500"
                 />
               </div>
+              {isCore && (
+                <p className="text-xs text-slate-400 mt-1.5">
+                  На сервере: <span className="font-mono">grep ASSISTANT_KEY_SVETLANA2 /etc/svetlana/backend.env</span>. Ключ хранится в Диспетчере учётных данных Windows.
+                </p>
+              )}
             </div>
           )}
 
@@ -147,6 +157,7 @@ function ConfigModal({ provider, onSave, onClose }: {
                 type="text"
                 value={endpoint}
                 onChange={e => setEndpoint(e.target.value)}
+                readOnly={isCore}
                 className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm font-mono focus:outline-none focus:border-indigo-500"
               />
             </div>
