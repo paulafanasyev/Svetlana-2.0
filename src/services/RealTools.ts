@@ -5,9 +5,10 @@
 // приложения = отказ. Ввод идёт только в то поле, которое было в фокусе в начале (фокус ушёл = отказ).
 // Сообщение уходит только в чат, в ЗАГОЛОВКЕ которого (самый верхний текст) именно этот собеседник,
 // только той же кнопкой «Отправить» и только пока фокус всё ещё в том же поле сообщения.
-// Если в телефонной книге несколько контактов с таким именем (два «Алекса») или книгу не удалось проверить,
-// сообщение не отправляется: нужен номер или полное имя. Имя в тексте сообщения ниже заголовка не считается. «Отправляющие» клавиши (Enter, Search, Go…) нажимаются
-// только в поле в фокусе и только если фокус не ушёл; поиск в браузере вводит и отправляет запрос в то же поле.
+// По имени пишем только если в телефонной книге РОВНО один подходящий контакт: несколько (два «Алекса»),
+// ни одного или книгу не удалось проверить — сообщение не отправляется: нужен номер или
+// полное имя. Имя в тексте сообщения ниже заголовка не считается. «Отправляющие» клавиши (Enter, Search, Go…)
+// нажимаются только в поле в фокусе и только если фокус не ушёл; поиск в браузере вводит и отправляет запрос в то же поле.
 // Свайп — «слепой» жест по координатам внутри того же приложения (низкий риск, цели у него нет).
 // Проверка результата (verify) тоже считает доказательством только экран того же приложения.
 import type { Tool, ToolResult } from './ToolRegistry';
@@ -108,7 +109,14 @@ async function recipientOnScreen(hands: { getAccessibilityTree(): Promise<any> }
   try { const tree = await hands.getAccessibilityTree(); return showsRecipient(tree?.root, contact); } catch { return false; }
 }
 
-type ContactCheck = 'unique' | 'ambiguous' | 'unverified';
+type ContactCheck = 'unique' | 'ambiguous' | 'missing' | 'unverified';
+
+const CONTACT_CHECK_LIMIT = 200;
+
+/** Номер телефона: только цифры, «+» в начале и разделители, и не меньше 5 цифр («-----» — не номер). */
+function isPhoneNumber(value: string): boolean {
+  return /^\+?[\d\s().-]+$/.test(value) && value.replace(/\D/g, '').length >= 5;
+}
 
 /** Запись телефонной книги понятного вида: объект с именем-строкой. */
 function isContactEntry(c: unknown): c is { name: string } {
@@ -116,18 +124,18 @@ function isContactEntry(c: unknown): c is { name: string } {
 }
 
 /**
- * Имя подходит к нескольким контактам телефона (то же имя или «Alex» для «Alex Smith» — заголовок чата
- * у обоих пройдёт проверку): какой из них имеется в виду — неизвестно, первого попавшегося не выбираем.
+ * Кому писать по имени: в телефонной книге должен быть РОВНО один подходящий контакт
+ * (то же имя или «Alex» для «Alex Smith»). Несколько — 'ambiguous' (заголовок чата любого из них
+ * пройдёт проверку), ни одного — 'missing' (неизвестно, кто это на экране мессенджера).
  * Номер телефона однозначен и не проверяется. Если телефонная книга по мосту не ответила, ответ
  * непонятный (хоть одна запись без имени-строки) или неполный (по запросу контактов больше,
- * чем пришло, — дубликат мог не попасть в страницу), единственность не доказана и по имени
- * не пишем (fail closed). Отладочный WebSocket-путь (не HTTPHands) телефонной книги не имеет:
- * там остаются проверки на экране.
+ * чем пришло) — 'unverified'. Во всех случаях, кроме 'unique', по имени не пишем (fail closed).
+ * Отладочный WebSocket-путь (не HTTPHands) телефонной книги не имеет: там остаются проверки на экране.
  */
 async function checkContact(hands: unknown, contact: string): Promise<ContactCheck> {
   const want = contact.trim().toLowerCase();
   if (!want) return 'unverified';
-  if (/^\+?[\d\s().-]{5,}$/.test(want)) return 'unique';
+  if (isPhoneNumber(want)) return 'unique';
   if (!(hands instanceof HTTPHands)) return 'unique';
   try {
     const page = await hands.listContacts({ query: contact.trim(), limit: CONTACT_CHECK_LIMIT });
@@ -140,11 +148,10 @@ async function checkContact(hands: unknown, contact: string): Promise<ContactChe
       const name = c.name.trim().toLowerCase();
       return name === want || name.startsWith(`${want} `);
     });
-    return matches.length > 1 ? 'ambiguous' : 'unique';
+    if (matches.length === 0) return 'missing';
+    return matches.length === 1 ? 'unique' : 'ambiguous';
   } catch { return 'unverified'; }
 }
-
-const CONTACT_CHECK_LIMIT = 200;
 
 const UNKNOWN_APP: ToolResult = { success: false, error: 'Cannot determine which app is on screen. Stopped for safety.' };
 const movedFrom = (app: string): ToolResult => ({ success: false, error: `Another app is on screen instead of ${app}. Stopped for safety.` });
@@ -154,6 +161,7 @@ const FIELD_CHANGED: ToolResult = { success: false, error: 'The input field chan
 const NO_CHAT_INPUT: ToolResult = { success: false, error: 'Message field is not focused in the chat. Stopped for safety.' };
 const WRONG_RECIPIENT: ToolResult = { success: false, error: 'The open chat is not with the requested contact. Stopped for safety.' };
 const AMBIGUOUS_CONTACT: ToolResult = { success: false, error: 'There are several contacts with this name. Use the phone number or the full name.' };
+const NOT_IN_CONTACTS: ToolResult = { success: false, error: 'This name is not in the phone contacts. Use the phone number or the exact contact name.' };
 const CONTACT_UNVERIFIED: ToolResult = { success: false, error: 'Could not check the phone contacts for this name. Use the phone number instead.' };
 
 export const openAppTool: Tool = {
@@ -279,10 +287,11 @@ export const sendMessageTool: Tool = {
   inputSchema: { type: 'object', properties: { app: { type: 'string', description: 'Messaging app package name', enum: ['org.telegram.messenger', 'com.whatsapp', 'com.viber.voip'] }, contact: { type: 'string', description: 'Contact name or phone number' }, message: { type: 'string', description: 'Message text to send' } }, required: ['app', 'contact', 'message'] },
   async execute(params: { app: string; contact: string; message: string }): Promise<ToolResult> {
     await requireHands(); const hands = handsManager.getHands(); if (!hands) return { success: false, error: 'Hands not available' };
-    // Несколько контактов с таким именем (или книгу не удалось проверить) — неизвестно, кому писать:
-    // ничего не открываем и не печатаем.
+    // Кому писать по имени — только если в телефонной книге ровно один такой контакт;
+    // иначе ничего не открываем и не печатаем.
     const check = await checkContact(hands, params.contact);
     if (check === 'ambiguous') return AMBIGUOUS_CONTACT;
+    if (check === 'missing') return NOT_IN_CONTACTS;
     if (check === 'unverified') return CONTACT_UNVERIFIED;
     const moved = () => movedFrom(params.app);
     const launch = await hands.launchApp(params.app); if (!launch.success) return { success: false, error: `Failed to launch ${params.app}` };
