@@ -5,6 +5,9 @@
 //! Запрос идёт только на фиксированный официальный адрес выбранного сервиса, без редиректов,
 //! с ограничением размера и времени.
 //!
+//! «svetlana» — единая Светлана на своём сервере (мир-самозанятых.рф), полный режим Svetlana 2.0.
+//! Ключ — ASSISTANT_KEY_SVETLANA2 с сервера, адрес фиксирован (SVETLANA_CORE), тело { message, history, system }.
+//!
 //! Защита от чужого скрипта на странице:
 //! - любое изменение или удаление ключа подтверждается в НАТИВНОМ окне Windows;
 //! - запросы в облако идут только по разрешению из такого же окна. Разрешение привязано к
@@ -32,7 +35,11 @@ const MAX_BODY: usize = 2 * 1024 * 1024;
 const MAX_RESPONSE: usize = 8 * 1024 * 1024;
 const MAX_MESSAGES: usize = 200;
 const MAX_TEXT: usize = 200_000;
-const PROVIDERS: [&str; 7] = ["openai", "groq", "openrouter", "deepseek", "mistral", "anthropic", "google"];
+const PROVIDERS: [&str; 8] = ["openai", "groq", "openrouter", "deepseek", "mistral", "anthropic", "google", "svetlana"];
+/// Единая Светлана на своём сервере (мир-самозанятых.рф), профиль полного режима Svetlana 2.0.
+const SVETLANA_CORE: &str = "https://xn----8sba1acxdkgqms3b9euc.xn--p1ai/api/v1/assistant/svetlana2/chat";
+const SVETLANA_MODEL: &str = "svetlana2";
+const SVETLANA_MAX_HISTORY: usize = 10;
 const CHAT_PER_MINUTE: usize = 30;
 const SECRET_WRITES_PER_MINUTE: usize = 10;
 const CONSENT_TTL: Duration = Duration::from_secs(15 * 60);
@@ -111,6 +118,10 @@ fn is_issued(list: &mut VecDeque<Issued>, id: &str, now: Instant) -> bool {
 
 /// Начало первого сообщения пользователя — только для окна подтверждения.
 fn preview_of(provider: &str, body: &Value) -> String {
+    if provider == "svetlana" {
+        let text = body.get("message").and_then(|m| m.as_str()).unwrap_or("");
+        return text.chars().filter(|c| !c.is_control()).take(80).collect();
+    }
     let list_key = if provider == "google" { "contents" } else { "messages" };
     let first = body
         .get(list_key)
@@ -282,7 +293,7 @@ fn check_message(provider: &str, m: &Value) -> Result<(), String> {
         return check_parts(o.get("parts"));
     }
     only_keys(o, &["role", "content"])?;
-    let roles: &[&str] = if provider == "anthropic" { &["user", "assistant"] } else { &["system", "user", "assistant"] };
+    let roles: &[&str] = if provider == "anthropic" || provider == "svetlana" { &["user", "assistant"] } else { &["system", "user", "assistant"] };
     match o.get("role").and_then(|r| r.as_str()) {
         Some(r) if roles.contains(&r) => {}
         _ => return Err("Недопустимая роль сообщения".into()),
@@ -293,8 +304,38 @@ fn check_message(provider: &str, m: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// Тело запроса к единой Светлане: { message, history?, system? } и ничего больше.
+fn validate_svetlana(model: &str, obj: &Map<String, Value>) -> Result<(), String> {
+    if model != SVETLANA_MODEL {
+        return Err("Недопустимое имя модели".into());
+    }
+    only_keys(obj, &["message", "history", "system"])?;
+    match obj.get("message").and_then(|m| m.as_str()) {
+        Some(s) if !s.trim().is_empty() && s.chars().count() <= MAX_TEXT => {}
+        _ => return Err("Сообщение должно быть непустым текстом".into()),
+    }
+    if let Some(s) = obj.get("system").filter(|v| !v.is_null()) {
+        if !is_text(Some(s)) {
+            return Err("Системная инструкция должна быть текстом".into());
+        }
+    }
+    if let Some(h) = obj.get("history").filter(|v| !v.is_null()) {
+        let list = h.as_array().ok_or("Некорректная история разговора")?;
+        if list.len() > SVETLANA_MAX_HISTORY {
+            return Err("Слишком длинная история разговора".into());
+        }
+        for m in list {
+            check_message("svetlana", m)?;
+        }
+    }
+    Ok(())
+}
+
 fn validate_body(provider: &str, model: &str, body: &Value) -> Result<(), String> {
     let obj = body.as_object().ok_or("Тело запроса должно быть объектом")?;
+    if provider == "svetlana" {
+        return validate_svetlana(model, obj);
+    }
     if !valid_model(provider, model) {
         return Err("Недопустимое имя модели".into());
     }
@@ -397,6 +438,7 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conv
         "google" => client
             .post(format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"))
             .header("x-goog-api-key", key.as_str()),
+        "svetlana" => client.post(SVETLANA_CORE).bearer_auth(&key),
         _ => return Err("Этот облачный сервис не поддерживается".into()),
     };
     let response = request
@@ -430,6 +472,7 @@ mod tests {
     #[test]
     fn only_known_provider_secrets() {
         assert_eq!(provider_of_secret("ai.openai"), Some("openai"));
+        assert_eq!(provider_of_secret("ai.svetlana"), Some("svetlana"));
         assert_eq!(provider_of_secret("ai.evil"), None);
         assert_eq!(provider_of_secret("stt.apikey"), None);
     }
@@ -504,6 +547,20 @@ mod tests {
         assert!(validate_body("google", "gemini-1.5-flash", &bad).is_err());
         assert!(validate_body("google", "../evil", &g).is_err());
         assert!(validate_body("google", "x:streamGenerateContent", &g).is_err());
+    }
+
+    #[test]
+    fn svetlana_core_body_is_strict() {
+        let ok = json!({"message": "Проверь код", "history": [{"role": "user", "content": "привет"}, {"role": "assistant", "content": "да"}], "system": "инструменты"});
+        assert!(validate_body("svetlana", "svetlana2", &ok).is_ok());
+        assert!(validate_body("svetlana", "svetlana2", &json!({"message": "x"})).is_ok());
+        assert!(validate_body("svetlana", "other", &ok).is_err());
+        assert!(validate_body("svetlana", "svetlana2", &json!({"message": "  "})).is_err());
+        assert!(validate_body("svetlana", "svetlana2", &json!({"message": "x", "url": "https://evil.example"})).is_err());
+        assert!(validate_body("svetlana", "svetlana2", &json!({"message": "x", "history": [{"role": "system", "content": "x"}]})).is_err());
+        let long: Vec<Value> = (0..11).map(|_| json!({"role": "user", "content": "x"})).collect();
+        assert!(validate_body("svetlana", "svetlana2", &json!({"message": "x", "history": long})).is_err());
+        assert_eq!(preview_of("svetlana", &ok), "Проверь код");
     }
 
     #[test]
