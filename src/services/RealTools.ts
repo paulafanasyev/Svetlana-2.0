@@ -2,7 +2,9 @@
 // Безопасность: действия на экране «прикалываются» к приложению, которое было на экране в начале,
 // и перед самим нажатием/вводом/свайпом/клавишей проверяется, что оно всё ещё на экране (оверлей/подмена = отказ).
 // Перед нажатием элемент ищется ещё раз и сравнивается (id, текст, границы): подмена кнопки внутри того же
-// приложения = отказ. Ввод идёт только в то поле, которое было в фокусе в начале (фокус ушёл = отказ).
+// приложения = отказ. Если сам элемент не нажимается, нажатие получит его нажимаемый родитель: если
+// подпись родителя опасная («Удалить», «Оплатить»…), а у элемента безобидная («Продолжить») — отказ.
+// Ввод идёт только в то поле, которое было в фокусе в начале (фокус ушёл = отказ).
 // Сообщение уходит только в чат, в ЗАГОЛОВКЕ которого (самый верхний текст) именно этот собеседник,
 // только той же кнопкой «Отправить» и только пока фокус всё ещё в том же поле сообщения.
 // По имени пишем только если в телефонной книге РОВНО один подходящий контакт: несколько (два «Алекса»),
@@ -38,6 +40,52 @@ function sameElement(a: ElementLike | null | undefined, b: ElementLike | null | 
   return a.id === b.id && a.text === b.text
     && a.bounds.x === b.bounds.x && a.bounds.y === b.bounds.y
     && a.bounds.width === b.bounds.width && a.bounds.height === b.bounds.height;
+}
+
+/** Опасные действия по подписи: корни слов (любая форма) и короткие слова целиком. */
+const DANGER_STEMS = /(delete|remove|uninstall|install|purchase|checkout|transfer|confirm|submit|reset|erase|wipe|subscribe|allow|grant|sign\s*out|log\s*out|place\s*order|удал|оплат|заплат|купить|покуп|перевест|перевод|отправ|установ|подтвер|сброс|стере|подписат|списат|разреш|предостав|позвон|вызов)/i;
+const DANGER_WORDS = /(^|[^\p{L}\p{N}])(pay|buy|send|order|call|format|accept|ok)(?=$|[^\p{L}\p{N}])/iu;
+
+function isDangerousLabel(label: string): boolean {
+  return DANGER_STEMS.test(label) || DANGER_WORDS.test(label);
+}
+
+/** Подпись элемента: текст, описание и id. */
+function labelOf(n: any): string {
+  const s = (v: unknown) => (typeof v === 'string' ? v : '');
+  return `${s(n?.text)} ${s(n?.contentDescription)} ${s(n?.id)}`;
+}
+
+const MAX_TREE_DEPTH = 60;
+
+/** Путь от корня до узла, совпадающего с элементом (id, текст, границы), или null. */
+function pathTo(root: any, el: ElementLike): any[] | null {
+  const walk = (n: any, path: any[]): any[] | null => {
+    if (!n || path.length > MAX_TREE_DEPTH) return null;
+    const next = [...path, n];
+    if (sameElement(n, el)) return next;
+    for (const c of Array.isArray(n.children) ? n.children : []) { const found = walk(c, next); if (found) return found; }
+    return null;
+  };
+  return walk(root, []);
+}
+
+/**
+ * Нажатие уйдёт не тому, что проверяли: сам элемент не нажимается, а его ближайший нажимаемый
+ * родитель подписан опасно («Удалить аккаунт» вокруг «Продолжить»), хотя подпись элемента — нет.
+ * Если элемента нет в дереве — отказ только если известно, что он сам не нажимается
+ * (тогда неизвестно, кто получит нажатие).
+ */
+function tapEscalates(tree: any, el: ElementLike & { clickable?: unknown }): boolean {
+  const path = pathTo(tree?.root, el);
+  if (!path) return el?.clickable === false;
+  const node = path[path.length - 1];
+  if (node?.clickable !== false) return false;
+  if (isDangerousLabel(labelOf(node))) return false;
+  for (let i = path.length - 2; i >= 0; i--) {
+    if (path[i]?.clickable === true) return isDangerousLabel(labelOf(path[i]));
+  }
+  return false;
 }
 
 function isEditable(node: any): boolean {
@@ -156,6 +204,7 @@ async function checkContact(hands: unknown, contact: string): Promise<ContactChe
 const UNKNOWN_APP: ToolResult = { success: false, error: 'Cannot determine which app is on screen. Stopped for safety.' };
 const movedFrom = (app: string): ToolResult => ({ success: false, error: `Another app is on screen instead of ${app}. Stopped for safety.` });
 const ELEMENT_CHANGED: ToolResult = { success: false, error: 'The element changed right before the tap. Stopped for safety.' };
+const TAP_ESCALATES: ToolResult = { success: false, error: 'This label is inside a button with a different, risky action. Stopped for safety: tap the button itself.' };
 const NO_FIELD: ToolResult = { success: false, error: 'No focused input field. Tap the field first.' };
 const FIELD_CHANGED: ToolResult = { success: false, error: 'The input field changed right before typing. Stopped for safety.' };
 const NO_CHAT_INPUT: ToolResult = { success: false, error: 'Message field is not focused in the chat. Stopped for safety.' };
@@ -214,6 +263,8 @@ export const tapElementTool: Tool = {
     const element = await find();
     if (!element) return { success: false, error: `Element not found: ${params.elementText || params.elementId}` };
     const beforeTree = await hands.getAccessibilityTree();
+    // Безобидная подпись внутри опасной кнопки: нажатие ушло бы родителю — отказ.
+    if (tapEscalates(beforeTree, element)) return TAP_ESCALATES;
     // Элемент ищем ещё раз непосредственно перед нажатием: другая кнопка на том же месте или сдвиг = отказ.
     if (!sameElement(element, await find())) return ELEMENT_CHANGED;
     const beforeApp = await hands.getCurrentApp();
