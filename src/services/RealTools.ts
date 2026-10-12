@@ -1,9 +1,10 @@
 // Real Tool Registry - Uses actual PlatformHands for device control
 // Безопасность: действия на экране «прикалываются» к приложению, которое было на экране в начале,
 // и перед самим нажатием/вводом/свайпом/клавишей проверяется, что оно всё ещё на экране (оверлей/подмена = отказ).
-// Перед нажатием элемент ищется ещё раз и сравнивается (id, текст, границы): подмена кнопки внутри того же
-// приложения = отказ. Если сам элемент не нажимается, нажатие получит его нажимаемый родитель: если
-// подпись родителя опасная («Удалить», «Оплатить»…), а у элемента безобидная («Продолжить») — отказ.
+// Перед нажатием элемент ищется ещё раз и сравнивается (id, текст, границы, описание, нажимаемость):
+// подмена кнопки внутри того же приложения = отказ. После этого читается самое свежее дерево экрана,
+// и по нему проверяется, кто получит нажатие: если сам элемент не нажимается, а его нажимаемый
+// родитель подписан опасно («Удалить», «Оплатить»…), а у элемента безобидная подпись («Продолжить») — отказ.
 // Ввод идёт только в то поле, которое было в фокусе в начале (фокус ушёл = отказ).
 // Сообщение уходит только в чат, в ЗАГОЛОВКЕ которого (самый верхний текст) именно этот собеседник,
 // только той же кнопкой «Отправить» и только пока фокус всё ещё в том же поле сообщения.
@@ -42,6 +43,11 @@ function sameElement(a: ElementLike | null | undefined, b: ElementLike | null | 
     && a.bounds.width === b.bounds.width && a.bounds.height === b.bounds.height;
 }
 
+/** Тот же самый элемент для нажатия: кроме id, текста и границ — те же описание и нажимаемость. */
+function sameTapElement(a: any, b: any): boolean {
+  return sameElement(a, b) && a.contentDescription === b.contentDescription && a.clickable === b.clickable;
+}
+
 /** Опасные действия по подписи: корни слов (любая форма) и короткие слова целиком. */
 const DANGER_STEMS = /(delete|remove|uninstall|install|purchase|checkout|transfer|confirm|submit|reset|erase|wipe|subscribe|allow|grant|sign\s*out|log\s*out|place\s*order|удал|оплат|заплат|купить|покуп|перевест|перевод|отправ|установ|подтвер|сброс|стере|подписат|списат|разреш|предостав|позвон|вызов)/i;
 const DANGER_WORDS = /(^|[^\p{L}\p{N}])(pay|buy|send|order|call|format|accept|ok)(?=$|[^\p{L}\p{N}])/iu;
@@ -73,6 +79,7 @@ function pathTo(root: any, el: ElementLike): any[] | null {
 /**
  * Нажатие уйдёт не тому, что проверяли: сам элемент не нажимается, а его ближайший нажимаемый
  * родитель подписан опасно («Удалить аккаунт» вокруг «Продолжить»), хотя подпись элемента — нет.
+ * Узел в дереве должен совпадать с элементом и по нажимаемости (если она известна у обоих).
  * Если элемента нет в дереве — отказ только если известно, что он сам не нажимается
  * (тогда неизвестно, кто получит нажатие).
  */
@@ -80,6 +87,7 @@ function tapEscalates(tree: any, el: ElementLike & { clickable?: unknown }): boo
   const path = pathTo(tree?.root, el);
   if (!path) return el?.clickable === false;
   const node = path[path.length - 1];
+  if (typeof node?.clickable === 'boolean' && typeof el?.clickable === 'boolean' && node.clickable !== el.clickable) return true;
   if (node?.clickable !== false) return false;
   if (isDangerousLabel(labelOf(node))) return false;
   for (let i = path.length - 2; i >= 0; i--) {
@@ -262,11 +270,11 @@ export const tapElementTool: Tool = {
       : params.elementId ? await hands.findElementById(params.elementId) : undefined;
     const element = await find();
     if (!element) return { success: false, error: `Element not found: ${params.elementText || params.elementId}` };
+    // Элемент ищем ещё раз: другая кнопка на том же месте, сдвиг или смена описания/нажимаемости = отказ.
+    if (!sameTapElement(element, await find())) return ELEMENT_CHANGED;
+    // Самое свежее дерево (после повторной проверки): безобидная подпись внутри опасной кнопки — отказ.
     const beforeTree = await hands.getAccessibilityTree();
-    // Безобидная подпись внутри опасной кнопки: нажатие ушло бы родителю — отказ.
     if (tapEscalates(beforeTree, element)) return TAP_ESCALATES;
-    // Элемент ищем ещё раз непосредственно перед нажатием: другая кнопка на том же месте или сдвиг = отказ.
-    if (!sameElement(element, await find())) return ELEMENT_CHANGED;
     const beforeApp = await hands.getCurrentApp();
     // И сразу перед нажатием: на экране то же приложение.
     if (beforeApp !== pinned) return movedFrom(pinned);
