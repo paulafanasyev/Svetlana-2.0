@@ -110,12 +110,19 @@ async function recipientOnScreen(hands: { getAccessibilityTree(): Promise<any> }
 
 type ContactCheck = 'unique' | 'ambiguous' | 'unverified';
 
+/** Запись телефонной книги понятного вида: объект с именем-строкой. */
+function isContactEntry(c: unknown): c is { name: string } {
+  return !!c && typeof c === 'object' && !Array.isArray(c) && typeof (c as { name?: unknown }).name === 'string';
+}
+
 /**
  * Имя подходит к нескольким контактам телефона (то же имя или «Alex» для «Alex Smith» — заголовок чата
  * у обоих пройдёт проверку): какой из них имеется в виду — неизвестно, первого попавшегося не выбираем.
- * Номер телефона однозначен и не проверяется. Если телефонная книга по мосту не ответила (нет разрешения,
- * ошибка, непонятный ответ) — единственность не доказана, и по имени не пишем (fail closed).
- * Отладочный WebSocket-путь (не HTTPHands) телефонной книги не имеет: там остаются проверки на экране.
+ * Номер телефона однозначен и не проверяется. Если телефонная книга по мосту не ответила, ответ
+ * непонятный (хоть одна запись без имени-строки) или неполный (по запросу контактов больше,
+ * чем пришло, — дубликат мог не попасть в страницу), единственность не доказана и по имени
+ * не пишем (fail closed). Отладочный WebSocket-путь (не HTTPHands) телефонной книги не имеет:
+ * там остаются проверки на экране.
  */
 async function checkContact(hands: unknown, contact: string): Promise<ContactCheck> {
   const want = contact.trim().toLowerCase();
@@ -123,15 +130,21 @@ async function checkContact(hands: unknown, contact: string): Promise<ContactChe
   if (/^\+?[\d\s().-]{5,}$/.test(want)) return 'unique';
   if (!(hands instanceof HTTPHands)) return 'unique';
   try {
-    const page = await hands.listContacts({ query: contact.trim(), limit: 50 });
+    const page = await hands.listContacts({ query: contact.trim(), limit: CONTACT_CHECK_LIMIT });
     if (!page || !Array.isArray(page.contacts)) return 'unverified';
-    const matches = (page.contacts as unknown[]).filter(c => {
-      const name = String((c as { name?: unknown } | null)?.name ?? '').trim().toLowerCase();
+    const list = page.contacts as unknown[];
+    if (!list.every(isContactEntry)) return 'unverified';
+    const total = (page as { total?: unknown }).total;
+    if (typeof total !== 'number' || !Number.isFinite(total) || total < 0 || total > list.length) return 'unverified';
+    const matches = list.filter(c => {
+      const name = c.name.trim().toLowerCase();
       return name === want || name.startsWith(`${want} `);
     });
     return matches.length > 1 ? 'ambiguous' : 'unique';
   } catch { return 'unverified'; }
 }
+
+const CONTACT_CHECK_LIMIT = 200;
 
 const UNKNOWN_APP: ToolResult = { success: false, error: 'Cannot determine which app is on screen. Stopped for safety.' };
 const movedFrom = (app: string): ToolResult => ({ success: false, error: `Another app is on screen instead of ${app}. Stopped for safety.` });
