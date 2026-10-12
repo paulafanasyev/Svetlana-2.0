@@ -8,11 +8,13 @@
 // Локальная модель при ошибке НИКОГДА не переключается на облако сама: переписка не покидает
 // компьютер без явного выбора облачного провайдера пользователем (см. fallbackCandidates).
 // Вызовы инструментов от модели проходят строгую проверку по схеме инструмента (security/ToolCallSchema).
+// «★ Светлана Сервер» (id 'svetlana') — единая Светлана на мир-самозанятых.рф в полном режиме (см. SvetlanaCore).
 import { getSecret, setSecret } from './security/SecretStore';
 import { safeJsonParse, stripControl, MAX_BYTES } from './security/SafeData';
 import { isNativeApp, nativeSetSecret, nativeHasSecret, nativeCloudChat, NATIVE_KEY_PLACEHOLDER } from './security/NativeBridge';
 import { stripUntrusted } from './security/Untrusted';
 import { validateToolCalls } from './security/ToolCallSchema';
+import { SVETLANA_CORE_ORIGIN, SVETLANA_CORE_MODEL, toSvetlanaCoreBody, contentOf, callSvetlanaCoreWeb } from './SvetlanaCore';
 
 export interface AIProvider {
   id: string;
@@ -72,6 +74,7 @@ const DEFAULT_OFFLINE_PROVIDERS: AIProvider[] = [
 const OFFICIAL_ENDPOINTS: Record<string, string[]> = {
   mistral: ['https://api.mistral.ai/v1'],
   google: ['https://generativelanguage.googleapis.com/v1beta', 'https://generativelanguage.googleapis.com/v1'],
+  svetlana: [SVETLANA_CORE_ORIGIN],
 };
 const LOCAL_RE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?(\/[A-Za-z0-9._~-]+)*$/;
 
@@ -95,7 +98,7 @@ export function validateProxyUrl(url: string): string {
   throw new Error('Прокси может быть только на своём сервере (/api/...) или на этом компьютере');
 }
 
-const FALLBACK_ORDER = ['ollama', 'lmstudio', 'groq', 'openai', 'anthropic', 'deepseek'];
+const FALLBACK_ORDER = ['ollama', 'lmstudio', 'svetlana', 'groq', 'openai', 'anthropic', 'deepseek'];
 
 /**
  * Запасные провайдеры при ошибке [failed]. Только включённые и только ТОГО ЖЕ типа:
@@ -121,7 +124,8 @@ function sanitizeProvider(v: unknown): AIProvider | null {
     return {
       id: r.id, type, endpoint,
       name: stripControl(String(r.name ?? r.id)).slice(0, 100),
-      model: stripControl(String(r.model ?? '')).slice(0, 100),
+      // У единой Светланы одна «модель» — профиль полного режима.
+      model: r.id === 'svetlana' ? SVETLANA_CORE_MODEL : stripControl(String(r.model ?? '')).slice(0, 100),
       enabled: r.enabled === true,
       useProxy: r.useProxy === true ? true : undefined,
       apiKey: typeof r.apiKey === 'string' && r.apiKey ? r.apiKey.slice(0, 500) : undefined,
@@ -320,6 +324,10 @@ class AIGateway {
   private async callProvider(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
     // Повторная проверка адреса перед каждым запросом: объект провайдера мог быть изменён в обход updateProvider.
     validateEndpoint(provider);
+    // Единая Светлана: всегда напрямую на свой сервер (без стороннего прокси), в Windows — через нативную часть.
+    if (provider.id === 'svetlana') {
+      return isNativeApp() ? this.callNative(provider, messages, options) : this.callSvetlanaCore(provider, messages);
+    }
     const proxy = this.getProxyUrl();
     if ((proxy || provider.useProxy) && provider.type === 'online') {
       return this.callViaProxy(proxy || '/api/ai-proxy', provider, messages, options);
@@ -357,13 +365,21 @@ class AIGateway {
     }
   }
 
+  /** Единая Светлана из веб-версии (в Windows — callNative). */
+  private async callSvetlanaCore(provider: AIProvider, messages: ChatMessage[]): Promise<AIResponse> {
+    const content = await callSvetlanaCoreWeb(provider.apiKey || '', toSvetlanaCoreBody(messages));
+    return { content, provider: provider.name, model: provider.model };
+  }
+
   /** Облачный запрос через нативную часть Windows-приложения (без ключа в теле запроса). */
   private async callNative(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
     const systemMessage = messages.find(m => m.role === 'system');
     const chatMessages = messages.filter(m => m.role !== 'system');
     const temperature = options?.temperature ?? 0.7;
     let body: Record<string, unknown>;
-    if (provider.id === 'anthropic') {
+    if (provider.id === 'svetlana') {
+      body = { ...toSvetlanaCoreBody(messages) };
+    } else if (provider.id === 'anthropic') {
       body = { model: provider.model, max_tokens: options?.max_tokens ?? 4096, system: systemMessage?.content, messages: chatMessages, temperature };
     } else if (provider.id === 'google') {
       body = {
@@ -375,6 +391,9 @@ class AIGateway {
       body = { model: provider.model, messages, temperature, max_tokens: options?.max_tokens ?? 4096 };
     }
     const data: any = await nativeCloudChat(provider.id, provider.model, body);
+    if (provider.id === 'svetlana') {
+      return { content: contentOf(data), provider: provider.name, model: provider.model };
+    }
     const content = provider.id === 'anthropic' ? data?.content?.[0]?.text
       : provider.id === 'google' ? data?.candidates?.[0]?.content?.parts?.[0]?.text
       : data?.choices?.[0]?.message?.content;
