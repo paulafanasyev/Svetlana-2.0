@@ -1,6 +1,8 @@
 // Real E2E Test - Uses actual Android device via HandsManager
 // This test is NOT PROVEN without real Android device
 // It demonstrates the complete execution pipeline
+// Безопасность: отправка сообщения идёт через toolRegistry (ActionGate + проверка схемы), а не прямым
+// вызовом инструмента: без подтверждения человека сообщение не уйдёт.
 
 import { handsManager } from '../services/HandsManager';
 import { toolRegistry } from '../services/ToolRegistry';
@@ -213,7 +215,7 @@ export async function runRealE2ETest_SendMessage(
 
     result.steps[result.steps.length - 1].status = 'passed';
 
-    // Step 2: Use sendMessageTool
+    // Step 2: Send through the registry (ActionGate asks the human first)
     result.steps.push({
       step: 2,
       action: `Send message to ${contact}: "${message}"`,
@@ -221,8 +223,7 @@ export async function runRealE2ETest_SendMessage(
       timestamp: Date.now(),
     });
 
-    const sendMessageTool = toolRegistry.getTool('send_message');
-    if (!sendMessageTool) {
+    if (!toolRegistry.getTool('send_message')) {
       result.steps[result.steps.length - 1].status = 'failed';
       result.steps[result.steps.length - 1].error = 'send_message tool not found';
       result.endTime = Date.now();
@@ -230,7 +231,8 @@ export async function runRealE2ETest_SendMessage(
       return result;
     }
 
-    const sendResult = await sendMessageTool.execute({ app, contact, message });
+    // Не напрямую (tool.execute): только через реестр — шлюз разрешений, строгая схема, журнал и проверка.
+    const sendResult = await toolRegistry.executeWithConfirmation('send_message', { app, contact, message });
     if (!sendResult.success) {
       result.steps[result.steps.length - 1].status = 'failed';
       result.steps[result.steps.length - 1].error = sendResult.error || 'Failed to send message';
@@ -242,7 +244,7 @@ export async function runRealE2ETest_SendMessage(
     result.steps[result.steps.length - 1].status = 'passed';
     result.steps[result.steps.length - 1].data = sendResult.data;
 
-    // Step 3: Verification
+    // Step 3: Verification (выполнена реестром после отправки)
     result.steps.push({
       step: 3,
       action: 'Verification: check if message was sent',
@@ -250,7 +252,7 @@ export async function runRealE2ETest_SendMessage(
       timestamp: Date.now(),
     });
 
-    const verified = await sendMessageTool.verify!({ app, contact, message }, sendResult);
+    const verified = sendResult.verification?.status === 'PASS';
     if (!verified) {
       result.steps[result.steps.length - 1].status = 'failed';
       result.steps[result.steps.length - 1].error = 'Message not found in chat after sending';
