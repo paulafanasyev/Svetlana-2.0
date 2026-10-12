@@ -3,8 +3,9 @@
 // и перед самим нажатием/вводом/свайпом/клавишей проверяется, что оно всё ещё на экране (оверлей/подмена = отказ).
 // Перед нажатием элемент ищется ещё раз и сравнивается (id, текст, границы, описание, нажимаемость):
 // подмена кнопки внутри того же приложения = отказ. После этого читается самое свежее дерево экрана:
-// элемента в нём нет = отказ (координаты устарели); если сам элемент не нажимается, а его нажимаемый
-// родитель подписан опасно («Удалить», «Оплатить»…), а у элемента безобидная подпись («Продолжить») — отказ.
+// того же элемента (id, текст, границы и описание) в нём нет = отказ (координаты устарели); если сам
+// элемент не нажимается, а его нажимаемый родитель подписан опасно («Удалить», «Оплатить»…), а у
+// элемента безобидная подпись («Продолжить») — отказ.
 // Ввод идёт только в то поле, которое было в фокусе в начале (фокус ушёл = отказ).
 // Сообщение уходит только в чат, в ЗАГОЛОВКЕ которого (самый верхний текст) именно этот собеседник,
 // только той же кнопкой «Отправить» и только пока фокус всё ещё в том же поле сообщения.
@@ -64,12 +65,17 @@ function labelOf(n: any): string {
 
 const MAX_TREE_DEPTH = 60;
 
-/** Путь от корня до узла, совпадающего с элементом (id, текст, границы), или null. */
-function pathTo(root: any, el: ElementLike): any[] | null {
+/**
+ * Путь от корня до узла, совпадающего с элементом (id, текст, границы и — если оно известно у
+ * элемента — то же описание contentDescription), или null.
+ */
+function pathTo(root: any, el: ElementLike & { contentDescription?: unknown }): any[] | null {
+  const matches = (n: any) => sameElement(n, el)
+    && (el.contentDescription === undefined || n?.contentDescription === el.contentDescription);
   const walk = (n: any, path: any[]): any[] | null => {
     if (!n || path.length > MAX_TREE_DEPTH) return null;
     const next = [...path, n];
-    if (sameElement(n, el)) return next;
+    if (matches(n)) return next;
     for (const c of Array.isArray(n.children) ? n.children : []) { const found = walk(c, next); if (found) return found; }
     return null;
   };
@@ -82,7 +88,7 @@ function pathTo(root: any, el: ElementLike): any[] | null {
  * Узел в дереве должен совпадать с элементом и по нажимаемости (если она известна у обоих).
  * Элемента нет в дереве — тоже отказ (неизвестно, что сейчас под этими координатами).
  */
-function tapEscalates(tree: any, el: ElementLike & { clickable?: unknown }): boolean {
+function tapEscalates(tree: any, el: ElementLike & { clickable?: unknown; contentDescription?: unknown }): boolean {
   const path = pathTo(tree?.root, el);
   if (!path) return true;
   const node = path[path.length - 1];
@@ -272,7 +278,7 @@ export const tapElementTool: Tool = {
     if (!element) return { success: false, error: `Element not found: ${params.elementText || params.elementId}` };
     // Элемент ищем ещё раз: другая кнопка на том же месте, сдвиг или смена описания/нажимаемости = отказ.
     if (!sameTapElement(element, await find())) return ELEMENT_CHANGED;
-    // Самое свежее дерево (после повторной проверки): элемента в нём нет — отказ;
+    // Самое свежее дерево (после повторной проверки): того же элемента в нём нет — отказ;
     // безобидная подпись внутри опасной кнопки — отказ.
     const beforeTree = await hands.getAccessibilityTree();
     if (!pathTo(beforeTree?.root, element)) return NOT_ON_SCREEN;
