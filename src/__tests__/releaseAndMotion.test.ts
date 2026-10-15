@@ -38,9 +38,9 @@ describe('release and emulator workflows (mirrors for .github/workflows)', () =>
     expect(emu).not.toContain('contents: write');
   });
 
-  it('both publish jobs share one queue and one version, so they never race on the tag', () => {
+  it('both publish jobs share one global queue and one version, so they never race on the tag', () => {
     for (const text of [win, apk]) {
-      expect(text).toMatch(/  release:\n[\s\S]*concurrency:\n      group: svetlana-release-\$\{\{ github\.ref \}\}\n      cancel-in-progress: false/);
+      expect(text).toMatch(/  release:\n[\s\S]*concurrency:\n      group: svetlana-release\n      cancel-in-progress: false/);
       expect(text).toContain("require('./src-tauri/tauri.conf.json').version");
     }
   });

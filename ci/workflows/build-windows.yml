@@ -87,7 +87,7 @@ jobs:
           cargo test --locked --manifest-path src-tauri/Cargo.toml
           if ($LASTEXITCODE -ne 0) { throw "Тесты Rust упали" }
 
-      # Пока только предупреждения (список в логе и во вкладке Summary). Когда почистим — уберём continue-on-error.
+      # Пока только предупреждения (список в логе и во вкладке Summary). Когда почистим, уберём continue-on-error.
       - name: Clippy (warnings only for now)
         continue-on-error: true
         shell: pwsh
@@ -128,14 +128,14 @@ jobs:
 
   # Публикация в Releases (тег app-v<версия>, постоянное имя файла): на него ведёт «Скачать для Windows» на сайте.
   # Отдельная работа с правом записи: сама сборка и чужой код зависимостей с этим правом не запускаются.
-  # Общая очередь svetlana-release с Android: два релиза в один тег никогда не пишут одновременно.
+  # Одна очередь svetlana-release на все ветки и оба приложения: в один тег никто не пишет одновременно.
   release:
     needs: build-windows
     if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
-      group: svetlana-release-${{ github.ref }}
+      group: svetlana-release
       cancel-in-progress: false
     permissions:
       contents: write
@@ -167,5 +167,5 @@ jobs:
             release-assets/checksums.txt
           body: |
             Светлана 2.0 для Windows 10/11 и Android: чат и голос, выбор ИИ (в том числе бесплатный GigaChat), CRM, связь с телефоном.
-            Установщик Windows пока без цифровой подписи: если SmartScreen предупредит, «Подробнее» → «Выполнить в любом случае».
-            SHA-256 — в checksums.txt и android-checksums.txt.
+            Установщик Windows пока без цифровой подписи: если SmartScreen предупредит, «Подробнее», потом «Выполнить в любом случае».
+            SHA-256 лежат в checksums.txt и android-checksums.txt.
