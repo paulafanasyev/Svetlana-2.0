@@ -1,6 +1,7 @@
 // Мастер первого запуска: один понятный шаг до первого ответа.
 // 1) «★ Светлана Сервер»: вставить ключ → ключ уходит в хранилище (в Windows — Диспетчер учётных данных) → пробный запрос.
 //    Ключ сохраняется один раз: если пробный запрос не прошёл, «Повторить проверку» не спрашивает ключ заново.
+//    Если сохранить ключ не удалось («Отмена» в окне Windows), новый провайдер убирается, чтобы не висел «выбранным» без ключа.
 // 2) Локально через Ollama: проверяем, запущена ли Ollama, и берём УЖЕ скачанную модель (имя по умолчанию
 //    svetlana:latest в открытом каталоге Ollama нет, поэтому не надеемся на него).
 import { useState } from 'react';
@@ -26,7 +27,7 @@ export const errorText = (e: unknown): string => {
   return s.slice(0, 300) || 'Неизвестная ошибка';
 };
 
-/** Понятный текст для частых ошибок подключения к серверу Светланы. */
+/** Понятный текст для частых ошибок пробного запроса к серверу Светланы (ключ уже сохранён). */
 export function explainServerError(raw: string): string {
   if (/Отменено пользователем/.test(raw)) return 'В окне Windows нажата «Отмена». Нажми «Повторить проверку» и разреши запрос.';
   if (/\b(401|403)\b/.test(raw)) return 'Сервер Светланы не принял ключ. Проверь его и вставь заново.';
@@ -34,6 +35,12 @@ export function explainServerError(raw: string): string {
   if (/\b(5\d\d)\b/.test(raw)) return `Сервер Светланы сейчас не отвечает (${raw.match(/\b5\d\d\b/)?.[0]}). Попробуй позже.`;
   if (/error sending request|dns|connect|Failed to fetch|NetworkError/i.test(raw)) return 'Нет связи с сервером Светланы. Проверь интернет.';
   return raw;
+}
+
+/** Ошибка на шаге сохранения ключа (до пробного запроса). */
+export function explainKeySaveError(raw: string): string {
+  if (/Отменено пользователем/.test(raw)) return 'Ключ не сохранён: в окне Windows нажата «Отмена». Нажми «Подключить» ещё раз и подтверди сохранение.';
+  return `Ключ не сохранён: ${raw}`;
 }
 
 /** Модели, уже скачанные в Ollama на этом компьютере. Бросает ошибку, если Ollama не отвечает. */
@@ -86,20 +93,34 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
   const skip = () => { markSetupDone(); onClose(); };
   const retryOnly = keySaved && !key.trim();
 
+  /** Сохранить ключ. При неудаче нового провайдера убираем (раньше настроенного не трогаем). */
+  const saveKey = async (value: string): Promise<boolean> => {
+    const existed = !!aiGateway.getProvider('svetlana');
+    try {
+      await aiGateway.addProvider({
+        id: 'svetlana', name: '★ Светлана Сервер (единая)', type: 'online',
+        endpoint: SVETLANA_CORE_ORIGIN, model: SVETLANA_CORE_MODEL, enabled: true, apiKey: value,
+      });
+      return true;
+    } catch (e) {
+      if (!existed) await aiGateway.removeProvider('svetlana').catch(() => undefined);
+      setSv('error');
+      setSvError(explainKeySaveError(errorText(e)));
+      return false;
+    }
+  };
+
   const connectServer = async () => {
     if (sv === 'busy' || (!key.trim() && !keySaved)) return;
     setSv('busy');
     setSvError('');
+    if (key.trim()) {
+      // Ключ сохраняем один раз (в Windows — одно окно подтверждения), повторная проверка его не трогает.
+      if (!(await saveKey(key.trim()))) return;
+      setKey('');
+      setKeySaved(true);
+    }
     try {
-      if (key.trim()) {
-        // Ключ сохраняем один раз (в Windows — одно окно подтверждения), повторная проверка его не трогает.
-        await aiGateway.addProvider({
-          id: 'svetlana', name: '★ Светлана Сервер (единая)', type: 'online',
-          endpoint: SVETLANA_CORE_ORIGIN, model: SVETLANA_CORE_MODEL, enabled: true, apiKey: key.trim(),
-        });
-        setKey('');
-        setKeySaved(true);
-      }
       aiGateway.setActiveProvider('svetlana');
       await aiGateway.chat([{ role: 'user', content: PING }], { max_tokens: 50 }, 'svetlana');
       setSv('ok');

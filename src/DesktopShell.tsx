@@ -90,7 +90,10 @@ export default function DesktopShell() {
           <AlertTriangle className="w-4 h-4 shrink-0" />
           Здесь схемы, план и демо разработки. Статусы и «демо-задачи» на этих страницах описывают замысел и не проверяют твой ПК. Работающий чат на вкладке «Чат со Светланой».
         </div>
-        <App />
+        {/* Отступ снизу: там плавающие кнопки CRM / Бизнес / Голос (CRMLauncher). */}
+        <div className="pb-28">
+          <App />
+        </div>
         {setup}
       </div>
     );
