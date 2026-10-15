@@ -94,6 +94,8 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  // Микрофон включён: на аватаре пульсирует кольцо (озвучка показывается по isSpeaking).
+  const [listening, setListening] = useState(false);
   const [activeProvider, setActiveProvider] = useState(aiGateway.getActiveProvider());
   const { speak, stop, isSpeaking, voices } = useSpeech();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -423,7 +425,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
             animate={{ opacity: 1, scale: 1 }}
             className="glass-card rounded-2xl p-4 sm:p-8 flex flex-col items-center"
           >
-            <Avatar size={android ? 'lg' : 'xl'} emotion={emotion} interactive={true} onEmotionChange={setEmotion} />
+            <Avatar size={android ? 'lg' : 'xl'} emotion={emotion} interactive={true} onEmotionChange={setEmotion} talking={isSpeaking} listening={listening} />
 
             <div className="mt-12 hidden sm:flex flex-wrap justify-center gap-2" role="group" aria-label="Эмоция аватара">
               {emotionButtons.map(btn => (
@@ -444,7 +446,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
             </div>
 
             <div className="mt-6 sm:mt-8 w-full">
-              <VoiceControl onCommand={handleVoiceCommand} />
+              <VoiceControl onCommand={handleVoiceCommand} onListeningChange={setListening} />
             </div>
           </motion.div>
         </div>

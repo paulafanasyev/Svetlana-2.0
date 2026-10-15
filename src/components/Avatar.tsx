@@ -18,12 +18,16 @@ interface AvatarProps {
   interactive?: boolean;
   emotion?: Emotion;
   onEmotionChange?: (emotion: Emotion) => void;
+  /** Идёт озвучка ответа: свечение у «рта». */
+  talking?: boolean;
+  /** Микрофон включён: пульсирующее кольцо. */
+  listening?: boolean;
 }
 
-export default function Avatar({ size = 'lg', interactive = false, emotion: externalEmotion, onEmotionChange }: AvatarProps) {
+export default function Avatar({ size = 'lg', interactive = false, emotion: externalEmotion, onEmotionChange, talking = false, listening = false }: AvatarProps) {
   const [currentEmotion, setCurrentEmotion] = useState<Emotion>(externalEmotion || 'neutral');
-  const [isTalking] = useState(false);
-  const [isListening] = useState(false);
+  const isTalking = talking;
+  const isListening = listening;
   const [showControls, setShowControls] = useState(false);
 
   useEffect(() => {
@@ -43,8 +47,13 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
     xl: 'w-56 h-56 sm:w-96 sm:h-96',
   };
 
+  const stateText = isListening ? 'Светлана слушает' : isTalking ? 'Светлана говорит' : '';
+
   return (
     <div className="relative inline-block">
+      {/* Для экранных читалок: то же, что показывают кольцо и свечение */}
+      <span role="status" data-testid="avatar-state" className="sr-only">{stateText}</span>
+
       {/* Main Avatar */}
       <div
         className={`relative ${sizeClasses[size]} rounded-full overflow-hidden cursor-pointer shadow-2xl shadow-indigo-500/20 border-4 border-indigo-500/30`}
@@ -62,6 +71,7 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
         {/* Talking overlay animation */}
         {isTalking && (
           <motion.div
+            data-testid="avatar-talking"
             className="absolute bottom-0 left-0 right-0 h-1/3 bg-gradient-to-t from-indigo-500/20 to-transparent"
             animate={{ opacity: [0.3, 0.6, 0.3] }}
             transition={{ duration: 0.5, repeat: Infinity }}
@@ -71,6 +81,7 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
         {/* Listening indicator */}
         {isListening && (
           <motion.div
+            data-testid="avatar-listening"
             className="absolute inset-0 rounded-full border-4 border-cyan-400"
             animate={{ scale: [1, 1.1, 1], opacity: [0.5, 1, 0.5] }}
             transition={{ duration: 1.5, repeat: Infinity }}
@@ -136,7 +147,8 @@ export function listenCommand(opts: ListenOptions & { accept?: (text: string) =>
 // Hands-free mode: always listening, reacts to phrases that start with «Светлана, …».
 // Every phrase is checked against the owner's voiceprint (VoiceGuard): other voices are ignored.
 // The first command also needs 3 random digits spoken aloud (protection against a recorded voice).
-export function VoiceControl({ onCommand }: { onCommand?: (command: string) => void }) {
+// onListeningChange — микрофон включён/выключен (для кольца на аватаре).
+export function VoiceControl({ onCommand, onListeningChange }: { onCommand?: (command: string) => void; onListeningChange?: (listening: boolean) => void }) {
   const [isListening, setIsListening] = useState(false);
   const [handsFree, setHandsFree] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -144,6 +156,7 @@ export function VoiceControl({ onCommand }: { onCommand?: (command: string) => v
   const listenerRef = useRef<Listener | null>(null);
   const tokenRef = useRef<object | null>(null);
   const onCommandRef = useRef(onCommand);
+  const onListeningRef = useRef(onListeningChange);
   const support = sttSupport();
   const android = isAndroidApp();
   // Телефон с записанным голосом и распознаванием записи слушает как компьютер (в том числе «без рук»).
@@ -151,7 +164,10 @@ export function VoiceControl({ onCommand }: { onCommand?: (command: string) => v
   const phoneStt = phoneVerified ? recordedRecognizer()?.mode : undefined;
 
   useEffect(() => { onCommandRef.current = onCommand; }, [onCommand]);
-  useEffect(() => () => listenerRef.current?.stop(), []);
+  useEffect(() => { onListeningRef.current = onListeningChange; }, [onListeningChange]);
+  useEffect(() => { onListeningRef.current?.(isListening); }, [isListening]);
+  // Уход со страницы: микрофон выключен, кольцо погасло.
+  useEffect(() => () => { listenerRef.current?.stop(); onListeningRef.current?.(false); }, []);
 
   const start = (continuous: boolean) => {
     setError(null);
