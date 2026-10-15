@@ -8,6 +8,13 @@ import {
   Loader2, Download, Terminal, RefreshCw, Check
 } from 'lucide-react';
 
+// Ошибки нативной части (Windows) приходят строкой, остальные — Error.
+const errorText = (e: unknown): string => {
+  const m = (e as { message?: unknown } | null)?.message;
+  const s = typeof m === 'string' && m ? m : String(e ?? '');
+  return s.slice(0, 300) || 'Ошибка подключения';
+};
+
 // ==================== PRESET PROVIDERS ====================
 const PRESET_PROVIDERS: Omit<AIProvider, 'enabled' | 'apiKey'>[] = [
   // Offline Local Engines
@@ -54,7 +61,8 @@ const MODEL_OPTIONS: Record<string, string[]> = {
 // ==================== CONFIG MODAL ====================
 function ConfigModal({ provider, onSave, onClose }: {
   provider: Omit<AIProvider, 'enabled'> & { enabled?: boolean };
-  onSave: (p: AIProvider) => void;
+  /** alreadySaved: настройки и ключ уже записаны при проверке — повторно не спрашиваем. */
+  onSave: (p: AIProvider, alreadySaved: boolean) => Promise<void>;
   onClose: () => void;
 }) {
   const [apiKey, setApiKey] = useState(provider.apiKey || '');
@@ -62,6 +70,8 @@ function ConfigModal({ provider, onSave, onClose }: {
   const [model, setModel] = useState(provider.model);
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testError, setTestError] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const isCore = provider.id === 'svetlana';
 
   const handleTest = async () => {
@@ -77,29 +87,35 @@ function ConfigModal({ provider, onSave, onClose }: {
     };
 
     try {
-      aiGateway.addProvider(tempProvider);
-      const success = await aiGateway.testConnection(provider.id);
-      if (success) {
-        setTestStatus('success');
-      } else {
-        setTestStatus('error');
-        setTestError('Не удалось подключиться к серверу');
-      }
-      aiGateway.removeProvider(provider.id);
-    } catch (err: any) {
+      // Проверка сохраняет настройки и ЖДЁТ записи ключа (в Windows — после окна подтверждения),
+      // иначе пробный запрос уходил бы ещё без ключа.
+      await aiGateway.addProvider(tempProvider);
+      setSaved(true);
+      await aiGateway.chat([{ role: 'user', content: 'Привет! Это проверка связи.' }], { max_tokens: 50 }, provider.id);
+      setTestStatus('success');
+    } catch (err: unknown) {
       setTestStatus('error');
-      setTestError(err.message || 'Ошибка подключения');
+      setTestError(errorText(err));
     }
   };
 
-  const handleSave = () => {
-    onSave({
-      ...provider,
-      apiKey,
-      endpoint,
-      model,
-      enabled: true,
-    });
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await onSave({
+        ...provider,
+        apiKey,
+        endpoint,
+        model,
+        enabled: true,
+      }, saved);
+    } catch (err: unknown) {
+      setTestStatus('error');
+      setTestError(errorText(err));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const models = MODEL_OPTIONS[provider.id] || [provider.model];
@@ -136,8 +152,9 @@ function ConfigModal({ provider, onSave, onClose }: {
                 <input
                   type="password"
                   value={apiKey}
-                  onChange={e => setApiKey(e.target.value)}
+                  onChange={e => { setApiKey(e.target.value); setSaved(false); }}
                   placeholder={isCore ? 'ключ с сервера Светланы' : 'sk-...'}
+                  autoComplete="off"
                   className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-indigo-500"
                 />
               </div>
@@ -156,7 +173,7 @@ function ConfigModal({ provider, onSave, onClose }: {
               <input
                 type="text"
                 value={endpoint}
-                onChange={e => setEndpoint(e.target.value)}
+                onChange={e => { setEndpoint(e.target.value); setSaved(false); }}
                 readOnly={isCore}
                 className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm font-mono focus:outline-none focus:border-indigo-500"
               />
@@ -168,7 +185,7 @@ function ConfigModal({ provider, onSave, onClose }: {
             <div className="flex gap-2">
               <select
                 value={model}
-                onChange={e => setModel(e.target.value)}
+                onChange={e => { setModel(e.target.value); setSaved(false); }}
                 className="flex-1 px-4 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-indigo-500"
               >
                 {models.map(m => (
@@ -180,7 +197,7 @@ function ConfigModal({ provider, onSave, onClose }: {
 
           <button
             onClick={handleTest}
-            disabled={testStatus === 'testing'}
+            disabled={testStatus === 'testing' || saving}
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-750 text-sm font-medium transition-colors"
           >
             {testStatus === 'testing' ? (
@@ -195,8 +212,8 @@ function ConfigModal({ provider, onSave, onClose }: {
               </>
             ) : testStatus === 'error' ? (
               <>
-                <AlertCircle className="w-4 h-4 text-rose-400" />
-                <span className="text-rose-400">{testError}</span>
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span className="text-rose-400 text-left">{testError}</span>
               </>
             ) : (
               <>
@@ -205,6 +222,7 @@ function ConfigModal({ provider, onSave, onClose }: {
               </>
             )}
           </button>
+          <p className="text-[11px] text-slate-500">Проверка сразу сохраняет настройки и ключ.</p>
         </div>
 
         <div className="flex gap-3 mt-6">
@@ -216,8 +234,10 @@ function ConfigModal({ provider, onSave, onClose }: {
           </button>
           <button
             onClick={handleSave}
-            className="flex-1 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium"
+            disabled={saving || testStatus === 'testing'}
+            className="flex-1 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium flex items-center justify-center gap-2"
           >
+            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
             Сохранить и включить
           </button>
         </div>
@@ -243,7 +263,7 @@ export default function AIProvidersPage() {
   const activeProvider = aiGateway.getActiveProvider();
 
   const handleCopy = (command: string) => {
-    navigator.clipboard.writeText(command);
+    void navigator.clipboard?.writeText(command).catch(() => undefined);
     setCopiedCommand(command);
     setTimeout(() => setCopiedCommand(null), 2000);
   };
@@ -260,17 +280,19 @@ export default function AIProvidersPage() {
     }
   };
 
-  const handleSaveProvider = (provider: AIProvider) => {
-    aiGateway.addProvider(provider);
+  const handleSaveProvider = async (provider: AIProvider, alreadySaved: boolean) => {
+    if (!alreadySaved) await aiGateway.addProvider(provider);
     aiGateway.setActiveProvider(provider.id);
     setProviders(aiGateway.getAllProviders());
     setConfiguringProvider(null);
   };
 
   const handleRemoveProvider = (id: string) => {
-    aiGateway.removeProvider(id);
-    setProviders(aiGateway.getAllProviders());
+    aiGateway.removeProvider(id)
+      .catch(e => console.error('Не удалось удалить ключ', e))
+      .finally(() => setProviders(aiGateway.getAllProviders()));
   };
+  void handleRemoveProvider;
 
   return (
     <div className="space-y-6 text-white max-w-6xl mx-auto">
@@ -394,7 +416,7 @@ export default function AIProvidersPage() {
                       onClick={() => {
                         const ollamaProvider = providers.find(p => p.id === 'ollama');
                         if (ollamaProvider) {
-                          aiGateway.updateProvider('ollama', { model: m.id, enabled: true });
+                          void aiGateway.updateProvider('ollama', { model: m.id, enabled: true }).catch(e => console.error(e));
                           aiGateway.setActiveProvider('ollama');
                           setProviders(aiGateway.getAllProviders());
                         } else {

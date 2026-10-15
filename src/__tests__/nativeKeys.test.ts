@@ -36,7 +36,7 @@ describe('desktop app keeps AI keys in the OS keychain', () => {
     };
     const fetchSpy = vi.spyOn(globalThis as any, 'fetch');
     await aiGateway.ready;
-    aiGateway.addProvider({ id: 'openai', name: 'OpenAI', type: 'online', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini', enabled: true, apiKey: 'sk-TEST-SECRET-KEY-123' });
+    await aiGateway.addProvider({ id: 'openai', name: 'OpenAI', type: 'online', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini', enabled: true, apiKey: 'sk-TEST-SECRET-KEY-123' });
     expect(aiGateway.getProvider('openai')!.apiKey).toBe(NATIVE_KEY_PLACEHOLDER);
     expect(calls).toContainEqual(['secret_set', { name: 'ai.openai', value: 'sk-TEST-SECRET-KEY-123' }]);
     expect(String((globalThis as any).localStorage.getItem('svetlana_ai_providers'))).not.toContain('sk-TEST-SECRET-KEY-123');
@@ -53,8 +53,21 @@ describe('desktop app keeps AI keys in the OS keychain', () => {
   it('editing the provider with the placeholder never overwrites the stored key', async () => {
     const calls: [string, any][] = [];
     (globalThis as any).__TAURI_INTERNALS__ = { invoke: async (cmd: string, args: any) => { calls.push([cmd, args]); return null; } };
-    aiGateway.updateProvider('openai', { apiKey: NATIVE_KEY_PLACEHOLDER, model: 'gpt-4o' });
+    await aiGateway.updateProvider('openai', { apiKey: NATIVE_KEY_PLACEHOLDER, model: 'gpt-4o' });
     expect(calls.filter(c => c[0] === 'secret_set')).toHaveLength(0);
+  });
+
+  it('a cancelled Windows dialog rejects the save and does not leave a fake "key present" mark', async () => {
+    (globalThis as any).__TAURI_INTERNALS__ = {
+      invoke: async (cmd: string) => {
+        if (cmd === 'secret_set') throw 'Отменено пользователем';
+        if (cmd === 'secret_has') return false;
+        return null;
+      },
+    };
+    await expect(aiGateway.addProvider({ id: 'groq', name: 'Groq', type: 'online', endpoint: 'https://api.groq.com/openai/v1', model: 'llama-3.1-8b-instant', enabled: true, apiKey: 'gsk-NEW' }))
+      .rejects.toBe('Отменено пользователем');
+    expect(aiGateway.getProvider('groq')!.apiKey).toBeUndefined();
   });
 
   it('asks the native side for a fresh conversation id once when the old one expired', async () => {
