@@ -69,7 +69,7 @@ function PaidButton({ docId, label = 'Оплачен' }: { docId: string; label?
     try { bizStore.markPaid(docId, { payMethod: method || undefined }); } catch (e: any) { setErr(e?.message || 'Ошибка'); }
   };
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex flex-wrap items-center gap-1.5">
       {npd && (
         <select className="px-2 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white" aria-label="Способ оплаты" value={method} onChange={e => setMethod(e.target.value as PayMethod | '')}>
           <option value="">Как заплатили?</option>
@@ -83,7 +83,7 @@ function PaidButton({ docId, label = 'Оплачен' }: { docId: string; label?
 }
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
-  return <div className={`${card} p-4`}><p className="text-xs text-slate-400">{label}</p><p className={`text-lg font-semibold mt-1 ${tone ?? ''}`}>{value}</p></div>;
+  return <div className={`${card} p-4 min-w-0`}><p className="text-xs text-slate-400">{label}</p><p className={`text-lg font-semibold mt-1 break-words ${tone ?? ''}`}>{value}</p></div>;
 }
 
 // ---------------- money ----------------
@@ -154,27 +154,32 @@ function MoneyTab() {
       <div className={`${card} divide-y divide-white/5`}>
         {entries.length === 0 && <p className="p-4 text-sm text-slate-500">Пока пусто. Скажите Светлане: «Получил 5000 от Петрова за урок».</p>}
         {entries.map(e => (
-          <div key={e.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
-            <span className="w-24 text-slate-400">{date(e.date)}</span>
-            <span className={`flex-1 min-w-0 truncate ${isTaxable(e) ? '' : 'text-slate-500 line-through'}`}>{e.description}{e.counterparty ? ` · ${e.counterparty}` : ''}</span>
-            <button className="text-xs text-slate-400 hover:underline" title="Перевод себе, займ, возврат и т.п. не учитываются в налоге" onClick={() => bizStore.setTaxable(e.id, !isTaxable(e))}>
-              {isTaxable(e) ? (e.kind === 'income' ? 'не доход?' : 'не расход?') : 'учитывать'}
-            </button>
-            {e.kind === 'expense' && isTaxable(e) && profile.regime === 'usn15' && (
-              <button className={`text-xs hover:underline ${e.noDocs ? 'text-amber-300' : 'text-slate-400'}`} title="Расход уменьшает налог УСН 15% только при подтверждающих документах: чек, акт, накладная, выписка" onClick={() => bizStore.setNoDocs(e.id, !e.noDocs)}>
-                {e.noDocs ? 'нет документов' : 'есть документы'}
+          // На телефоне две строки: дата, описание и сумма сверху, пометки и удаление снизу. На широком экране одна.
+          <div key={e.id} className="px-4 py-2.5 text-sm flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
+            <div className="flex items-center gap-3 min-w-0 sm:flex-1">
+              <span className="w-20 sm:w-24 shrink-0 text-slate-400">{date(e.date)}</span>
+              <span className={`flex-1 min-w-0 truncate ${isTaxable(e) ? '' : 'text-slate-500 line-through'}`}>{e.description}{e.counterparty ? ` · ${e.counterparty}` : ''}</span>
+              <span className={`shrink-0 sm:w-32 text-right font-medium ${e.kind === 'income' ? 'text-emerald-300' : 'text-red-300'}`}>{e.kind === 'income' ? '+' : '−'}{formatRub(e.amount)}</span>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-3 sm:shrink-0">
+              <button className="py-1 text-xs text-slate-400 hover:underline" title="Перевод себе, займ, возврат и т.п. не учитываются в налоге" onClick={() => bizStore.setTaxable(e.id, !isTaxable(e))}>
+                {isTaxable(e) ? (e.kind === 'income' ? 'не доход?' : 'не расход?') : 'учитывать'}
               </button>
-            )}
-            {e.kind === 'income' && isTaxable(e) && profile.regime === 'npd' && (
-              e.receipt === 'issued'
-                ? <span className="text-xs text-emerald-300">чек {e.receiptNumber ?? '✓'}</span>
-                : <button className="text-xs text-amber-300 hover:underline" onClick={() => {
-                    const n = window.prompt('Чек выбит в «Мой налог»? Номер чека (можно пусто):', '');
-                    if (n !== null) bizStore.setReceipt(e.id, n);
-                  }}>нет чека</button>
-            )}
-            <span className={`w-32 text-right font-medium ${e.kind === 'income' ? 'text-emerald-300' : 'text-red-300'}`}>{e.kind === 'income' ? '+' : '−'}{formatRub(e.amount)}</span>
-            <button onClick={() => { if (window.confirm('Удалить запись?')) bizStore.deleteEntry(e.id); }} className="p-1 text-slate-500 hover:text-red-300" aria-label="Удалить"><Trash2 className="w-4 h-4" /></button>
+              {e.kind === 'expense' && isTaxable(e) && profile.regime === 'usn15' && (
+                <button className={`py-1 text-xs hover:underline ${e.noDocs ? 'text-amber-300' : 'text-slate-400'}`} title="Расход уменьшает налог УСН 15% только при подтверждающих документах: чек, акт, накладная, выписка" onClick={() => bizStore.setNoDocs(e.id, !e.noDocs)}>
+                  {e.noDocs ? 'нет документов' : 'есть документы'}
+                </button>
+              )}
+              {e.kind === 'income' && isTaxable(e) && profile.regime === 'npd' && (
+                e.receipt === 'issued'
+                  ? <span className="text-xs text-emerald-300">чек {e.receiptNumber ?? '✓'}</span>
+                  : <button className="py-1 text-xs text-amber-300 hover:underline" onClick={() => {
+                      const n = window.prompt('Чек выбит в «Мой налог»? Номер чека (можно пусто):', '');
+                      if (n !== null) bizStore.setReceipt(e.id, n);
+                    }}>нет чека</button>
+              )}
+              <button onClick={() => { if (window.confirm('Удалить запись?')) bizStore.deleteEntry(e.id); }} className="p-1.5 text-slate-500 hover:text-red-300" aria-label="Удалить"><Trash2 className="w-4 h-4" /></button>
+            </div>
           </div>
         ))}
       </div>
@@ -230,7 +235,7 @@ function DocsTab() {
         {error && <p className="md:col-span-4 text-sm text-red-400">{error}</p>}
       </form>
       <div className={`${card} divide-y divide-white/5`}>
-        {docs.length === 0 && <p className="p-4 text-sm text-slate-500">Документов нет. Скажите Светлане: «Выстави счёт Иванову на 15000 за дизайн».</p>}
+        {docs.length === 0 && <p className="p-4 text-sm text-slate-500">Документов нет. Скажите Светлане: «Выставь счёт Иванову на 15000 за дизайн».</p>}
         {docs.map(d => {
           const html = () => renderDocumentHTML(d, bizStore.getProfile());
           return (
@@ -271,11 +276,11 @@ function DebtsTab() {
         const phone = d.contactId ? crmStore.getContact(d.contactId)?.phones[0]?.replace(/[^\d+]/g, '') : undefined;
         return (
           <div key={d.id} className={`${card} p-4 space-y-2`}>
-            <div className="flex justify-between gap-3">
-              <p className="font-medium">{d.clientName} · счёт № {d.number} · {formatRub(d.total)}</p>
+            <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
+              <p className="font-medium min-w-0 break-words">{d.clientName} · счёт № {d.number} · {formatRub(d.total)}</p>
               <span className={`text-sm ${daysOverdue ? 'text-red-300' : 'text-slate-400'}`}>{daysOverdue ? `просрочка ${daysOverdue} дн.` : `до ${date(d.dueDate)}`}</span>
             </div>
-            <p className="text-sm text-slate-300 whitespace-pre-line bg-black/20 rounded-lg p-3">{text}</p>
+            <p className="text-sm text-slate-300 whitespace-pre-line break-words bg-black/20 rounded-lg p-3">{text}</p>
             <div className="flex flex-wrap gap-2">
               <CopyButton text={text} />
               <a className={btnGhost} href={`https://t.me/share/url?url=&text=${encodeURIComponent(text)}`} target="_blank" rel="noreferrer"><Send className="w-4 h-4" />Telegram</a>
@@ -381,11 +386,11 @@ function SupportTab({ goProfile }: { goProfile: () => void }) {
         <a className={btnPrimary} href={regionalSearchUrl(profile, now)} target="_blank" rel="noreferrer"><ExternalLink className="w-4 h-4" />Найти программы региона</a>
       </div>
       <div className="flex flex-wrap gap-2">
-        <select className={`${input} w-56`} value={kind} onChange={e => setKind(e.target.value as SupportKind | '')}>
+        <select className={`${input} sm:w-56`} value={kind} onChange={e => setKind(e.target.value as SupportKind | '')}>
           <option value="">Все виды поддержки</option>
           {(Object.keys(SUPPORT_KIND_LABELS) as SupportKind[]).map(k => <option key={k} value={k}>{SUPPORT_KIND_LABELS[k]}</option>)}
         </select>
-        <input className={`${input} w-64`} placeholder="Поиск" value={query} onChange={e => setQuery(e.target.value)} />
+        <input className={`${input} sm:w-64`} placeholder="Поиск" value={query} onChange={e => setQuery(e.target.value)} />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {matches.map(({ measure: m, reasons }) => (
@@ -504,14 +509,14 @@ function ProfileTab() {
       <div className={`${card} p-4`}>
         <p className="text-sm text-slate-400 mb-2">Сферы деятельности</p>
         <div className="flex flex-wrap gap-2">{Object.entries(SECTOR_LABELS).map(([k, l]) => (
-          <button type="button" key={k} onClick={() => toggle('sectors', k)} className={`px-3 py-1 rounded-full text-xs border ${draft.sectors.includes(k) ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-white/5 border-white/10 text-slate-300'}`}>{l}</button>
+          <button type="button" key={k} onClick={() => toggle('sectors', k)} className={`px-3 py-1.5 rounded-full text-xs border ${draft.sectors.includes(k) ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-white/5 border-white/10 text-slate-300'}`}>{l}</button>
         ))}</div>
         <p className="text-sm text-slate-400 mt-4 mb-2">Особые статусы (влияют на подбор поддержки, хранятся только на устройстве)</p>
         <div className="flex flex-wrap gap-2">{Object.entries(FLAG_LABELS).map(([k, l]) => (
-          <button type="button" key={k} onClick={() => toggle('flags', k)} className={`px-3 py-1 rounded-full text-xs border ${draft.flags.includes(k) ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-white/5 border-white/10 text-slate-300'}`}>{l}</button>
+          <button type="button" key={k} onClick={() => toggle('flags', k)} className={`px-3 py-1.5 rounded-full text-xs border ${draft.flags.includes(k) ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-white/5 border-white/10 text-slate-300'}`}>{l}</button>
         ))}</div>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <button type="submit" className={btnPrimary}>Сохранить профиль</button>
         <button type="button" className={btnGhost} onClick={() => download(`biz-backup-${new Date().toISOString().slice(0, 10)}.json`, bizStore.exportJSON(), 'application/json')}><Download className="w-4 h-4" />Резервная копия</button>
         {msg && <span className="text-sm text-indigo-200">{msg}</span>}
