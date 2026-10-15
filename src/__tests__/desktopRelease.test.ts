@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 // @ts-ignore
 import { resolve } from 'node:path';
 import { APP_VERSION } from '../version';
-import { listOllamaModels, pickOllamaModel, errorText } from '../components/FirstRunSetup';
+import { listOllamaModels, pickOllamaModel, errorText, explainServerError } from '../components/FirstRunSetup';
 
 const read = (p: string) => readFileSync(resolve(p), 'utf8');
 
@@ -19,6 +19,7 @@ describe('Windows desktop release', () => {
     expect(tauri.version).toBe(APP_VERSION);
     expect(pkg.version).toBe(APP_VERSION);
     expect(cargo).toBe(APP_VERSION);
+    expect(read('CHANGELOG.md')).toContain(`## [${APP_VERSION}]`);
   });
 
   it('lets Tauri build the frontend so the web CSP meta tag is not baked in', () => {
@@ -58,5 +59,14 @@ describe('first-run setup helpers', () => {
     expect(errorText('Отменено пользователем')).toBe('Отменено пользователем');
     expect(errorText(new Error('x'))).toBe('x');
     expect(errorText(null)).toBe('Неизвестная ошибка');
+  });
+
+  it('explains common server errors in plain Russian', () => {
+    expect(explainServerError('Отменено пользователем')).toContain('Повторить проверку');
+    expect(explainServerError('HTTP 401: {"message":"bad key"}')).toContain('не принял ключ');
+    expect(explainServerError('Светлана 403: Forbidden')).toContain('не принял ключ');
+    expect(explainServerError('HTTP 502: Bad Gateway')).toContain('502');
+    expect(explainServerError('error sending request')).toContain('интернет');
+    expect(explainServerError('что-то другое')).toBe('что-то другое');
   });
 });
