@@ -65,7 +65,7 @@ export async function localSttRemove(): Promise<void> {
   try { await need()('local_stt_remove'); } finally { await localSttStatus().catch(() => null); }
 }
 
-/** Модели нужно 16 кГц: на телефоне уменьшаем запись заранее (в 3 раза меньше данных через мост). */
+/** Запасной путь для очень высокой частоты записи: уменьшить до 16 кГц, чтобы запись прошла через мост. */
 export function to16k(pcm: Float32Array, sampleRate: number): { pcm: Float32Array; sampleRate: number } {
   const rate = Math.round(sampleRate);
   if (!(rate > 16000)) return { pcm, sampleRate: rate };
@@ -95,15 +95,20 @@ export function pcm16Base64(pcm: Float32Array): string {
   return btoa(s);
 }
 
-const MAX_SECONDS = 30;
+/** Как в нативной части (LocalStt.kt): не длиннее 15 секунд. */
+export const MAX_SECONDS = 15;
+/** Частота, до которой запись уходит как есть (ресемплинг делает нативная часть, как в Windows); 15 с при 48 кГц — около 2 МБ. */
+const MAX_DIRECT_RATE = 48_000;
 
 /** Распознать запись (моно, -1..1). */
 export async function localTranscribe(pcm: Float32Array, sampleRate: number): Promise<string> {
   const inv = need();
   let text: unknown;
   if (isAndroidApp()) {
-    const r = to16k(pcm, sampleRate);
-    const clip = r.pcm.length > r.sampleRate * MAX_SECONDS ? r.pcm.subarray(r.pcm.length - r.sampleRate * MAX_SECONDS) : r.pcm;
+    const rate = Math.round(sampleRate);
+    const r = rate > MAX_DIRECT_RATE ? to16k(pcm, rate) : { pcm, sampleRate: rate };
+    const max = r.sampleRate * MAX_SECONDS;
+    const clip = r.pcm.length > max ? r.pcm.subarray(r.pcm.length - max) : r.pcm;
     text = await inv('local_stt_transcribe', { pcm16: pcm16Base64(clip), sampleRate: r.sampleRate });
   } else {
     text = await inv('local_stt_transcribe', { pcm: Array.from(pcm), sampleRate: Math.round(sampleRate) });

@@ -1,10 +1,11 @@
 // То, чего в Android WebView нет самого по себе, чтобы интерфейс работал как на сайте и в Windows (код страниц один):
 // - скачивание файлов (<a download href="blob:…">) → системное окно «Сохранить как»;
 // - печать (window.print и печать из iframe) → системное окно печати Android (там же «Сохранить как PDF»);
-// - копирование (navigator.clipboard.writeText) → буфер обмена телефона;
+// - копирование (navigator.clipboard.writeText) → буфер обмена телефона, как в браузере — только по нажатию;
 // - http-адреса домашней сети (Ollama/LM Studio на компьютере, Svetlana-home) → нативная команда lan_http:
 //   страница открыта по https и сама по http ходить не может. Первая отправка данных на новое устройство —
-//   только после нативного подтверждения; любые другие адреса идут обычным fetch (и CSP).
+//   только после нативного подтверждения. Остальное: https, blob: и data: — обычным fetch (и CSP), любой другой
+//   адрес (http в интернет, file:, content:) отклоняется.
 // Всё ставится в main.tsx до первого рендера (installAndroidDownloads); в браузере и Windows ничего не меняет.
 import { isAndroidApp } from '../platform';
 
@@ -57,6 +58,12 @@ export async function androidCopyText(text: string): Promise<void> {
   await need()('clipboard_set', { text: String(text).slice(0, 100_000) });
 }
 
+/** Как в браузере: писать в буфер можно только сразу после нажатия человека. */
+export function userJustActed(): boolean {
+  const ua = (typeof navigator !== 'undefined' ? (navigator as any).userActivation : undefined) as { isActive?: boolean } | undefined;
+  return ua?.isActive !== false;
+}
+
 export interface PhoneContact { id: string; name: string; phones: string[] }
 
 /** Контакты этого телефона (разрешение «Контакты» и подтверждение — в нативной части). */
@@ -77,6 +84,15 @@ export async function androidListContacts(): Promise<PhoneContact[]> {
 /** http-адрес домашней сети или этого телефона (только IP, без имён): такие запросы делает нативная часть. */
 const LAN_URL = /^http:\/\/(?:localhost|127(?:\.\d{1,3}){3}|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?::\d{1,5})?(?:[/?]|$)/;
 export function isLanUrl(url: string): boolean { return LAN_URL.test(String(url ?? '')); }
+
+/** Что страница в приложении для Android может запрашивать: ‘lan’ — через телефон, ‘web’ — обычным fetch, null — нельзя. */
+export function fetchRoute(url: string, base = 'https://appassets.androidplatform.net/'): 'lan' | 'web' | null {
+  let u: URL;
+  try { u = new URL(String(url ?? ''), base); } catch { return null; }
+  if (u.protocol === 'https:' || u.protocol === 'blob:' || u.protocol === 'data:') return 'web';
+  if (u.protocol === 'http:' && isLanUrl(u.href)) return 'lan';
+  return null;
+}
 
 const abortError = () => {
   try { return new DOMException('Запрос отменён', 'AbortError'); } catch { const e = new Error('Запрос отменён'); e.name = 'AbortError'; return e; }
@@ -110,6 +126,13 @@ export async function androidLanFetch(url: string, init: RequestInit = {}, invok
   const text = typeof o?.body === 'string' ? o.body : '';
   const empty = status === 204 || status === 205 || status === 304;
   return new Response(empty ? null : text, { status, headers: { 'content-type': 'application/json; charset=utf-8' } });
+}
+
+/** fetch(Request) в домашнюю сеть: метод, тело и отмена берутся из самого Request (init их перекрывает). */
+export async function lanInitFrom(req: Request, init: RequestInit = {}): Promise<RequestInit> {
+  const method = String(init.method ?? req.method ?? 'GET').toUpperCase();
+  const body = init.body !== undefined ? init.body : (method === 'GET' || method === 'HEAD' ? null : await req.clone().text());
+  return { method, body, signal: init.signal ?? req.signal };
 }
 
 let installed = false;
@@ -175,18 +198,31 @@ export function installAndroidDownloads(): void {
     });
   }
 
-  // Копирование в буфер обмена телефона (в WebView writeText часто недоступен).
+  // Копирование в буфер обмена телефона (в WebView writeText часто недоступен). Как в браузере — только после
+  // нажатия: скрипт сам по себе буфер не перепишет.
+  const writeText = (text: string): Promise<void> => {
+    if (!userJustActed()) {
+      return Promise.reject(Object.assign(new Error('Копировать можно только по нажатию'), { name: 'NotAllowedError' }));
+    }
+    return androidCopyText(text);
+  };
   try {
     const clip = navigator.clipboard as Clipboard | undefined;
-    if (clip) Object.defineProperty(clip, 'writeText', { configurable: true, value: (text: string) => androidCopyText(text) });
-    else Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: (text: string) => androidCopyText(text) } });
+    if (clip) Object.defineProperty(clip, 'writeText', { configurable: true, value: writeText });
+    else Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
   } catch { /* остаётся как есть */ }
 
-  // Домашняя сеть по http: Ollama/LM Studio на компьютере и Svetlana-home.
+  // Домашняя сеть по http: Ollama/LM Studio на компьютере и Svetlana-home. Остальное — только https/blob/data.
   const nativeFetch = window.fetch.bind(window);
-  window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
-    if (isLanUrl(url)) return androidLanFetch(url, init ?? {});
+  window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const req = typeof Request !== 'undefined' && input instanceof Request ? input : null;
+    const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
+    const route = fetchRoute(raw, window.location.href);
+    if (route === 'lan') {
+      const url = new URL(raw, window.location.href).href;
+      return androidLanFetch(url, req ? await lanInitFrom(req, init ?? {}) : (init ?? {}));
+    }
+    if (route === null) throw new TypeError('Failed to fetch: адрес не разрешён (только https или домашняя сеть)');
     return nativeFetch(input, init);
   }) as typeof fetch;
 }
