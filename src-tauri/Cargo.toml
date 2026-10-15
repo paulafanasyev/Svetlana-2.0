@@ -1,6 +1,6 @@
 [package]
 name = "svetlana-desktop"
-version = "2.0.0"
+version = "2.1.0"
 description = "Svetlana 2.0 Windows Desktop App"
 authors = ["Paul Afanasyev"]
 edition = "2021"
