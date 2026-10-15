@@ -1,14 +1,16 @@
-// Мастер первого запуска: один понятный шаг до первого ответа.
-// 1) «★ Светлана Сервер»: вставить ключ → ключ уходит в хранилище (в Windows — Диспетчер учётных данных) → пробный запрос.
-//    Ключ сохраняется один раз: если пробный запрос не прошёл, «Повторить проверку» не спрашивает ключ заново.
-//    Если сохранить ключ не удалось («Отмена» в окне Windows), новый провайдер убирается, чтобы не висел «выбранным» без ключа.
-// 2) Локально через Ollama: проверяем, запущена ли Ollama, и берём УЖЕ скачанную модель (имя по умолчанию
-//    svetlana:latest в открытом каталоге Ollama нет, поэтому не надеемся на него).
+// Мастер первого запуска: один понятный шаг до первого ответа. Одинаковый на сайте, в Windows и в Android.
+// 1) «★ Светлана Сервер»: вставить ключ → ключ уходит в хранилище (Windows — Диспетчер учётных данных, Android — Keystore)
+//    → пробный запрос. Ключ сохраняется один раз: если пробный запрос не прошёл, «Повторить проверку» не
+//    спрашивает ключ заново. Если сохранить ключ не удалось («Отмена» в окне подтверждения), новый провайдер
+//    убирается, чтобы не висел «выбранным» без ключа.
+// 2) Локально через Ollama (только компьютер): проверяем, запущена ли Ollama, и берём УЖЕ скачанную модель
+//    (имя по умолчанию svetlana:latest в открытом каталоге Ollama нет, поэтому не надеемся на него).
 import { useState } from 'react';
 import { Key, HardDrive, Loader2, CheckCircle2, AlertCircle, X, Sparkles } from 'lucide-react';
 import { aiGateway } from '../services/AIGateway';
 import { SVETLANA_CORE_ORIGIN, SVETLANA_CORE_MODEL } from '../services/SvetlanaCore';
 import { isNativeApp } from '../services/security/NativeBridge';
+import { isAndroidApp } from '../platform';
 
 const DONE_KEY = 'svetlana_setup_done_v1';
 const OLLAMA = 'http://127.0.0.1:11434';
@@ -29,7 +31,7 @@ export const errorText = (e: unknown): string => {
 
 /** Понятный текст для частых ошибок пробного запроса к серверу Светланы (ключ уже сохранён). */
 export function explainServerError(raw: string): string {
-  if (/Отменено пользователем/.test(raw)) return 'В окне Windows нажата «Отмена». Нажми «Повторить проверку» и разреши запрос.';
+  if (/Отменено пользователем/.test(raw)) return 'В окне подтверждения нажата «Отмена». Нажми «Повторить проверку» и разреши запрос.';
   if (/\b(401|403)\b/.test(raw)) return 'Сервер Светланы не принял ключ. Проверь его и вставь заново.';
   if (/\b(429)\b/.test(raw)) return 'Сервер просит подождать: слишком много запросов. Попробуй через минуту.';
   if (/\b(5\d\d)\b/.test(raw)) return `Сервер Светланы сейчас не отвечает (${raw.match(/\b5\d\d\b/)?.[0]}). Попробуй позже.`;
@@ -39,7 +41,7 @@ export function explainServerError(raw: string): string {
 
 /** Ошибка на шаге сохранения ключа (до пробного запроса). */
 export function explainKeySaveError(raw: string): string {
-  if (/Отменено пользователем/.test(raw)) return 'Ключ не сохранён: в окне Windows нажата «Отмена». Нажми «Подключить» ещё раз и подтверди сохранение.';
+  if (/Отменено пользователем/.test(raw)) return 'Ключ не сохранён: в окне подтверждения нажата «Отмена». Нажми «Подключить» ещё раз и подтверди сохранение.';
   return `Ключ не сохранён: ${raw}`;
 }
 
@@ -72,6 +74,13 @@ export function pickOllamaModel(models: string[]): string | null {
   return models[0] ?? null;
 }
 
+/** Подсказка, куда попадёт ключ и какие окна подтверждения ждать. */
+export function keyStorageHint(platform: 'windows' | 'android' | 'web'): string {
+  if (platform === 'android') return ' Ключ сохранится в защищённом хранилище телефона (Android Keystore). Телефон спросит два раза: «Сохранить ключ?» и «Разрешить отправить переписку?», нажми ОК в обоих.';
+  if (platform === 'windows') return ' Ключ сохранится в Диспетчере учётных данных Windows. Будет два окна Windows: «Сохранить ключ?» и «Разрешить отправить переписку?», нажми ОК в обоих.';
+  return ' Ключ хранится в зашифрованном хранилище браузера.';
+}
+
 type Status = 'idle' | 'busy' | 'ok' | 'error';
 
 export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
@@ -79,7 +88,8 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
   onReady: () => void;
   onOpenProviders: () => void;
 }) {
-  const native = isNativeApp();
+  const android = isAndroidApp();
+  const platform = android ? 'android' : isNativeApp() ? 'windows' : 'web';
   const [key, setKey] = useState('');
   const [keySaved, setKeySaved] = useState(false);
   const [sv, setSv] = useState<Status>('idle');
@@ -115,7 +125,7 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
     setSv('busy');
     setSvError('');
     if (key.trim()) {
-      // Ключ сохраняем один раз (в Windows — одно окно подтверждения), повторная проверка его не трогает.
+      // Ключ сохраняем один раз (одно окно подтверждения), повторная проверка его не трогает.
       if (!(await saveKey(key.trim()))) return;
       setKey('');
       setKeySaved(true);
@@ -186,13 +196,13 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
             <h2 className="text-xl font-bold flex items-center gap-2"><Sparkles className="w-5 h-5 text-pink-400" />Добро пожаловать в Светлану 2.0</h2>
             <p className="text-sm text-slate-400 mt-1">Выбери, через какой ИИ Светлана будет отвечать. Это можно поменять потом во вкладке «Модели ИИ».</p>
           </div>
-          <button onClick={skip} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400" title="Закрыть"><X className="w-5 h-5" /></button>
+          <button onClick={skip} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400" title="Закрыть" aria-label="Закрыть"><X className="w-5 h-5" /></button>
         </div>
 
         <section className="rounded-xl border border-indigo-500/40 bg-indigo-950/30 p-4 mb-4">
           <h3 className="font-semibold flex items-center gap-2"><Key className="w-4 h-4 text-indigo-300" />★ Светлана Сервер (рекомендуется)</h3>
-          <p className="text-xs text-slate-400 mt-1">Единая обученная Светлана на мир-самозанятых.рф, полный режим. Нужен ключ ASSISTANT_KEY_SVETLANA2 с сервера.
-            {native ? ' Ключ сохранится в Диспетчере учётных данных Windows. Будет два окна Windows: «Сохранить ключ?» и «Разрешить отправить переписку?», нажми ОК в обоих.' : ' Ключ хранится в зашифрованном хранилище браузера.'}
+          <p className="text-xs text-slate-400 mt-1">Единая обученная Светлана на мир-самозанятых.рф, полный режим. Нужен ключ Светланы, который вы получили от владельца сервера.
+            {keyStorageHint(platform)}
           </p>
           <div className="flex gap-2 mt-3">
             <input
@@ -202,7 +212,7 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
               onKeyDown={e => e.key === 'Enter' && connectServer()}
               placeholder={keySaved ? 'ключ сохранён (можно вставить другой)' : 'ключ Светланы'}
               autoComplete="off"
-              className="flex-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-indigo-500"
+              className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-indigo-500"
               disabled={sv === 'busy'}
             />
             <button
@@ -216,38 +226,41 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
           {statusLine(sv, svError, 'Светлана ответила. Открываю чат…')}
         </section>
 
-        <section className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-4 mb-4">
-          <h3 className="font-semibold flex items-center gap-2"><HardDrive className="w-4 h-4 text-cyan-300" />Без интернета: локальная модель через Ollama</h3>
-          <p className="text-xs text-slate-400 mt-1">Переписка не покидает компьютер. Нужна установленная Ollama (ollama.com/download) и скачанная модель, например «ollama pull qwen2.5:7b».</p>
-          <div className="flex flex-wrap gap-2 mt-3">
-            <button
-              onClick={findOllama}
-              disabled={ol === 'busy'}
-              className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-50 text-sm flex items-center gap-2"
-            >
-              {ol === 'busy' && !models.length && <Loader2 className="w-4 h-4 animate-spin" />}Найти Ollama
-            </button>
-            {models.length > 0 && (
-              <>
-                <select
-                  value={model}
-                  onChange={e => setModel(e.target.value)}
-                  className="px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm"
-                >
-                  {models.map(m => <option key={m} value={m} className="bg-slate-900">{m}</option>)}
-                </select>
-                <button
-                  onClick={useOllama}
-                  disabled={!model || ol === 'busy'}
-                  className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-sm font-medium flex items-center gap-2"
-                >
-                  {ol === 'busy' && <Loader2 className="w-4 h-4 animate-spin" />}Использовать
-                </button>
-              </>
-            )}
-          </div>
-          {statusLine(ol, olError, 'Локальная модель ответила. Открываю чат…')}
-        </section>
+        {/* Ollama работает на компьютере; в телефоне её нет. */}
+        {!android && (
+          <section className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-4 mb-4">
+            <h3 className="font-semibold flex items-center gap-2"><HardDrive className="w-4 h-4 text-cyan-300" />Без интернета: локальная модель через Ollama</h3>
+            <p className="text-xs text-slate-400 mt-1">Переписка не покидает компьютер. Нужна установленная Ollama (ollama.com/download) и скачанная модель, например «ollama pull qwen2.5:7b».</p>
+            <div className="flex flex-wrap gap-2 mt-3">
+              <button
+                onClick={findOllama}
+                disabled={ol === 'busy'}
+                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-50 text-sm flex items-center gap-2"
+              >
+                {ol === 'busy' && !models.length && <Loader2 className="w-4 h-4 animate-spin" />}Найти Ollama
+              </button>
+              {models.length > 0 && (
+                <>
+                  <select
+                    value={model}
+                    onChange={e => setModel(e.target.value)}
+                    className="px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm"
+                  >
+                    {models.map(m => <option key={m} value={m} className="bg-slate-900">{m}</option>)}
+                  </select>
+                  <button
+                    onClick={useOllama}
+                    disabled={!model || ol === 'busy'}
+                    className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-sm font-medium flex items-center gap-2"
+                  >
+                    {ol === 'busy' && <Loader2 className="w-4 h-4 animate-spin" />}Использовать
+                  </button>
+                </>
+              )}
+            </div>
+            {statusLine(ol, olError, 'Локальная модель ответила. Открываю чат…')}
+          </section>
+        )}
 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <button onClick={() => { markSetupDone(); onOpenProviders(); }} className="text-sm text-indigo-300 hover:text-indigo-200">Другие ИИ (OpenAI, Claude, Groq, DeepSeek…) →</button>

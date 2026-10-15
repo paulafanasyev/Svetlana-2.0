@@ -1,444 +1,297 @@
 package ru.svetlana.app
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
-import android.speech.tts.TextToSpeech
-import android.text.InputType
-import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
-import android.view.inputmethod.EditorInfo
-import android.widget.Button
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
-import java.util.Locale
-import java.util.concurrent.Executors
+import android.webkit.PermissionRequest
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
-/** Чат со Светланой: текст и голос, ответы вслух, действия на телефоне через «руки». */
+/**
+ * Светлана для Android: тот же интерфейс, что на сайте и в Windows (собранный dist из корня репозитория),
+ * в WebView по адресу https://appassets.androidplatform.net. Ключи, облако, голос и руки — через Bridge.
+ *
+ * WebView закрыт: без доступа к файлам и content://, без смешанного контента, с Safe Browsing, без отладки;
+ * чужие адреса открываются во внешнем браузере (только https, mailto, tel), микрофон — только своей странице.
+ */
 class MainActivity : Activity() {
-
     companion object {
-        private const val REQ_MIC = 7
-        private const val BG = 0xFF0F1020.toInt()
-        private const val BAR = 0xFF17183A.toInt()
-        private const val BOT = 0xFF26285A.toInt()
-        private const val USER = 0xFF4F46E5.toInt()
-        private const val WHITE = 0xFFFFFFFF.toInt()
-        private const val MUTED = 0xFFA5A8D0.toInt()
-        private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
-        private const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
+        const val HOST = "appassets.androidplatform.net"
+        const val ORIGIN = "https://$HOST"
+        private const val REQ_AUDIO = 41
+        private const val REQ_FILE = 42
+        private const val CONFIRM_TIMEOUT_MIN = 3L
+        private const val OUTDATED = "<html><body style='font-family:sans-serif;padding:24px;background:#0b1020;color:#fff'>" +
+            "<h2>Обновите Android System WebView</h2>" +
+            "<p>Светлане нужен свежий компонент WebView (или Chrome). Обновите его в Google Play и откройте приложение снова.</p>" +
+            "</body></html>"
     }
 
-    private val io = Executors.newSingleThreadExecutor()
-    private val history = ArrayList<Turn>()
-    private lateinit var list: LinearLayout
-    private lateinit var scroll: ScrollView
-    private lateinit var input: EditText
-    private lateinit var status: TextView
-    private lateinit var mic: Button
-    private lateinit var voiceToggle: Button
-    private var tts: TextToSpeech? = null
-    private var ttsReady = false
-    private var speakReplies = true
-    private var recognizer: SpeechRecognizer? = null
-    private var busy = false
+    val main = Handler(Looper.getMainLooper())
+    private lateinit var web: WebView
+    private var bridge: Bridge? = null
+    private var fileCallback: ValueCallback<Array<Uri>>? = null
+    private val audioWaiters = ArrayList<(Boolean) -> Unit>()
+    private val confirmLock = Any()
+    /** Открытое окно подтверждения (только главный поток). */
+    private var confirmDialog: AlertDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(buildUi())
-        speakReplies = getSharedPreferences("svetlana_ui", MODE_PRIVATE).getBoolean("speak", true)
-        updateVoiceToggle()
-        tts = TextToSpeech(this) { st ->
-            if (st == TextToSpeech.SUCCESS) {
-                tts?.setLanguage(Locale.forLanguageTag("ru-RU"))
-                ttsReady = true
+        WebView.setWebContentsDebuggingEnabled(false)
+        web = WebView(this)
+        val root = FrameLayout(this)
+        root.setBackgroundColor(0xFF0B1020.toInt())
+        root.addView(web, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        setContentView(root)
+        if (Build.VERSION.SDK_INT >= 30) {
+            // Сами отступаем от строки состояния, жестов и клавиатуры (Android 15 всегда как edge-to-edge).
+            window.setDecorFitsSystemWindows(false)
+            root.setOnApplyWindowInsetsListener { v, insets ->
+                val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime() or WindowInsets.Type.displayCutout())
+                v.setPadding(i.left, i.top, i.right, i.bottom)
+                WindowInsets.CONSUMED
             }
         }
-        bot("Привет! Я Светлана. Пишите или нажмите 🎤 и говорите.\n\nЯ умею отвечать на вопросы и делать дела на телефоне: «открой Telegram», «нажми Поиск», «пролистай вниз», «назад», «что на экране». Для действий в других приложениях включите «Руки».")
-        if (Keys.svetlana(this) == null) askKey()
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ||
+            !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+        ) {
+            web.loadDataWithBaseURL(null, OUTDATED, "text/html", "utf-8", null)
+            return
+        }
+        bridge = Bridge(this)
+        setupWeb()
+        web.loadUrl("$ORIGIN/index.html")
     }
 
-    override fun onResume() {
-        super.onResume()
-        refreshStatus()
-    }
+    @SuppressLint("SetJavaScriptEnabled", "RequiresFeature")
+    private fun setupWeb() {
+        val s = web.settings
+        s.javaScriptEnabled = true
+        s.domStorageEnabled = true
+        s.allowFileAccess = false
+        s.allowContentAccess = false
+        s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        s.setSupportMultipleWindows(false)
+        s.javaScriptCanOpenWindowsAutomatically = false
+        s.setGeolocationEnabled(false)
+        s.safeBrowsingEnabled = true
+        s.mediaPlaybackRequiresUserGesture = true
 
-    override fun onDestroy() {
-        tts?.shutdown()
-        recognizer?.destroy()
-        io.shutdownNow()
-        super.onDestroy()
-    }
+        val loader = WebViewAssetLoader.Builder()
+            .setDomain(HOST)
+            .addPathHandler("/", WebAssets(this))
+            .build()
 
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
-
-    private fun smallButton(label: String, onClick: () -> Unit): Button = Button(this).apply {
-        text = label
-        isAllCaps = false
-        textSize = 13f
-        setOnClickListener { onClick() }
-    }
-
-    private fun buildUi(): View {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(BG)
+        WebViewCompat.addDocumentStartJavaScript(web, Bridge.SHIM, setOf(ORIGIN))
+        WebViewCompat.addWebMessageListener(web, "SvetlanaNative", setOf(ORIGIN)) { _, message, sourceOrigin, isMainFrame, replyProxy ->
+            // Только главное окно нашего адреса: iframe и чужие страницы команды не подают.
+            if (!isMainFrame || sourceOrigin.toString().trimEnd('/') != ORIGIN) return@addWebMessageListener
+            val data = message.data ?: return@addWebMessageListener
+            bridge?.handle(data) { out -> replyProxy.postMessage(out) }
         }
 
-        val top = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(BAR)
-            setPadding(dp(16), dp(8), dp(8), dp(8))
-        }
-        val titleBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        titleBox.addView(TextView(this).apply {
-            text = "Светлана"
-            textSize = 20f
-            setTextColor(WHITE)
-            typeface = Typeface.DEFAULT_BOLD
-        })
-        status = TextView(this).apply {
-            textSize = 12f
-            setTextColor(MUTED)
-        }
-        titleBox.addView(status)
-        top.addView(titleBox, LinearLayout.LayoutParams(0, WRAP, 1f))
-        voiceToggle = smallButton("🔊") { toggleVoice() }
-        top.addView(voiceToggle)
-        top.addView(smallButton("Руки") { explainHands() })
-        top.addView(smallButton("Ключ") { askKey() })
-        root.addView(top, LinearLayout.LayoutParams(MATCH, WRAP))
+        web.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+                loader.shouldInterceptRequest(request.url)
 
-        scroll = ScrollView(this).apply { isFillViewport = true }
-        list = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-        }
-        scroll.addView(list, ViewGroup.LayoutParams(MATCH, WRAP))
-        root.addView(scroll, LinearLayout.LayoutParams(MATCH, 0, 1f))
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val u = request.url
+                if (u.scheme == "https" && u.host == HOST) return false
+                if (request.isForMainFrame && u.scheme in setOf("https", "mailto", "tel")) openExternal(u)
+                return true
+            }
 
-        val bottom = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(BAR)
-            setPadding(dp(6), dp(6), dp(6), dp(6))
+            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                recreate()
+                return true
+            }
         }
-        mic = smallButton("🎤") { listen() }
-        mic.textSize = 20f
-        input = EditText(this).apply {
-            hint = "Напишите Светлане…"
-            setTextColor(WHITE)
-            setHintTextColor(MUTED)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            imeOptions = EditorInfo.IME_ACTION_SEND
-            maxLines = 4
-            setOnEditorActionListener { _, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_SEND) {
-                    send(null)
+
+        web.webChromeClient = object : WebChromeClient() {
+            override fun onPermissionRequest(request: PermissionRequest) {
+                val res = request.resources
+                val audioOnly = res.isNotEmpty() && res.all { it == PermissionRequest.RESOURCE_AUDIO_CAPTURE }
+                if (!audioOnly || request.origin.toString().trimEnd('/') != ORIGIN) {
+                    request.deny()
+                    return
+                }
+                withAudio { ok -> if (ok) request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) else request.deny() }
+            }
+
+            override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
+                fileCallback?.onReceiveValue(null)
+                fileCallback = callback
+                return try {
+                    startActivityForResult(params.createIntent(), REQ_FILE)
                     true
-                } else {
+                } catch (e: ActivityNotFoundException) {
+                    fileCallback = null
                     false
                 }
             }
         }
-        val sendButton = smallButton("➤") { send(null) }
-        sendButton.textSize = 20f
-        bottom.addView(mic, LinearLayout.LayoutParams(dp(56), WRAP))
-        bottom.addView(input, LinearLayout.LayoutParams(0, WRAP, 1f))
-        bottom.addView(sendButton, LinearLayout.LayoutParams(dp(56), WRAP))
-        root.addView(bottom, LinearLayout.LayoutParams(MATCH, WRAP))
 
-        // Android 15 рисует окно под системными панелями: отступаем от них и от клавиатуры.
-        root.setOnApplyWindowInsetsListener { v, insets ->
-            if (Build.VERSION.SDK_INT >= 30) {
-                val b = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())
-                v.setPadding(b.left, b.top, b.right, b.bottom)
-            } else {
-                @Suppress("DEPRECATION")
-                v.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
-            }
-            insets
+        web.setDownloadListener { url, _, _, _, _ ->
+            val u = runCatching { Uri.parse(url) }.getOrNull()
+            if (u != null && u.scheme == "https") openExternal(u)
         }
-        return root
     }
 
-    private fun bubble(message: String, mine: Boolean) {
-        val tv = TextView(this).apply {
-            text = message
-            textSize = 16f
-            setTextColor(WHITE)
-            setTextIsSelectable(true)
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(14).toFloat()
-                setColor(if (mine) USER else BOT)
-            }
-            maxWidth = (resources.displayMetrics.widthPixels * 0.82).toInt()
+    private fun openExternal(u: Uri) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, u).addCategory(Intent.CATEGORY_BROWSABLE))
+        } catch (e: ActivityNotFoundException) {
+            // нечем открыть — просто ничего не делаем
         }
-        val lp = LinearLayout.LayoutParams(WRAP, WRAP).apply {
-            topMargin = dp(6)
-            gravity = if (mine) Gravity.END else Gravity.START
+    }
+
+    fun openAccessibilitySettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        } catch (e: ActivityNotFoundException) {
+            startActivity(Intent(Settings.ACTION_SETTINGS))
         }
-        list.addView(tv, lp)
-        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
     }
 
-    private fun bot(message: String) = bubble(message, false)
-
-    private fun setStatus(text: String) {
-        status.text = text
+    fun versionName(): String = try {
+        @Suppress("DEPRECATION")
+        packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+    } catch (e: Exception) {
+        ""
     }
 
-    private fun refreshStatus() {
-        val head = if (Keys.svetlana(this) != null) "голова ✓" else "голова: нужен ключ"
-        val hands = if (HandsService.instance != null) "руки ✓" else "руки выключены"
-        setStatus(if (busy) "Светлана думает…" else "$head · $hands")
-    }
-
-    private fun toggleVoice() {
-        speakReplies = !speakReplies
-        getSharedPreferences("svetlana_ui", MODE_PRIVATE).edit().putBoolean("speak", speakReplies).apply()
-        if (!speakReplies) tts?.stop()
-        updateVoiceToggle()
-    }
-
-    private fun updateVoiceToggle() {
-        voiceToggle.text = if (speakReplies) "🔊" else "🔇"
-    }
-
-    private fun speak(text: String) {
-        if (!speakReplies || !ttsReady) return
-        tts?.speak(text.take(3500), TextToSpeech.QUEUE_FLUSH, null, "svetlana")
-    }
-
-    private fun systemPrompt(): String {
-        val handsOn = HandsService.instance != null
-        val apps = try { Apps.labels(this).joinToString(", ") } catch (e: Exception) { "" }
-        val handsState = if (handsOn) "включены" else "выключены (можно только открывать приложения)"
-        return listOf(
-            "Ты Светлана в Android-приложении на телефоне владельца. Отвечай по-русски, коротко и по делу: ответ часто звучит вслух.",
-            "У тебя есть «руки»: ты можешь действовать на этом телефоне. Руки сейчас $handsState.",
-            "Если владелец просит что-то сделать на телефоне, в конце ответа добавь РОВНО один блок вида:",
-            "```json",
-            "{\"actions\":[{\"type\":\"open_app\",\"name\":\"Telegram\"},{\"type\":\"tap\",\"target\":\"Поиск\"},{\"type\":\"type\",\"text\":\"Мама\"}]}",
-            "```",
-            "Доступные шаги: open_app(name), tap(target: текст или подпись кнопки на экране), type(text, field необязательно), scroll(direction: down или up), back, home, recents, notifications, read_screen, wait(ms).",
-            "Не больше 12 шагов. Не придумывай кнопки, которых может не быть; если не знаешь, что на экране, сначала read_screen.",
-            "Отправку сообщений, звонки, оплату и удаление владелец подтверждает сам: приложение покажет ему список шагов.",
-            "Если действие на телефоне не нужно, блок json не добавляй.",
-            "Приложения на телефоне: $apps"
-        ).joinToString("\n")
-    }
-
-    private fun send(textArg: String?) {
-        val text = (textArg ?: input.text.toString()).trim()
-        if (text.isEmpty()) return
-        if (busy) {
-            bot("Секунду, ещё думаю над прошлым вопросом.")
+    /** Микрофон: спросить разрешение Android, если его ещё нет. Вызывать в главном потоке. */
+    fun withAudio(cb: (Boolean) -> Unit) {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            cb(true)
             return
         }
-        if (textArg == null) input.setText("")
-        bubble(text, true)
-
-        val quick = Steps.quick(text)
-        if (quick != null) {
-            runSteps(quick, Steps.risky(quick))
+        if (isFinishing || isDestroyed) {
+            cb(false)
             return
         }
-
-        val key = Keys.svetlana(this)
-        if (key == null) {
-            bot("Чтобы я могла отвечать, нужен ключ Светланы: кнопка «Ключ» вверху. Команды телефону («открой Telegram», «назад») работают и без ключа.")
-            return
-        }
-
-        busy = true
-        refreshStatus()
-        val past = ArrayList(history)
-        val system = systemPrompt()
-        io.execute {
-            val result = try {
-                Result.success(SvetlanaClient(key).chat(text, past, system))
-            } catch (e: Exception) {
-                Result.failure<String>(e)
-            }
-            runOnUiThread {
-                busy = false
-                refreshStatus()
-                result.onSuccess { reply ->
-                    history.add(Turn("user", text))
-                    history.add(Turn("assistant", reply))
-                    while (history.size > 20) history.removeAt(0)
-                    val (say, steps) = Steps.split(reply)
-                    if (say.isNotBlank()) {
-                        bot(say)
-                        speak(say)
-                    }
-                    if (steps.isNotEmpty()) runSteps(steps, true)
-                }.onFailure { e ->
-                    bot("⚠️ " + (e.message ?: "Не удалось связаться со Светланой"))
-                }
-            }
-        }
+        audioWaiters.add(cb)
+        if (audioWaiters.size == 1) requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_AUDIO)
     }
 
-    private fun runSteps(steps: List<Step>, confirm: Boolean) {
-        if (Steps.needsHands(steps) && HandsService.instance == null) {
-            bot("Для этого нужны «руки». Нажмите «Руки» вверху и включите «Светлана: руки» в Специальных возможностях.")
-            return
-        }
-        val plan = steps.mapIndexed { i, s -> "${i + 1}. ${s.title}" }.joinToString("\n")
-        val go: () -> Unit = {
-            if (steps.size > 1 || confirm) bot("Делаю:\n$plan")
-            val ctx = applicationContext
-            io.execute {
-                val report = Steps.run(ctx, steps)
-                runOnUiThread { bot(report) }
-            }
-        }
-        if (!confirm) {
-            go()
-            return
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Светлана хочет сделать на телефоне")
-            .setMessage(plan)
-            .setPositiveButton("Выполнить") { _, _ -> go() }
-            .setNegativeButton("Отмена") { _, _ -> bot("Хорошо, ничего не делаю.") }
-            .show()
-    }
-
-    private fun explainHands() {
-        val on = HandsService.instance != null
-        AlertDialog.Builder(this)
-            .setTitle(if (on) "Руки включены" else "Включить руки")
-            .setMessage(
-                "Руки позволяют мне по вашей команде нажимать кнопки, печатать, листать и читать экран в других приложениях.\n\n" +
-                    "Как включить: Настройки → Специальные возможности → Установленные приложения (или «Скачанные») → «Светлана: руки» → Вкл.\n\n" +
-                    "Если переключатель серый (Android 13+): Настройки → Приложения → Светлана → ⋮ → «Разрешить ограниченные настройки», потом снова включите.\n\n" +
-                    "Без вашей команды я ничего не делаю, а свои предложения сначала показываю списком."
-            )
-            .setPositiveButton("Открыть настройки") { _, _ ->
-                try {
-                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                } catch (e: Exception) {
-                    bot("Не получилось открыть настройки, откройте их вручную.")
-                }
-            }
-            .setNegativeButton("Закрыть", null)
-            .show()
-    }
-
-    private fun askKey() {
-        val field = EditText(this).apply {
-            hint = "Ключ Светланы"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setSingleLine()
-        }
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), 0)
-            addView(field, LinearLayout.LayoutParams(MATCH, WRAP))
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Ключ «Светлана Сервер»")
-            .setMessage("Тот же ключ, что в Windows-версии и на сайте. Хранится зашифрованным только на этом телефоне.")
-            .setView(box)
-            .setPositiveButton("Сохранить") { _, _ ->
-                val k = field.text.toString().trim()
-                if (k.isNotEmpty()) {
-                    try {
-                        Keys.setSvetlana(this, k)
-                        bot("Ключ сохранён. Спрашивайте!")
-                    } catch (e: Exception) {
-                        bot("Не удалось сохранить ключ: ${e.message ?: "ошибка хранилища"}")
-                    }
-                }
-                refreshStatus()
-            }
-            .setNeutralButton("Удалить ключ") { _, _ ->
-                Keys.setSvetlana(this, null)
-                refreshStatus()
-            }
-            .setNegativeButton("Отмена", null)
-            .show()
-    }
-
-    private fun listen() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
-            return
-        }
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            bot("На телефоне нет службы распознавания речи. Включите голосовой ввод Google (приложение «Google») или пишите текстом.")
-            return
-        }
-        tts?.stop()
-        val r = recognizer ?: SpeechRecognizer.createSpeechRecognizer(this).also { recognizer = it }
-        r.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {
-                setStatus("Слушаю…")
-                mic.text = "⏺"
-            }
-
-            override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onBufferReceived(buffer: ByteArray?) {}
-
-            override fun onEndOfSpeech() {
-                mic.text = "🎤"
-            }
-
-            override fun onError(error: Int) {
-                mic.text = "🎤"
-                refreshStatus()
-                if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
-                    setStatus("Не расслышала, нажмите 🎤 ещё раз")
-                } else if (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT) {
-                    bot("Для распознавания речи нужен интернет (или скачанный русский язык в настройках голосового ввода Google).")
-                } else {
-                    bot("Не получилось послушать (код $error). Попробуйте ещё раз.")
-                }
-            }
-
-            override fun onResults(results: Bundle?) {
-                mic.text = "🎤"
-                refreshStatus()
-                val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                if (!heard.isNullOrBlank()) send(heard)
-            }
-
-            override fun onPartialResults(partialResults: Bundle?) {}
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        })
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-        }
-        r.startListening(intent)
+    /** Всем, кто ждёт микрофон, ответить сразу: ни один запрос не висит бесконечно. */
+    private fun drainAudioWaiters(ok: Boolean) {
+        val waiting = audioWaiters.toList()
+        audioWaiters.clear()
+        waiting.forEach { runCatching { it(ok) } }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQ_MIC) {
-            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) listen()
-            else bot("Без доступа к микрофону я не услышу вас. Можно писать текстом.")
+        if (requestCode != REQ_AUDIO) return
+        val ok = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+        drainAudioWaiters(ok)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_FILE) return
+        fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data))
+        fileCallback = null
+    }
+
+    /**
+     * Нативное окно «ОК / Отмена» (как confirm в secure_ai.rs). Вызывается из фонового потока и ждёт ответа.
+     * Окна идут по одному; «ОК» не нажимается, если поверх лежит чужое окно (защита от подмены нажатия).
+     * Если человек не ответил за 3 минуты — окно закрывается, ответ «Отмена».
+     */
+    fun confirm(text: String): Boolean {
+        check(Looper.myLooper() != Looper.getMainLooper()) { "confirm() нельзя вызывать из главного потока" }
+        synchronized(confirmLock) {
+            val latch = CountDownLatch(1)
+            val ok = AtomicBoolean(false)
+            main.post {
+                if (isFinishing || isDestroyed) {
+                    latch.countDown()
+                    return@post
+                }
+                val d = AlertDialog.Builder(this)
+                    .setTitle("Светлана — подтверждение")
+                    .setMessage(text)
+                    .setCancelable(false)
+                    .setPositiveButton("ОК") { _, _ -> ok.set(true) }
+                    .setNegativeButton("Отмена", null)
+                    .create()
+                d.setOnDismissListener {
+                    if (confirmDialog === d) confirmDialog = null
+                    latch.countDown()
+                }
+                confirmDialog = d
+                d.show()
+                d.getButton(AlertDialog.BUTTON_POSITIVE)?.filterTouchesWhenObscured = true
+            }
+            if (!latch.await(CONFIRM_TIMEOUT_MIN, TimeUnit.MINUTES)) {
+                // Не оставляем висеть старое окно: иначе новое встанет за ним.
+                ok.set(false)
+                main.post { confirmDialog?.dismiss() }
+                return false
+            }
+            return ok.get()
         }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (::web.isInitialized && web.canGoBack()) {
+            web.goBack()
+        } else {
+            @Suppress("DEPRECATION")
+            super.onBackPressed()
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (::web.isInitialized) web.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::web.isInitialized) web.onResume()
+    }
+
+    override fun onDestroy() {
+        confirmDialog?.dismiss()
+        confirmDialog = null
+        drainAudioWaiters(false)
+        bridge?.close()
+        bridge = null
+        fileCallback?.onReceiveValue(null)
+        fileCallback = null
+        if (::web.isInitialized) web.destroy()
+        super.onDestroy()
     }
 }

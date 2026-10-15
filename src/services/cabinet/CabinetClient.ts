@@ -3,8 +3,10 @@
 // Токен хранится только зашифрованным (SecretStore). Раз в 10 минут отправляется «пульс»:
 // версия, флаги защиты и список установленных локальных моделей. Клиенты, финансы, голос,
 // переписка и ключи в кабинет НЕ передаются никогда: тело запроса собирается по белому списку.
+// Кабинет — для компьютера (платформа windows): в приложении для Android он выключен (CRMLauncher).
 import { getSecret, setSecret, deleteSecret, secretStorageMode } from '../security/SecretStore';
 import { loadTemplate } from '../voice/VoicePrint';
+import { APP_VERSION as CURRENT_VERSION } from '../../version';
 
 export const CABINET_ORIGINS = [
   'https://xn----8sba1acxdkgqms3b9euc.xn--p1ai', // мир-самозанятых.рф
@@ -18,7 +20,8 @@ const CODE_ALPHABET = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{12}$/;
 const TIMEOUT_MS = 10_000;
 const MAX_REPLY = 64 * 1024;
 export const HEARTBEAT_MS = 10 * 60_000;
-export const APP_VERSION = '2.0.0';
+/** Версия приложения — одна на всё приложение (src/version.ts). */
+export const APP_VERSION = CURRENT_VERSION;
 
 /** Каталог моделей ПК (id совпадают с каталогом сайта). Сопоставление с именами моделей Ollama. */
 const OLLAMA_TO_CATALOG: [RegExp, string][] = [

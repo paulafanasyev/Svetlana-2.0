@@ -1,9 +1,12 @@
 // Голос: распознавание речи. Web Speech API там, где он работает (Chrome, Edge, Android Chrome),
 // иначе — запись с микрофона и облачное распознавание (Whisper-совместимый API: Groq бесплатно, OpenAI).
-// В окне приложения на Windows (WebView2) и в Android WebView встроенное распознавание обычно недоступно,
-// поэтому при ошибке «network»/«not-allowed» переключаемся на облако, если оно настроено.
+// В окне приложения на Windows (WebView2) встроенное распознавание обычно недоступно, поэтому при
+// ошибке «network»/«not-allowed» переключаемся на облако, если оно настроено. В приложении для Android слушает
+// распознавание речи самого телефона (режим «native»), ключ не нужен.
 
 import { getSecret, setSecret } from '../security/SecretStore';
+import { isAndroidApp } from '../../platform';
+import { androidListen, androidStopListening } from '../AndroidBridge';
 
 export interface CloudSttConfig { baseUrl: string; apiKey: string; model: string }
 
@@ -72,12 +75,14 @@ function recorderAvailable(): boolean {
   return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia && typeof (globalThis as any).MediaRecorder !== 'undefined';
 }
 
-export type SttMode = 'web' | 'cloud' | 'none';
+export type SttMode = 'web' | 'cloud' | 'native' | 'none';
 export function sttSupport(): { web: boolean; cloud: boolean; recorder: boolean; mode: SttMode } {
-  const webBroken = storage()?.getItem(WEB_BROKEN_KEY) === '1';
-  const web = !!webRecognitionCtor() && !webBroken;
   const recorder = recorderAvailable();
   const cloud = recorder && !!getCloudStt();
+  // В приложении для Android всегда есть распознавание самого телефона.
+  if (isAndroidApp()) return { web: false, cloud, recorder, mode: 'native' };
+  const webBroken = storage()?.getItem(WEB_BROKEN_KEY) === '1';
+  const web = !!webRecognitionCtor() && !webBroken;
   return { web, cloud, recorder, mode: web ? 'web' : cloud ? 'cloud' : 'none' };
 }
 export function resetWebStt(): void { storage()?.removeItem?.(WEB_BROKEN_KEY); }
@@ -116,6 +121,23 @@ const WEB_ERRORS: Record<string, string> = {
   'audio-capture': 'Микрофон не найден.',
   aborted: '',
 };
+
+/** Распознавание речи телефона (приложение для Android). Одна фраза за раз, телефон сам ждёт паузу. */
+function listenNative(opts: ListenOptions): Listener {
+  let stopped = false;
+  opts.onPartial?.('Слушаю…');
+  void androidListen()
+    .then(text => {
+      if (text) opts.onFinal(text);
+      else if (!stopped) opts.onError?.('Не расслышала. Скажите ещё раз.');
+    })
+    .catch(e => {
+      const m = typeof e === 'string' ? e : (e as { message?: unknown } | null)?.message;
+      if (!stopped && m) opts.onError?.(String(m).slice(0, 300));
+    })
+    .finally(() => opts.onEnd?.());
+  return { mode: 'native', stop: () => { stopped = true; void androidStopListening().catch(() => undefined); } };
+}
 
 function listenWeb(opts: ListenOptions): Listener {
   const Ctor = webRecognitionCtor();
@@ -214,8 +236,9 @@ function listenCloud(opts: ListenOptions, cfg: CloudSttConfig): Listener {
   return { mode: 'cloud', stop: () => { stopped = true; finish(); } };
 }
 
-/** Начать слушать. В облачном режиме запись останавливается сама после паузы. */
+/** Начать слушать. В облачном и телефонном режиме запись останавливается сама после паузы. */
 export function listen(opts: ListenOptions): Listener | null {
+  if (isAndroidApp()) return listenNative({ ...opts, continuous: false });
   const s = sttSupport();
   if (s.web) return listenWeb(opts);
   const cfg = getCloudStt();

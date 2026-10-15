@@ -15,6 +15,8 @@ object SecretStore {
     private const val ALIAS = "svetlana_secret_v1"
     private const val PREFS = "svetlana_secure"
 
+    /** Синхронно: первое обращение из нескольких потоков не создаст два разных ключа с одним именем. */
+    @Synchronized
     private fun masterKey(): SecretKey {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (ks.getKey(ALIAS, null) as? SecretKey)?.let { return it }
@@ -29,17 +31,18 @@ object SecretStore {
         return gen.generateKey()
     }
 
+    @Synchronized
     fun put(ctx: Context, name: String, value: String?) {
         val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (value.isNullOrEmpty()) {
-            prefs.edit().remove(name).apply()
+            prefs.edit().remove(name).commit()
             return
         }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, masterKey())
         val data = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
         val packed = Base64.encodeToString(cipher.iv, Base64.NO_WRAP) + ":" + Base64.encodeToString(data, Base64.NO_WRAP)
-        prefs.edit().putString(name, packed).apply()
+        prefs.edit().putString(name, packed).commit()
     }
 
     fun get(ctx: Context, name: String): String? {
