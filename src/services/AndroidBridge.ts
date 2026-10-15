@@ -11,15 +11,18 @@ function inv(): Invoke {
   return f as Invoke;
 }
 
+type SimpleAction = 'back' | 'home' | 'recents' | 'notifications' | 'read_screen';
+
 export type HandsAction =
   | { type: 'open_app'; name: string }
   | { type: 'tap'; target: string }
   | { type: 'type'; text: string; field?: string }
   | { type: 'scroll'; direction: 'up' | 'down' }
-  | { type: 'back' | 'home' | 'recents' | 'notifications' | 'read_screen' }
+  | { type: SimpleAction }
   | { type: 'wait'; ms: number };
 
 export const MAX_ACTIONS = 12;
+const SIMPLE: readonly SimpleAction[] = ['back', 'home', 'recents', 'notifications', 'read_screen'];
 
 /** Распознать фразу голосом телефона (русский). Пустая строка — ничего не расслышала или остановлено. */
 export async function androidListen(): Promise<string> {
@@ -51,7 +54,9 @@ const str = (v: unknown, max: number): string | null => (typeof v === 'string' &
 function sanitize(a: unknown): HandsAction | null {
   if (!a || typeof a !== 'object') return null;
   const o = a as Record<string, unknown>;
-  switch (o.type) {
+  const type = typeof o.type === 'string' ? o.type : '';
+  if ((SIMPLE as readonly string[]).includes(type)) return { type: type as SimpleAction };
+  switch (type) {
     case 'open_app': { const name = str(o.name, 60); return name ? { type: 'open_app', name } : null; }
     case 'tap': { const target = str(o.target, 80); return target ? { type: 'tap', target } : null; }
     case 'type': {
@@ -61,8 +66,6 @@ function sanitize(a: unknown): HandsAction | null {
       return field ? { type: 'type', text, field } : { type: 'type', text };
     }
     case 'scroll': return { type: 'scroll', direction: o.direction === 'up' ? 'up' : 'down' };
-    case 'back': case 'home': case 'recents': case 'notifications': case 'read_screen':
-      return { type: o.type };
     case 'wait': {
       const ms = Number(o.ms);
       return { type: 'wait', ms: Number.isFinite(ms) ? Math.min(5000, Math.max(200, Math.round(ms))) : 1000 };

@@ -45,6 +45,7 @@ class MainActivity : Activity() {
         const val ORIGIN = "https://$HOST"
         private const val REQ_AUDIO = 41
         private const val REQ_FILE = 42
+        private const val CONFIRM_TIMEOUT_MIN = 3L
         private const val OUTDATED = "<html><body style='font-family:sans-serif;padding:24px;background:#0b1020;color:#fff'>" +
             "<h2>Обновите Android System WebView</h2>" +
             "<p>Светлане нужен свежий компонент WebView (или Chrome). Обновите его в Google Play и откройте приложение снова.</p>" +
@@ -57,6 +58,8 @@ class MainActivity : Activity() {
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private val audioWaiters = ArrayList<(Boolean) -> Unit>()
     private val confirmLock = Any()
+    /** Открытое окно подтверждения (только главный поток). */
+    private var confirmDialog: AlertDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -213,7 +216,8 @@ class MainActivity : Activity() {
 
     /**
      * Нативное окно «ОК / Отмена» (как confirm в secure_ai.rs). Вызывается из фонового потока и ждёт ответа.
-     * Окна идут по одному; кнопка «ОК» не нажимается, если поверх лежит чужое окно (защита от подмены нажатия).
+     * Окна идут по одному; «ОК» не нажимается, если поверх лежит чужое окно (защита от подмены нажатия).
+     * Если человек не ответил за 3 минуты — окно закрывается, ответ «Отмена».
      */
     fun confirm(text: String): Boolean {
         check(Looper.myLooper() != Looper.getMainLooper()) { "confirm() нельзя вызывать из главного потока" }
@@ -232,11 +236,20 @@ class MainActivity : Activity() {
                     .setPositiveButton("ОК") { _, _ -> ok.set(true) }
                     .setNegativeButton("Отмена", null)
                     .create()
-                d.setOnDismissListener { latch.countDown() }
+                d.setOnDismissListener {
+                    if (confirmDialog === d) confirmDialog = null
+                    latch.countDown()
+                }
+                confirmDialog = d
                 d.show()
                 d.getButton(AlertDialog.BUTTON_POSITIVE)?.filterTouchesWhenObscured = true
             }
-            if (!latch.await(3, TimeUnit.MINUTES)) return false
+            if (!latch.await(CONFIRM_TIMEOUT_MIN, TimeUnit.MINUTES)) {
+                // Не оставляем висеть старое окно: иначе новое встанет за ним.
+                ok.set(false)
+                main.post { confirmDialog?.dismiss() }
+                return false
+            }
             return ok.get()
         }
     }
@@ -262,6 +275,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        confirmDialog?.dismiss()
+        confirmDialog = null
         bridge?.close()
         bridge = null
         fileCallback?.onReceiveValue(null)

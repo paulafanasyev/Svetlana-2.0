@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Mic, MicOff, Volume2, VolumeX, Settings, X } from 'lucide-react';
+import { motion } from 'framer-motion';
 import { SVETLANA_IDENTITY, getAvatarStateOverlay, getAvatarStateFromEmotion } from '../services/AvatarIdentity';
-import { sttSupport, type Listener } from '../services/voice/SpeechEngine';
+import { Mic, MicOff } from 'lucide-react';
+import { listen, sttSupport, type Listener, type ListenOptions } from '../services/voice/SpeechEngine';
 import { listenVerified } from '../services/voice/VoiceGuard';
 import { hasWakeWord, normalizeSpoken, pickRussianVoice } from '../services/voice/VoiceText';
 import { speakText, stopSpeaking, ttsAvailable } from '../services/voice/Tts';
+import { isAndroidApp } from '../platform';
 
 type Emotion = 'neutral' | 'happy' | 'sad' | 'laughing' | 'crying' | 'surprised' | 'talking';
 
@@ -21,8 +22,8 @@ interface AvatarProps {
 
 export default function Avatar({ size = 'lg', interactive = false, emotion: externalEmotion, onEmotionChange }: AvatarProps) {
   const [currentEmotion, setCurrentEmotion] = useState<Emotion>(externalEmotion || 'neutral');
-  const [isTalking, setIsTalking] = useState(false);
-  const [isListening, setIsListening] = useState(false);
+  const [isTalking] = useState(false);
+  const [isListening] = useState(false);
   const [showControls, setShowControls] = useState(false);
 
   useEffect(() => {
@@ -34,11 +35,12 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
     onEmotionChange?.(emotion);
   };
 
+  // На телефоне аватар меньше: xl занимал бы весь экран.
   const sizeClasses = {
     sm: 'w-24 h-24',
     md: 'w-40 h-40',
-    lg: 'w-64 h-64',
-    xl: 'w-96 h-96',
+    lg: 'w-48 h-48 sm:w-64 sm:h-64',
+    xl: 'w-56 h-56 sm:w-96 sm:h-96',
   };
 
   return (
@@ -116,6 +118,20 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
   );
 }
 
+/** Не слушаем саму себя: в браузере и Windows идёт озвучка (в Android WebView speechSynthesis нет — там всегда false). */
+const selfSpeaking = (): boolean => typeof window !== 'undefined' && !!window.speechSynthesis?.speaking;
+
+/**
+ * Слушать голосовую команду. В браузере и Windows — с проверкой голоса владельца (VoiceGuard).
+ * В Android микрофон занимает распознавание телефона, сверить голос по той же записи нельзя, поэтому
+ * команда идёт как «голосовая»: любое действие CRM только после нажатия кнопки (ActionGate), данные
+ * CRM из голоса в ИИ не уходят — как и для голосовых команд на других платформах.
+ */
+export function listenCommand(opts: ListenOptions & { accept?: (text: string) => boolean }): Listener | null {
+  if (isAndroidApp()) return listen(opts);
+  return listenVerified(opts);
+}
+
 // Voice Control Component: Web Speech API where available, otherwise cloud speech-to-text (see services/voice).
 // Hands-free mode: always listening, reacts to phrases that start with «Светлана, …».
 // Every phrase is checked against the owner's voiceprint (VoiceGuard): other voices are ignored.
@@ -129,6 +145,7 @@ export function VoiceControl({ onCommand }: { onCommand?: (command: string) => v
   const tokenRef = useRef<object | null>(null);
   const onCommandRef = useRef(onCommand);
   const support = sttSupport();
+  const android = isAndroidApp();
 
   useEffect(() => { onCommandRef.current = onCommand; }, [onCommand]);
   useEffect(() => () => listenerRef.current?.stop(), []);
@@ -138,13 +155,13 @@ export function VoiceControl({ onCommand }: { onCommand?: (command: string) => v
     setTranscript('');
     const token = {};
     tokenRef.current = token;
-    const listener = listenVerified({
+    const listener = listenCommand({
       continuous,
       // не слушаем саму себя; в режиме «без рук» проверяем только фразы «Светлана, …»
-      accept: t => !(typeof window !== 'undefined' && window.speechSynthesis?.speaking) && (!continuous || hasWakeWord(t)),
+      accept: t => !selfSpeaking() && (!continuous || hasWakeWord(t)),
       onPartial: t => setTranscript(t),
       onFinal: t => {
-        if (typeof window !== 'undefined' && window.speechSynthesis?.speaking) return; // не слушаем саму себя
+        if (selfSpeaking()) return; // не слушаем саму себя
         setTranscript(t);
         if (continuous && !hasWakeWord(t)) return;
         const command = normalizeSpoken(t);
@@ -176,6 +193,10 @@ export function VoiceControl({ onCommand }: { onCommand?: (command: string) => v
     if (handsFree) stopListening();
     else { listenerRef.current?.stop(); start(true); }
   };
+
+  const modeText = support.mode === 'native'
+    ? 'Распознавание: голос телефона · действия вы подтверждаете кнопкой'
+    : `${support.mode === 'web' ? 'Распознавание: встроенное' : support.mode === 'cloud' ? 'Распознавание: облачное' : 'Распознавание не настроено: кнопка «Голос» внизу слева → настройки'} · только ваш голос`;
 
   return (
     <div className="flex flex-col items-center gap-4">
@@ -209,15 +230,12 @@ export function VoiceControl({ onCommand }: { onCommand?: (command: string) => v
         </p>
         {transcript && <p className="text-sm text-indigo-300 italic">"{transcript}"</p>}
         {error && <p className="text-xs text-amber-300">{error}</p>}
-        {support.web && (
+        {support.web && !android && (
           <button onClick={toggleHandsFree} className={`text-xs px-3 py-1 rounded-full border ${handsFree ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-white/5 border-white/10 text-sv-muted hover:bg-white/10'}`}>
             {handsFree ? 'Режим «Светлана, …» включён' : 'Включить «Светлана, …» без рук'}
           </button>
         )}
-        <p className="text-[11px] text-sv-muted opacity-60">
-          {support.mode === 'web' ? 'Распознавание: встроенное' : support.mode === 'cloud' ? 'Распознавание: облачное' : 'Распознавание не настроено: кнопка «Голос» внизу слева → настройки'}
-          {' · только ваш голос'}
-        </p>
+        <p className="text-[11px] text-sv-muted opacity-60">{modeText}</p>
       </div>
     </div>
   );
@@ -229,11 +247,13 @@ export function useSpeech() {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   useEffect(() => {
-    if (!ttsAvailable()) return;
-    const loadVoices = () => setVoices(window.speechSynthesis.getVoices());
+    // В Android говорит синтез самого телефона (Tts.ts), window.speechSynthesis там нет.
+    if (isAndroidApp() || !ttsAvailable() || typeof window === 'undefined' || !window.speechSynthesis) return;
+    const synth = window.speechSynthesis;
+    const loadVoices = () => setVoices(synth.getVoices());
     loadVoices();
-    window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
-    return () => window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
+    synth.addEventListener?.('voiceschanged', loadVoices);
+    return () => synth.removeEventListener?.('voiceschanged', loadVoices);
   }, []);
 
   const speak = (text: string, voiceIndex?: number) => {

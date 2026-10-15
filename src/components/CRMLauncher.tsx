@@ -46,7 +46,7 @@ export default function CRMLauncher() {
   const tab = (id: Section, label: string, Icon: typeof Users) => (
     <button
       onClick={() => setSection(id)}
-      className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold ${section === id ? 'bg-indigo-600 text-white' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}
+      className={`inline-flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-semibold ${section === id ? 'bg-indigo-600 text-white' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}
     >
       <Icon className="w-4 h-4" />{label}
     </button>
@@ -56,22 +56,23 @@ export default function CRMLauncher() {
     <>
       <ActionConfirmHost />
       {!section && (
-        <div className="fixed bottom-5 left-5 z-40 flex gap-2">
-          <button onClick={() => setSection('crm')} className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium shadow-lg shadow-indigo-900/40" aria-label="Открыть CRM">
+        // На узком экране телефона кнопки переносятся и не вылезают за край.
+        <div data-testid="crm-launcher" className="fixed bottom-3 left-3 sm:bottom-5 sm:left-5 z-40 flex flex-wrap gap-2 max-w-[calc(100vw-1.5rem)]">
+          <button onClick={() => setSection('crm')} className="flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium shadow-lg shadow-indigo-900/40" aria-label="Открыть CRM">
             <Users className="w-4 h-4" />CRM
           </button>
-          <button onClick={() => setSection('biz')} className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium shadow-lg shadow-emerald-900/40" aria-label="Открыть Бизнес">
+          <button onClick={() => setSection('biz')} className="flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium shadow-lg shadow-emerald-900/40" aria-label="Открыть Бизнес">
             <Briefcase className="w-4 h-4" />Бизнес
           </button>
           <VoiceButton />
         </div>
       )}
       {section && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/95 backdrop-blur-sm p-4 md:p-8" role="dialog" aria-modal="true" aria-label="CRM и бизнес">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/95 backdrop-blur-sm p-3 sm:p-4 md:p-8" role="dialog" aria-modal="true" aria-label="CRM и бизнес">
           <div className="max-w-7xl mx-auto space-y-5">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex items-start justify-between gap-3">
               <div className="flex flex-wrap gap-2">{tab('crm', 'CRM', Users)}{tab('biz', 'Бизнес', Briefcase)}{tab('booking', 'Запись', CalendarClock)}{tab('stats', 'Аналитика', BarChart3)}{tab('bank', 'Банк и ИНН', ShieldCheck)}{tab('cabinet', 'Кабинет', UserCircle)}</div>
-              <button onClick={close} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10" aria-label="Закрыть"><X className="w-4 h-4" />Закрыть</button>
+              <button onClick={close} className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10" aria-label="Закрыть"><X className="w-4 h-4" /><span className="hidden sm:inline">Закрыть</span></button>
             </div>
             {section === 'crm' ? <CRMPage /> : section === 'biz' ? <BizPage /> : section === 'stats' ? <AnalyticsPage /> : section === 'booking' ? <BookingPage /> : section === 'cabinet' ? <CabinetPage /> : <BankInnPage />}
           </div>

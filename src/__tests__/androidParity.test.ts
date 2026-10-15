@@ -9,11 +9,15 @@ import { localSttAvailable } from '../services/voice/LocalStt';
 import { sttSupport, listen } from '../services/voice/SpeechEngine';
 import { ttsAvailable, speakText } from '../services/voice/Tts';
 import { NATIVE_KEY_PLACEHOLDER } from '../services/security/NativeBridge';
+import { ANDROID_APK_URL, WINDOWS_SETUP_URL } from '../pages/DownloadPage';
+import { keyStorageHint } from '../components/FirstRunSetup';
 
 const read = (p: string) => readFileSync(resolve(p), 'utf8');
 const g = globalThis as any;
 
-function asAndroid(invoke = vi.fn(async () => null as unknown)) {
+type AnyInvoke = (...args: any[]) => Promise<unknown>;
+
+function asAndroid(invoke: AnyInvoke = vi.fn(async () => null)): AnyInvoke {
   g.__TAURI_INTERNALS__ = { invoke };
   g.__SVETLANA_PLATFORM__ = 'android';
   return invoke;
@@ -49,8 +53,16 @@ describe('platform', () => {
     expect(localSttAvailable()).toBe(false);
   });
 
-  it('the key placeholder does not say Windows', () => {
+  it('says where the key is stored on each platform', () => {
     expect(NATIVE_KEY_PLACEHOLDER).not.toMatch(/Windows/);
+    expect(keyStorageHint('android')).toContain('телефона');
+    expect(keyStorageHint('android')).not.toMatch(/Windows/);
+    expect(keyStorageHint('windows')).toContain('Windows');
+  });
+
+  it('the site offers both apps from the same release', () => {
+    expect(ANDROID_APK_URL).toMatch(/Svetlana-2\.0\/releases\/download\/app-v[\d.]+\/Svetlana-2\.0-Android\.apk$/);
+    expect(WINDOWS_SETUP_URL.replace('Windows-setup.exe', '')).toBe(ANDROID_APK_URL.replace('Android.apk', ''));
   });
 });
 
@@ -60,7 +72,7 @@ describe('android voice', () => {
     expect(sttSupport().mode).toBe('native');
     const finals: string[] = [];
     await new Promise<void>(done => {
-      const l = listen({ onFinal: t => finals.push(t), onEnd: () => done() });
+      const l = listen({ onFinal: t => { finals.push(t); }, onEnd: () => done() });
       expect(l?.mode).toBe('native');
     });
     expect(invoke).toHaveBeenCalledWith('voice_listen');
@@ -73,17 +85,24 @@ describe('android voice', () => {
     await new Promise<void>(done => speakText('Привет!', { force: true, onEnd: () => done() }));
     expect(invoke).toHaveBeenCalledWith('tts_speak', { text: expect.stringContaining('Привет') });
   });
+
+  it('never touches window.speechSynthesis on Android', () => {
+    const avatar = read('src/components/Avatar.tsx');
+    expect(avatar).toMatch(/if \(isAndroidApp\(\) \|\| !ttsAvailable\(\)/);
+    expect(read('src/components/VoiceButton.tsx')).toContain('listenCommand');
+  });
 });
 
 describe('android hands', () => {
   it('extracts only allowed steps and clamps values', () => {
-    const reply = 'Открываю.\n```json\n{"actions":[{"type":"open_app","name":"Telegram"},{"type":"shell","cmd":"rm -rf"},{"type":"wait","ms":999999},{"type":"scroll","direction":"sideways"}]}\n```';
+    const reply = 'Открываю.\n```json\n{"actions":[{"type":"open_app","name":"Telegram"},{"type":"shell","cmd":"rm -rf"},{"type":"wait","ms":999999},{"type":"scroll","direction":"sideways"},{"type":"home"}]}\n```';
     const r = extractActions(reply);
     expect(r.text).toBe('Открываю.');
     expect(r.actions).toEqual([
       { type: 'open_app', name: 'Telegram' },
       { type: 'wait', ms: 5000 },
       { type: 'scroll', direction: 'down' },
+      { type: 'home' },
     ]);
   });
 
@@ -112,13 +131,13 @@ describe('windows and android native parts stay identical', () => {
   it('same providers', () => {
     const r = /PROVIDERS: \[&str; \d+\] = \[([^\]]+)\]/.exec(rust)?.[1] ?? '';
     const k = /PROVIDERS = listOf\(([^)]+)\)/.exec(kt)?.[1] ?? '';
-    const names = (s: string) => [...s.matchAll(/"([a-z]+)"/g)].map(m => m[1]);
+    const names = (s: string) => (s.match(/"[a-z]+"/g) ?? []).map(x => x.slice(1, -1));
     expect(names(r).length).toBeGreaterThan(5);
     expect(names(k)).toEqual(names(r));
   });
 
   it('same fixed endpoints', () => {
-    const urls = [...rust.matchAll(/\.post\("(https:\/\/[^"]+)"\)/g)].map(m => m[1]);
+    const urls = (rust.match(/\.post\("https:\/\/[^"]+"\)/g) ?? []).map(x => x.slice(7, -2));
     expect(urls.length).toBeGreaterThanOrEqual(6);
     for (const u of urls) expect(kt).toContain(`"${u}"`);
     const core = /SVETLANA_CORE: &str = "([^"]+)"/.exec(rust)?.[1];
@@ -142,17 +161,23 @@ describe('windows and android native parts stay identical', () => {
   it('android host is locked down', () => {
     const main = read('android-hands/app/src/main/java/ru/svetlana/app/MainActivity.kt');
     const bridge = read('android-hands/app/src/main/java/ru/svetlana/app/Bridge.kt');
+    const steps = read('android-hands/app/src/main/java/ru/svetlana/app/Steps.kt');
     expect(main).toContain('MIXED_CONTENT_NEVER_ALLOW');
     expect(main).toContain('allowFileAccess = false');
     expect(main).toContain('isMainFrame');
     expect(main).toContain('setWebContentsDebuggingEnabled(false)');
+    expect(main).toContain('filterTouchesWhenObscured = true');
     expect(bridge).toContain('Команда недоступна на Android');
     expect(bridge).toContain('__TAURI_INTERNALS__');
-    expect(read('android-hands/app/src/main/java/ru/svetlana/app/Steps.kt')).toContain('ctx.packageName');
+    expect(bridge).toContain('Steps.resolveApps');
+    expect(steps).toContain('ctx.packageName');
+    expect(steps).toContain('на экране другое приложение');
+    expect(read('android-hands/app/build.gradle.kts')).not.toContain('"bash"');
   });
 
-  it('the android tab exists only in the app', () => {
+  it('the android tab exists only in the app, dev tab is hidden there', () => {
     const shell = read('src/DesktopShell.tsx');
     expect(shell).toMatch(/id: 'hands'[^\n]*androidOnly: true/);
+    expect(shell).toMatch(/id: 'dev'[^\n]*notOnAndroid: true/);
   });
 });
