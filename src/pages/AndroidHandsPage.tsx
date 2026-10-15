@@ -47,6 +47,8 @@ export default function AndroidHandsPage() {
     try {
       let actions: HandsAction[] | null = quickActions(t);
       if (!actions) {
+        // Настройки ИИ читаются асинхронно: ждём, чтобы сразу после запуска не сказать «ИИ не выбран».
+        await aiGateway.ready;
         const provider = aiGateway.getActiveProvider();
         if (!provider) { add('sv', HANDS_NO_AI); return; }
         if (provider.type === 'offline') { add('sv', HANDS_OFFLINE); return; }
