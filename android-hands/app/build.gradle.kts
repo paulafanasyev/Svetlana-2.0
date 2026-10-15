@@ -57,6 +57,10 @@ android {
         targetSdk = 35
         versionCode = 210
         versionName = "2.1.0"
+        // Модель речи (ONNX Runtime): только архитектуры реальных телефонов и эмулятора, чтобы APK был меньше.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
     }
 
     sourceSets {
@@ -90,4 +94,6 @@ tasks.named("preBuild") { dependsOn(copyWeb) }
 
 dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
+    // Распознавание речи на телефоне (GigaAM-v3, как в Windows-версии).
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 }
