@@ -15,7 +15,7 @@
     "pretest": "node scripts/ensure-native-deps.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "echo 'Lint not configured'",
+    "lint": "tsc --noEmit",
     "native:check": "node scripts/ensure-native-deps.mjs --dry-run"
   },
   "dependencies": {
