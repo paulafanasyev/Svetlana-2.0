@@ -9,6 +9,8 @@
 // компьютер без явного выбора облачного провайдера пользователем (см. fallbackCandidates).
 // Вызовы инструментов от модели проходят строгую проверку по схеме инструмента (security/ToolCallSchema).
 // «★ Светлана Сервер» (id 'svetlana') — единая Светлана на мир-самозанятых.рф в полном режиме (см. SvetlanaCore).
+// Запись ключа асинхронна (в Windows — после окна подтверждения): addProvider/updateProvider/removeProvider возвращают
+// промис, и проверку соединения нужно делать только после него.
 import { getSecret, setSecret } from './security/SecretStore';
 import { safeJsonParse, stripControl, MAX_BYTES } from './security/SafeData';
 import { isNativeApp, nativeSetSecret, nativeHasSecret, nativeCloudChat, NATIVE_KEY_PLACEHOLDER } from './security/NativeBridge';
@@ -220,34 +222,42 @@ class AIGateway {
     }
   }
 
-  private storeKey(p: AIProvider) {
+  /** Записать ключ провайдера. Промис завершается, когда ключ реально записан (или с ошибкой). */
+  private storeKey(p: AIProvider): Promise<void> {
+    const name = secretName(p.id);
     if (isNativeApp()) {
       // Отметка «ключ есть» из интерфейса никогда не перезаписывает настоящий ключ.
-      if (p.apiKey === NATIVE_KEY_PLACEHOLDER) return;
+      if (p.apiKey === NATIVE_KEY_PLACEHOLDER) return Promise.resolve();
       const value = p.apiKey ?? null;
       p.apiKey = value ? NATIVE_KEY_PLACEHOLDER : undefined;
-      void nativeSetSecret(secretName(p.id), value).catch(e => console.error('Не удалось сохранить ключ в хранилище Windows', e));
-      void setSecret(secretName(p.id), null);
-      return;
+      void setSecret(name, null);
+      return nativeSetSecret(name, value).catch(async (e) => {
+        console.error('Не удалось сохранить ключ в хранилище Windows', e);
+        // Отметка должна совпадать с хранилищем (например, пользователь нажал «Отмена» в окне Windows).
+        try { p.apiKey = (await nativeHasSecret(name)) ? NATIVE_KEY_PLACEHOLDER : undefined; } catch { p.apiKey = undefined; }
+        throw e;
+      });
     }
-    void setSecret(secretName(p.id), p.apiKey ?? null);
+    return Promise.resolve(setSecret(name, p.apiKey ?? null)).then(() => undefined);
   }
 
-  addProvider(provider: AIProvider) {
+  /** Добавить провайдера. Дождитесь промиса перед проверкой соединения: ключ записывается асинхронно. */
+  addProvider(provider: AIProvider): Promise<void> {
     const p = sanitizeProvider(provider);
     if (!p) throw new Error('Некорректные настройки провайдера (адрес или идентификатор)');
     this.providers.set(p.id, p);
     if (p.enabled) {
       this.activeProvider = p.id;
     }
-    this.storeKey(p);
+    const saved = this.storeKey(p);
     this.saveToStorage();
+    return saved;
   }
 
-  removeProvider(id: string) {
+  removeProvider(id: string): Promise<void> {
     this.providers.delete(id);
-    void setSecret(secretName(id), null);
-    if (isNativeApp()) void nativeSetSecret(secretName(id), null).catch(() => undefined);
+    const jobs: Promise<unknown>[] = [Promise.resolve(setSecret(secretName(id), null))];
+    if (isNativeApp()) jobs.push(nativeSetSecret(secretName(id), null));
     if (this.activeProvider === id) {
       this.activeProvider = null;
       for (const [pid, p] of this.providers) {
@@ -258,20 +268,21 @@ class AIGateway {
       }
     }
     this.saveToStorage();
+    return Promise.all(jobs).then(() => undefined);
   }
 
-  updateProvider(id: string, updates: Partial<AIProvider>) {
+  updateProvider(id: string, updates: Partial<AIProvider>): Promise<void> {
     const provider = this.providers.get(id);
-    if (provider) {
-      const next = sanitizeProvider({ ...provider, ...updates, id });
-      if (!next) throw new Error('Некорректные настройки провайдера (адрес)');
-      Object.assign(provider, next);
-      if (updates.enabled) {
-        this.activeProvider = id;
-      }
-      if ('apiKey' in updates) this.storeKey(provider);
-      this.saveToStorage();
+    if (!provider) return Promise.resolve();
+    const next = sanitizeProvider({ ...provider, ...updates, id });
+    if (!next) throw new Error('Некорректные настройки провайдера (адрес)');
+    Object.assign(provider, next);
+    if (updates.enabled) {
+      this.activeProvider = id;
     }
+    const saved = 'apiKey' in updates ? this.storeKey(provider) : Promise.resolve();
+    this.saveToStorage();
+    return saved;
   }
 
   getProvider(id: string): AIProvider | undefined {
@@ -298,7 +309,7 @@ class AIGateway {
     await this.ready;
     const provider = providerId ? this.providers.get(providerId) : this.getActiveProvider();
     if (!provider) {
-      throw new Error('No AI provider configured');
+      throw new Error('ИИ не настроен: откройте «Настройка» или «Модели ИИ»');
     }
 
     try {
@@ -424,23 +435,30 @@ class AIGateway {
   }
 
   private async callOllama(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    const response = await fetch(`${provider.endpoint}/api/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        messages,
-        stream: false,
-        options: {
-          temperature: options?.temperature ?? 0.7,
+    let response: Response;
+    try {
+      response = await fetch(`${provider.endpoint}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-      }),
-    });
+        body: JSON.stringify({
+          model: provider.model,
+          messages,
+          stream: false,
+          options: {
+            temperature: options?.temperature ?? 0.7,
+          },
+        }),
+      });
+    } catch {
+      throw new Error(`Ollama не запущена на ${provider.endpoint}. Установите её (ollama.com/download) или выберите другой ИИ в «Настройке».`);
+    }
 
     if (!response.ok) {
-      throw new Error(`Локальный сервер Ollama не отвечает на ${provider.endpoint}. Запустите Ollama с моделью ${provider.model}`);
+      throw new Error(response.status === 404
+        ? `В Ollama нет модели ${provider.model}. Скачайте её (ollama pull ${provider.model}) или выберите другую в «Настройке».`
+        : `Локальный сервер Ollama ответил ошибкой ${response.status} на ${provider.endpoint}.`);
     }
 
     const data = await response.json();
@@ -610,9 +628,9 @@ class AIGateway {
 
     try {
       const testMessages: ChatMessage[] = [
-        { role: 'user', content: 'Hello' }
+        { role: 'user', content: 'Привет! Это проверка связи.' }
       ];
-      await this.chat(testMessages, undefined, providerId);
+      await this.chat(testMessages, { max_tokens: 50 }, providerId);
       return true;
     } catch (error) {
       console.error(`Connection test failed for ${providerId}:`, error);
@@ -629,7 +647,7 @@ class AIGateway {
     await this.ready;
     const provider = providerId ? this.providers.get(providerId) : this.getActiveProvider();
     if (!provider) {
-      throw new Error('No AI provider configured');
+      throw new Error('ИИ не настроен: откройте «Настройка» или «Модели ИИ»');
     }
 
     const response = await this.chat(messages, options, providerId);
