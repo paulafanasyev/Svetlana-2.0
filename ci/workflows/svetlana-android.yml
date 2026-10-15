@@ -1,5 +1,3 @@
-# Готовая замена для .github/workflows/svetlana-android.yml (см. ci/workflows/README.md).
-# Действия закреплены по SHA; модульные тесты идут перед сборкой APK.
 name: svetlana-android-hands
 on:
   push:
@@ -10,7 +8,6 @@ on:
     paths:
       - "android-hands/**"
       - ".github/workflows/svetlana-android.yml"
-      - "ci/workflows/svetlana-android.yml"
   workflow_dispatch: {}
 
 permissions:
@@ -20,7 +17,6 @@ concurrency:
   group: android-${{ github.ref }}
   cancel-in-progress: true
 
-# Сборка APK для телефона. Проверка на эмуляторе — отдельно, в svetlana-android-emulator.yml (x86_64 + KVM).
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -32,7 +28,6 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      # Интерфейс в APK собирается тем же Node 22, что и сайт.
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
