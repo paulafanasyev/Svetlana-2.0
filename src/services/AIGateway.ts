@@ -3,6 +3,9 @@
 // Безопасность: API-ключи хранятся зашифрованными (SecretStore), в localStorage — только настройки без ключей.
 // В приложении для Windows ключи облачных ИИ лежат в Диспетчере учётных данных Windows и вообще не
 // попадают в JavaScript: запрос в облако делает нативная часть (security/NativeBridge, src-tauri/src/secure_ai.rs).
+// В приложении для Android то же самое делает SecureAi.kt (Android Keystore). В обоих приложениях облако —
+// ТОЛЬКО через нативную часть (сторонний прокси не используется): окно подтверждения не обойти.
+// На телефоне локальные модели компьютера (127.0.0.1) не вызываются вообще.
 // Адреса проверяются: локальные модели — только 127.0.0.1/localhost, облачные — только официальные адреса,
 // прокси — только свой сервер. Подменённый адрес не получит ни ключ, ни переписку.
 // Локальная модель при ошибке НИКОГДА не переключается на облако сама: переписка не покидает
@@ -17,6 +20,7 @@ import { isNativeApp, nativeSetSecret, nativeHasSecret, nativeCloudChat, NATIVE_
 import { stripUntrusted } from './security/Untrusted';
 import { validateToolCalls } from './security/ToolCallSchema';
 import { SVETLANA_CORE_ORIGIN, SVETLANA_CORE_MODEL, toSvetlanaCoreBody, contentOf, callSvetlanaCoreWeb } from './SvetlanaCore';
+import { isAndroidApp } from '../platform';
 
 export interface AIProvider {
   id: string;
@@ -52,6 +56,9 @@ export interface StructuredToolCall {
   requestId: string;
   timestamp: number;
 }
+
+/** На телефоне локальные модели компьютера не вызываются: переписка не уходит на 127.0.0.1 телефона. */
+export const OFFLINE_NOT_ON_ANDROID = 'На телефоне локальные модели компьютера не работают: нажмите «Настройка» и подключите «★ Светлана Сервер» или облачный ИИ.';
 
 const DEFAULT_OFFLINE_PROVIDERS: AIProvider[] = [
   {
@@ -151,7 +158,8 @@ class AIGateway {
     for (const p of DEFAULT_OFFLINE_PROVIDERS) {
       this.providers.set(p.id, { ...p });
     }
-    this.activeProvider = 'ollama';
+    // На телефоне локальная модель компьютера по умолчанию не выбирается.
+    this.activeProvider = isAndroidApp() ? null : 'ollama';
   }
 
   setProxyUrl(url: string | null) {
@@ -198,12 +206,12 @@ class AIGateway {
     const native = isNativeApp();
     for (const p of this.providers.values()) {
       if (native) {
-        // Приложение для Windows: ключ переносим в хранилище Windows и стираем из браузерного хранилища;
+        // Приложение (Windows или Android): ключ переносим в хранилище системы и стираем из браузерного хранилища;
         // в памяти JavaScript остаётся только отметка «ключ есть».
         const name = secretName(p.id);
         const legacy = p.apiKey && p.apiKey !== NATIVE_KEY_PLACEHOLDER ? p.apiKey : await getSecret(name);
         if (legacy) {
-          try { await nativeSetSecret(name, legacy); await setSecret(name, null); } catch (e) { console.error('Не удалось перенести ключ в хранилище Windows', e); }
+          try { await nativeSetSecret(name, legacy); await setSecret(name, null); } catch (e) { console.error('Не удалось перенести ключ в хранилище приложения', e); }
         }
         p.apiKey = undefined;
         try { if (await nativeHasSecret(name)) p.apiKey = NATIVE_KEY_PLACEHOLDER; } catch { /* нет хранилища */ }
@@ -211,6 +219,17 @@ class AIGateway {
       }
       if (!p.apiKey) { const k = await getSecret(secretName(p.id)); if (k) p.apiKey = k; }
     }
+    if (isAndroidApp()) this.dropOfflineOnAndroid();
+  }
+
+  /** Телефон: если активна локальная модель компьютера — берём первый включённый облачный с ключом, иначе «не выбран». */
+  private dropOfflineOnAndroid() {
+    const cur = this.getActiveProvider();
+    if (cur && cur.type !== 'offline') return;
+    const order = ['svetlana', ...FALLBACK_ORDER];
+    const online = [...this.providers.values()].filter(p => p.type === 'online' && p.enabled && !!p.apiKey);
+    online.sort((a, b) => (order.indexOf(a.id) + 100) % 100 - (order.indexOf(b.id) + 100) % 100);
+    this.activeProvider = online[0]?.id ?? null;
   }
 
   private saveToStorage() {
@@ -232,8 +251,8 @@ class AIGateway {
       p.apiKey = value ? NATIVE_KEY_PLACEHOLDER : undefined;
       void setSecret(name, null);
       return nativeSetSecret(name, value).catch(async (e) => {
-        console.error('Не удалось сохранить ключ в хранилище Windows', e);
-        // Отметка должна совпадать с хранилищем (например, пользователь нажал «Отмена» в окне Windows).
+        console.error('Не удалось сохранить ключ в хранилище приложения', e);
+        // Отметка должна совпадать с хранилищем (например, пользователь нажал «Отмена» в окне подтверждения).
         try { p.apiKey = (await nativeHasSecret(name)) ? NATIVE_KEY_PLACEHOLDER : undefined; } catch { p.apiKey = undefined; }
         throw e;
       });
@@ -333,19 +352,22 @@ class AIGateway {
   }
 
   private async callProvider(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
+    // Телефон: локальные модели компьютера не вызываем вообще (до любого fetch).
+    if (provider.type === 'offline' && isAndroidApp()) throw new Error(OFFLINE_NOT_ON_ANDROID);
     // Повторная проверка адреса перед каждым запросом: объект провайдера мог быть изменён в обход updateProvider.
     validateEndpoint(provider);
-    // Единая Светлана: всегда напрямую на свой сервер (без стороннего прокси), в Windows — через нативную часть.
+    // Единая Светлана: всегда напрямую на свой сервер (без стороннего прокси), в приложениях — через нативную часть.
     if (provider.id === 'svetlana') {
       return isNativeApp() ? this.callNative(provider, messages, options) : this.callSvetlanaCore(provider, messages);
+    }
+    // Приложения (Windows и Android): облачный запрос делает нативная часть, ключ в JavaScript не попадает.
+    // Прокси в приложениях не используется: иначе переписка ушла бы мимо окна подтверждения.
+    if (provider.type === 'online' && isNativeApp()) {
+      return this.callNative(provider, messages, options);
     }
     const proxy = this.getProxyUrl();
     if ((proxy || provider.useProxy) && provider.type === 'online') {
       return this.callViaProxy(proxy || '/api/ai-proxy', provider, messages, options);
-    }
-    // Приложение для Windows: облачный запрос делает нативная часть, ключ в JavaScript не попадает.
-    if (provider.type === 'online' && isNativeApp()) {
-      return this.callNative(provider, messages, options);
     }
 
     switch (provider.id) {
@@ -376,13 +398,13 @@ class AIGateway {
     }
   }
 
-  /** Единая Светлана из веб-версии (в Windows — callNative). */
+  /** Единая Светлана из веб-версии (в приложениях — callNative). */
   private async callSvetlanaCore(provider: AIProvider, messages: ChatMessage[]): Promise<AIResponse> {
     const content = await callSvetlanaCoreWeb(provider.apiKey || '', toSvetlanaCoreBody(messages));
     return { content, provider: provider.name, model: provider.model };
   }
 
-  /** Облачный запрос через нативную часть Windows-приложения (без ключа в теле запроса). */
+  /** Облачный запрос через нативную часть приложения (без ключа в теле запроса). */
   private async callNative(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
     const systemMessage = messages.find(m => m.role === 'system');
     const chatMessages = messages.filter(m => m.role !== 'system');
