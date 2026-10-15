@@ -5,6 +5,23 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-10-15
+
+Приложение для Windows (Tauri), подробности в docs/WINDOWS.md.
+
+### Added
+- Главное окно «Чат со Светланой» (DesktopShell); схемы и демо разработки — во вкладке «Для разработчика» с предупреждением
+- Мастер первого запуска: ★ Светлана Сервер по ключу или Ollama с уже скачанной моделью, пробный запрос
+- Русский установщик NSIS, автоустановка WebView2, единая версия (src/version.ts)
+
+### Fixed
+- В сборку для Windows больше не попадает веб-CSP, блокирующая вызовы нативной части (ipc:)
+- Ключ ИИ сохраняется до проверки соединения; отмена в окне Windows не оставляет ложное «Ключ есть»
+- Понятные ошибки Ollama (не запущена / нет модели) и сервера Светланы (ключ, связь)
+
+### Security
+- Нативная часть: размер запроса проверяется до разбора схемы, ответ читается по частям с обрывом на 8 МБ
+
 ## [Unreleased]
 
 ### Added
@@ -129,6 +146,7 @@
 
 ---
 
+[2.1.0]: https://github.com/paulafanasyev/Svetlana-2.0/pull/39
 [Unreleased]: https://github.com/paulafanasyev/Svetlana-2.0/compare/v2.0.0...HEAD
 [2.0.0]: https://github.com/paulafanasyev/Svetlana-2.0/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/paulafanasyev/Svetlana-2.0/releases/tag/v1.0.0

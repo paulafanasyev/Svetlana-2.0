@@ -1,5 +1,6 @@
 // Мастер первого запуска: один понятный шаг до первого ответа.
 // 1) «★ Светлана Сервер»: вставить ключ → ключ уходит в хранилище (в Windows — Диспетчер учётных данных) → пробный запрос.
+//    Ключ сохраняется один раз: если пробный запрос не прошёл, «Повторить проверку» не спрашивает ключ заново.
 // 2) Локально через Ollama: проверяем, запущена ли Ollama, и берём УЖЕ скачанную модель (имя по умолчанию
 //    svetlana:latest в открытом каталоге Ollama нет, поэтому не надеемся на него).
 import { useState } from 'react';
@@ -15,7 +16,7 @@ const PING = 'Привет! Это проверка связи, ответь о�
 export function isSetupDone(): boolean {
   try { return localStorage.getItem(DONE_KEY) === '1'; } catch { return true; }
 }
-function markDone() {
+export function markSetupDone() {
   try { localStorage.setItem(DONE_KEY, '1'); } catch { /* нет хранилища */ }
 }
 /** Ошибки нативной части приходят строкой, остальные — Error. */
@@ -24,6 +25,16 @@ export const errorText = (e: unknown): string => {
   const s = typeof m === 'string' && m ? m : String(e ?? '');
   return s.slice(0, 300) || 'Неизвестная ошибка';
 };
+
+/** Понятный текст для частых ошибок подключения к серверу Светланы. */
+export function explainServerError(raw: string): string {
+  if (/Отменено пользователем/.test(raw)) return 'В окне Windows нажата «Отмена». Нажми «Повторить проверку» и разреши запрос.';
+  if (/\b(401|403)\b/.test(raw)) return 'Сервер Светланы не принял ключ. Проверь его и вставь заново.';
+  if (/\b(429)\b/.test(raw)) return 'Сервер просит подождать: слишком много запросов. Попробуй через минуту.';
+  if (/\b(5\d\d)\b/.test(raw)) return `Сервер Светланы сейчас не отвечает (${raw.match(/\b5\d\d\b/)?.[0]}). Попробуй позже.`;
+  if (/error sending request|dns|connect|Failed to fetch|NetworkError/i.test(raw)) return 'Нет связи с сервером Светланы. Проверь интернет.';
+  return raw;
+}
 
 /** Модели, уже скачанные в Ollama на этом компьютере. Бросает ошибку, если Ollama не отвечает. */
 export async function listOllamaModels(endpoint = OLLAMA, timeoutMs = 3000, f: typeof fetch = fetch): Promise<string[]> {
@@ -63,6 +74,7 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
 }) {
   const native = isNativeApp();
   const [key, setKey] = useState('');
+  const [keySaved, setKeySaved] = useState(false);
   const [sv, setSv] = useState<Status>('idle');
   const [svError, setSvError] = useState('');
   const [ol, setOl] = useState<Status>('idle');
@@ -70,26 +82,31 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState('');
 
-  const finish = () => { markDone(); setTimeout(onReady, 700); };
-  const skip = () => { markDone(); onClose(); };
+  const finish = () => { markSetupDone(); setTimeout(onReady, 700); };
+  const skip = () => { markSetupDone(); onClose(); };
+  const retryOnly = keySaved && !key.trim();
 
   const connectServer = async () => {
-    if (!key.trim() || sv === 'busy') return;
+    if (sv === 'busy' || (!key.trim() && !keySaved)) return;
     setSv('busy');
     setSvError('');
     try {
-      await aiGateway.addProvider({
-        id: 'svetlana', name: '★ Светлана Сервер (единая)', type: 'online',
-        endpoint: SVETLANA_CORE_ORIGIN, model: SVETLANA_CORE_MODEL, enabled: true, apiKey: key.trim(),
-      });
-      setKey('');
+      if (key.trim()) {
+        // Ключ сохраняем один раз (в Windows — одно окно подтверждения), повторная проверка его не трогает.
+        await aiGateway.addProvider({
+          id: 'svetlana', name: '★ Светлана Сервер (единая)', type: 'online',
+          endpoint: SVETLANA_CORE_ORIGIN, model: SVETLANA_CORE_MODEL, enabled: true, apiKey: key.trim(),
+        });
+        setKey('');
+        setKeySaved(true);
+      }
       aiGateway.setActiveProvider('svetlana');
       await aiGateway.chat([{ role: 'user', content: PING }], { max_tokens: 50 }, 'svetlana');
       setSv('ok');
       finish();
     } catch (e) {
       setSv('error');
-      setSvError(errorText(e));
+      setSvError(explainServerError(errorText(e)));
     }
   };
 
@@ -102,14 +119,14 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
       setModel(pickOllamaModel(list) ?? '');
       if (!list.length) {
         setOl('error');
-        setOlError('Ollama запущена, но моделей нет. В командной строке: ollama pull qwen2.5:7b (или qwen2.5:1.5b для слабого ПК), затем нажми «Найти» ещё раз.');
+        setOlError('Ollama запущена, но моделей нет. В командной строке: ollama pull qwen2.5:7b (или qwen2.5:1.5b для слабого ПК), затем нажми «Найти Ollama» ещё раз.');
         return;
       }
       setOl('idle');
     } catch {
       setModels([]);
       setOl('error');
-      setOlError('Ollama на этом ПК не отвечает. Установи её с сайта ollama.com/download, запусти, выполни ollama pull qwen2.5:7b и нажми «Найти» ещё раз.');
+      setOlError('Ollama на этом ПК не отвечает. Установи её с сайта ollama.com/download, запусти, выполни ollama pull qwen2.5:7b и нажми «Найти Ollama» ещё раз.');
     }
   };
 
@@ -154,7 +171,7 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
         <section className="rounded-xl border border-indigo-500/40 bg-indigo-950/30 p-4 mb-4">
           <h3 className="font-semibold flex items-center gap-2"><Key className="w-4 h-4 text-indigo-300" />★ Светлана Сервер (рекомендуется)</h3>
           <p className="text-xs text-slate-400 mt-1">Единая обученная Светлана на мир-самозанятых.рф, полный режим. Нужен ключ ASSISTANT_KEY_SVETLANA2 с сервера.
-            {native ? ' Ключ сохранится в Диспетчере учётных данных Windows: приложение спросит подтверждение в окне Windows, затем разрешение на пробный запрос.' : ' Ключ хранится в зашифрованном хранилище браузера.'}
+            {native ? ' Ключ сохранится в Диспетчере учётных данных Windows. Будет два окна Windows: «Сохранить ключ?» и «Разрешить отправить переписку?», нажми ОК в обоих.' : ' Ключ хранится в зашифрованном хранилище браузера.'}
           </p>
           <div className="flex gap-2 mt-3">
             <input
@@ -162,17 +179,17 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
               value={key}
               onChange={e => setKey(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && connectServer()}
-              placeholder="ключ Светланы"
+              placeholder={keySaved ? 'ключ сохранён (можно вставить другой)' : 'ключ Светланы'}
               autoComplete="off"
               className="flex-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-indigo-500"
               disabled={sv === 'busy'}
             />
             <button
               onClick={connectServer}
-              disabled={!key.trim() || sv === 'busy'}
+              disabled={(!key.trim() && !keySaved) || sv === 'busy'}
               className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm font-medium flex items-center gap-2"
             >
-              {sv === 'busy' && <Loader2 className="w-4 h-4 animate-spin" />}Подключить
+              {sv === 'busy' && <Loader2 className="w-4 h-4 animate-spin" />}{retryOnly ? 'Повторить проверку' : 'Подключить'}
             </button>
           </div>
           {statusLine(sv, svError, 'Светлана ответила. Открываю чат…')}
@@ -212,10 +229,10 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
         </section>
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <button onClick={onOpenProviders} className="text-sm text-indigo-300 hover:text-indigo-200">Другие ИИ (OpenAI, Claude, Groq, DeepSeek…) →</button>
+          <button onClick={() => { markSetupDone(); onOpenProviders(); }} className="text-sm text-indigo-300 hover:text-indigo-200">Другие ИИ (OpenAI, Claude, Groq, DeepSeek…) →</button>
           <button onClick={skip} className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sm">Пока пропустить</button>
         </div>
-        <p className="text-[11px] text-slate-500 mt-3">Команды CRM («Сводка CRM») работают и без ИИ.</p>
+        <p className="text-[11px] text-slate-500 mt-3">Команды CRM («Сводка CRM») работают и без ИИ. Мастер можно открыть снова кнопкой «Настройка».</p>
       </div>
     </div>
   );

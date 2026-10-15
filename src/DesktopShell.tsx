@@ -58,7 +58,10 @@ export default function DesktopShell() {
         ))}
       </nav>
       <div className="ml-auto flex items-center gap-2">
-        <span className={`text-xs px-3 py-1.5 rounded-full border ${active ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
+        <span
+          title={active ? 'Выбранный ИИ. Работает ли он, проверяет «Настройка»' : undefined}
+          className={`text-xs px-3 py-1.5 rounded-full border ${active ? 'bg-white/5 border-white/15 text-sv-text' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}
+        >
           {active ? `ИИ: ${active.name}` : 'ИИ не выбран'}
         </span>
         <button
@@ -96,7 +99,8 @@ export default function DesktopShell() {
   return (
     <div className="min-h-screen">
       {bar}
-      <main className="p-6 max-w-7xl mx-auto">
+      {/* Отступ снизу: там плавающие кнопки CRM / Бизнес / Голос (CRMLauncher). */}
+      <main className="p-6 pb-28 max-w-7xl mx-auto">
         {tab === 'chat' && <AvatarPage />}
         {tab === 'providers' && <AIProvidersPage />}
         {tab === 'phone' && <AndroidConnectionPage />}
