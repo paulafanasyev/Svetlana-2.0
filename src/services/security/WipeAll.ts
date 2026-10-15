@@ -1,13 +1,32 @@
 // «Удалить все данные на этом устройстве»: CRM, бизнес, запись, память, голос владельца,
 // настройки ИИ, привязки (кабинет и телефон) и все секреты вместе с ключом шифрования.
+// В приложениях (Windows и Android) также стираются ключи облачных ИИ из хранилища системы
+// (Диспетчер учётных данных / Android Keystore): на каждый сохранённый ключ система спросит подтверждение.
 import { clearAllSecrets } from './SecretStore';
+import { isNativeApp, nativeHasSecret, nativeSetSecret } from './NativeBridge';
 
 interface Store { length: number; key(i: number): string | null; removeItem(k: string): void }
 function ls(): Store | null { try { return typeof localStorage !== 'undefined' ? (localStorage as Store) : null; } catch { return null; } }
 
+/** Облачные ИИ, чьи ключи держит нативная часть (как PROVIDERS в secure_ai.rs и SecureAi.kt). */
+export const NATIVE_KEY_PROVIDERS = ['openai', 'groq', 'openrouter', 'deepseek', 'mistral', 'anthropic', 'google', 'svetlana'] as const;
+
+/** Удалить ключи ИИ из хранилища приложения. Возвращает число удалённых ключей. */
+export async function wipeNativeKeys(): Promise<number> {
+  if (!isNativeApp()) return 0;
+  let n = 0;
+  for (const id of NATIVE_KEY_PROVIDERS) {
+    const name = `ai.${id}`;
+    try {
+      if (await nativeHasSecret(name)) { await nativeSetSecret(name, null); n++; }
+    } catch { /* «Отмена» или нет хранилища — идём дальше */ }
+  }
+  return n;
+}
+
 /** Все ключи приложения начинаются с «svetlana». Возвращает число удалённых записей. */
 export async function wipeAllLocalData(s: Store | null = ls()): Promise<number> {
-  let n = 0;
+  let n = await wipeNativeKeys();
   if (s) {
     for (let i = s.length - 1; i >= 0; i--) {
       const k = s.key(i);
