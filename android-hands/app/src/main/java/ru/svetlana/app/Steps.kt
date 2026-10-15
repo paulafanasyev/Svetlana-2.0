@@ -10,13 +10,18 @@ fun norm(s: String): String = s.lowercase()
     .replace(Regex("\\s+"), " ")
     .trim()
 
-/** Один шаг «рук». Их предлагает Светлана (JSON в ответе) или быстрая команда («открой Telegram»). */
+/**
+ * Один шаг «рук». Их предлагает Светлана (JSON в ответе) или быстрая команда («открой Telegram»).
+ * В подписях для окна подтверждения нет переводов строк, управляющих и bidi-символов (Steps.safe):
+ * ИИ или название приложения не могут дорисовать в окне лишние строки.
+ */
 sealed class Step(val title: String) {
     /** target — уже найденное приложение: его название и пакет видны в окне подтверждения. */
     class OpenApp(val name: String, val target: Apps.Target? = null) :
-        Step(if (target != null) "Открыть «${target.label}» (${target.pkg})" else "Открыть «$name»")
-    class Tap(val target: String) : Step("Нажать «$target»")
-    class Type(val text: String, val field: String?) : Step("Напечатать «${text.take(60)}»")
+        Step(if (target != null) "Открыть «${Steps.safe(target.label, 60)}» (${target.pkg})" else "Открыть «${Steps.safe(name, 60)}»")
+    class Tap(val target: String) : Step("Нажать «${Steps.safe(target, 80)}»")
+    class Type(val text: String, val field: String?) :
+        Step("Напечатать «${Steps.safe(text, 60)}${if (text.length > 60) "…" else ""}»${if (field != null) " в поле «${Steps.safe(field, 40)}»" else ""}")
     class Scroll(val down: Boolean) : Step(if (down) "Пролистать вниз" else "Пролистать вверх")
     class Global(val action: Int, name: String) : Step(name)
     object ReadScreen : Step("Прочитать экран")
@@ -26,7 +31,13 @@ sealed class Step(val title: String) {
 object Steps {
     private val JSON_BLOCK = Regex("```(?:json)?\\s*(\\{[\\s\\S]*?\\})\\s*```")
     private val RISKY = listOf("отправ", "оплат", "заплат", "купить", "купи", "удал", "позвон", "вызов", "перевест", "перевод", "подтверд", "опублик", "send", "pay", "buy", "delete", "call")
+    private val BIDI = Regex("[\\u061C\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2069\\uFEFF]")
     const val NEED_OPEN_APP = "после «Назад», «Домой» или уведомлений сначала нужно открыть приложение («открой …»), чтобы не нажать в случайном"
+
+    /** Текст для окна подтверждения: без управляющих и bidi-символов, в одну строку, ограниченной длины. */
+    fun safe(s: String, max: Int = 200): String =
+        s.replace(BIDI, "").map { if (it.isISOControl() || it.isWhitespace()) ' ' else it }.joinToString("")
+            .replace(Regex(" +"), " ").trim().take(max)
 
     fun back() = Step.Global(AccessibilityService.GLOBAL_ACTION_BACK, "Назад")
     fun home() = Step.Global(AccessibilityService.GLOBAL_ACTION_HOME, "На главный экран")
@@ -68,7 +79,7 @@ object Steps {
     fun resolveApps(ctx: Context, steps: List<Step>): List<Step> = steps.map { s ->
         if (s is Step.OpenApp && s.target == null) {
             val t = Apps.resolve(ctx, s.name)
-                ?: throw SecureAi.Fail("Не нашла приложение «${s.name}» на телефоне (для известных приложений — только официальное)")
+                ?: throw SecureAi.Fail("Не нашла приложение «${safe(s.name, 60)}» на телефоне (для известных приложений — только официальное)")
             Step.OpenApp(s.name, t)
         } else {
             s
@@ -157,8 +168,8 @@ object Steps {
 
     private fun runOne(ctx: Context, s: Step, pkg: String?): Pair<Boolean, String> {
         if (s is Step.OpenApp) {
-            val t = s.target ?: Apps.resolve(ctx, s.name) ?: return false to "не нашла приложение «${s.name}»"
-            return if (Apps.start(ctx, t)) true to "открыла «${t.label}»" else false to "не получилось открыть «${t.label}»"
+            val t = s.target ?: Apps.resolve(ctx, s.name) ?: return false to "не нашла приложение «${safe(s.name, 60)}»"
+            return if (Apps.start(ctx, t)) true to "открыла «${safe(t.label, 60)}»" else false to "не получилось открыть «${safe(t.label, 60)}»"
         }
         if (s is Step.Wait) {
             Thread.sleep(s.ms)
@@ -173,7 +184,7 @@ object Steps {
         val moved = "экран сменился на другое приложение"
         if (!hands.inApp(pkg)) return false to moved
         return when (s) {
-            is Step.Tap -> if (hands.tap(s.target, pkg)) true to "нажала «${s.target}»" else false to (if (hands.inApp(pkg)) "не нашла «${s.target}» на экране" else moved)
+            is Step.Tap -> if (hands.tap(s.target, pkg)) true to "нажала «${safe(s.target, 80)}»" else false to (if (hands.inApp(pkg)) "не нашла кнопку «${safe(s.target, 80)}» (или она внутри другой кнопки)" else moved)
             is Step.Type -> if (hands.type(s.text, s.field, pkg)) true to "напечатала текст" else false to (if (hands.inApp(pkg)) "не нашла поле для текста" else moved)
             is Step.Scroll -> if (hands.scroll(s.down, pkg)) true to s.title.lowercase() else false to (if (hands.inApp(pkg)) "не получилось пролистать" else moved)
             is Step.Global -> if (hands.global(s.action)) true to s.title.lowercase() else false to "не получилось: ${s.title.lowercase()}"
