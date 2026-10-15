@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { aiGateway, GIGACHAT_WEB_ONLY, type AIProvider } from '../services/AIGateway';
+import { explainAiError } from '../services/AiErrors';
 import { SVETLANA_CORE_ORIGIN, SVETLANA_CORE_MODEL } from '../services/SvetlanaCore';
 import { isNativeApp } from '../services/security/NativeBridge';
 import { isAndroidApp, secureStoreName } from '../platform';
@@ -11,11 +12,11 @@ import {
   Loader2, Download, Terminal, Check
 } from 'lucide-react';
 
-// Ошибки нативной части (Windows и Android) приходят строкой, остальные — Error.
+// Ошибки нативной части (Windows и Android) приходят строкой, остальные — Error. Технические тексты — на понятный русский.
 const errorText = (e: unknown): string => {
   const m = (e as { message?: unknown } | null)?.message;
   const s = typeof m === 'string' && m ? m : String(e ?? '');
-  return s.slice(0, 300) || 'Ошибка подключения';
+  return explainAiError(s);
 };
 
 /** Где хранится ключ на этой платформе. */
@@ -156,6 +157,9 @@ function ConfigModal({ provider, onSave, onClose }: {
       <motion.div
         initial={{ scale: 0.95, y: 15 }}
         animate={{ scale: 1, y: 0 }}
+        role="dialog"
+        aria-modal="true"
+        aria-label={provider.name}
         className="w-full max-w-lg max-h-[90vh] overflow-y-auto glass-card rounded-2xl p-5 sm:p-6 border border-slate-700 bg-slate-900 text-white"
         onClick={e => e.stopPropagation()}
       >
@@ -176,10 +180,11 @@ function ConfigModal({ provider, onSave, onClose }: {
         <div className="space-y-4">
           {provider.type === 'online' && (
             <div>
-              <label className="text-sm text-slate-300 mb-1 block">{isCore ? 'Ключ Светланы' : isGiga ? 'Ключ авторизации (Authorization key)' : 'Ключ API (API Key)'}</label>
+              <label htmlFor="provider-key" className="text-sm text-slate-300 mb-1 block">{isCore ? 'Ключ Светланы' : isGiga ? 'Ключ авторизации (Authorization key)' : 'Ключ API (API Key)'}</label>
               <div className="relative">
                 <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                 <input
+                  id="provider-key"
                   type="password"
                   value={apiKey}
                   onChange={e => { setApiKey(e.target.value); setSaved(false); }}
@@ -202,14 +207,15 @@ function ConfigModal({ provider, onSave, onClose }: {
           )}
 
           <div>
-            <label className="text-sm text-slate-300 mb-1 block">{phoneLocal ? 'Адрес компьютера с моделью' : 'Адрес эндпоинта (URL)'}</label>
+            <label htmlFor="provider-endpoint" className="text-sm text-slate-300 mb-1 block">{phoneLocal ? 'Адрес компьютера с моделью' : 'Адрес эндпоинта (URL)'}</label>
             <div className="relative">
               <Server className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
               <input
+                id="provider-endpoint"
                 type="text"
                 value={endpoint}
                 onChange={e => { setEndpoint(e.target.value); setSaved(false); }}
-                readOnly={isCore || isGiga}
+                readOnly={provider.type === 'online'}
                 inputMode={phoneLocal ? 'url' : undefined}
                 placeholder={phoneLocal ? 'http://192.168.1.10:11434' : undefined}
                 className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm font-mono focus:outline-none focus:border-indigo-500"
@@ -219,9 +225,10 @@ function ConfigModal({ provider, onSave, onClose }: {
           </div>
 
           <div>
-            <label className="text-sm text-slate-300 mb-1 block">Модель</label>
+            <label htmlFor="provider-model" className="text-sm text-slate-300 mb-1 block">Модель</label>
             <div className="flex gap-2">
               <select
+                id="provider-model"
                 value={model}
                 onChange={e => { setModel(e.target.value); setSaved(false); }}
                 className="flex-1 min-w-0 px-4 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-indigo-500"
@@ -251,7 +258,7 @@ function ConfigModal({ provider, onSave, onClose }: {
             ) : testStatus === 'error' ? (
               <>
                 <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                <span className="text-rose-400 text-left">{testError}</span>
+                <span className="text-rose-400 text-left" role="alert">{testError}</span>
               </>
             ) : (
               <>
@@ -292,6 +299,7 @@ export default function AIProvidersPage() {
   const [providers, setProviders] = useState<AIProvider[]>(aiGateway.getAllProviders());
   const [configuringProvider, setConfiguringProvider] = useState<(Omit<AIProvider, 'enabled'> & { enabled?: boolean }) | null>(null);
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -300,13 +308,17 @@ export default function AIProvidersPage() {
     return () => clearInterval(interval);
   }, []);
 
+  // Таймер подсказки «Скопировано!» не переживает страницу.
+  useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current); }, []);
+
   const activeProvider = aiGateway.getActiveProvider();
   const tab = activeTab;
 
   const handleCopy = (command: string) => {
     void navigator.clipboard?.writeText(command).catch(() => undefined);
     setCopiedCommand(command);
-    setTimeout(() => setCopiedCommand(null), 2000);
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => { copyTimer.current = null; setCopiedCommand(null); }, 2000);
   };
 
   const handleSelectActive = (id: string) => {
@@ -373,8 +385,10 @@ export default function AIProvidersPage() {
       )}
 
       {/* Tabs */}
-      <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-2">
+      <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-2" role="tablist">
         <button
+          role="tab"
+          aria-selected={tab === 'offline'}
           onClick={() => setActiveTab('offline')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
             tab === 'offline'
@@ -386,6 +400,8 @@ export default function AIProvidersPage() {
           {android ? 'Локальные модели (на компьютере)' : 'Локальные модели (Офлайн)'}
         </button>
         <button
+          role="tab"
+          aria-selected={tab === 'online'}
           onClick={() => setActiveTab('online')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
             tab === 'online'
@@ -446,6 +462,7 @@ export default function AIProvidersPage() {
                       onClick={() => handleCopy(m.command)}
                       className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 font-mono text-xs text-cyan-300 hover:border-slate-700 transition-colors"
                       title="Нажмите, чтобы скопировать команду"
+                      aria-label={`Скопировать команду ${m.command}`}
                     >
                       <span className="truncate">{m.command}</span>
                       {copiedCommand === m.command ? (
@@ -522,7 +539,7 @@ export default function AIProvidersPage() {
                         onClick={() => setConfiguringProvider(configured || { ...p, apiKey: '' })}
                         className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
                         title="Настройки"
-                        aria-label="Настройки"
+                        aria-label={`Настройки: ${p.name}`}
                       >
                         <Settings className="w-4 h-4" />
                       </button>
