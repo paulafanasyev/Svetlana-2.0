@@ -142,7 +142,7 @@ export default function AvatarPage() {
 
       const provider = aiGateway.getActiveProvider();
       if (!provider) {
-        throw new Error('Нет активного AI провайдера. Откройте "AI Providers" и настройте провайдер. CRM-команды («Сводка CRM», «Занеси контакты с телефона в CRM») работают и без него.');
+        throw new Error('ИИ не выбран: нажми «Настройка» вверху или открой «Модели ИИ». CRM-команды («Сводка CRM», «Занеси контакты с телефона в CRM») работают и без него.');
       }
 
       // История для модели: результаты инструментов — только как данные, блоки действий обезврежены.
@@ -181,10 +181,12 @@ export default function AvatarPage() {
       setTimeout(() => setEmotion('neutral'), 6000);
     } catch (err: any) {
       console.error('AI Error:', err);
-      setError(err.message || 'Ошибка при обращении к AI');
+      // Ошибки нативной части Windows приходят строкой.
+      const text = (typeof err?.message === 'string' && err.message) || (typeof err === 'string' ? err : '') || 'Ошибка при обращении к ИИ';
+      setError(text);
       setMessages(prev => [...prev, {
         role: 'svetlana',
-        content: `⚠️ ${err.message || 'Произошла ошибка'}`,
+        content: `⚠️ ${text}`,
         emotion: 'sad',
         timestamp: Date.now(),
       }]);
@@ -211,22 +213,23 @@ export default function AvatarPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Sparkles className="w-6 h-6 text-pink-400" />
-          <h2 className="text-2xl font-bold">Аватар & Голос</h2>
+          <h2 className="text-2xl font-bold">Чат со Светланой</h2>
         </div>
         <div className="flex items-center gap-3">
           {activeProvider ? (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-              <Zap className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="text-xs text-emerald-400">{activeProvider.name}</span>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/15">
+              <Zap className="w-3.5 h-3.5 text-indigo-300" />
+              <span className="text-xs text-sv-text">{activeProvider.name}</span>
             </div>
           ) : (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-500/10 border border-red-500/20">
               <WifiOff className="w-3.5 h-3.5 text-red-400" />
-              <span className="text-xs text-red-400">Нет AI провайдера</span>
+              <span className="text-xs text-red-400">ИИ не выбран</span>
             </div>
           )}
           <button
             onClick={() => setShowSettings(!showSettings)}
+            title="Настройки голоса"
             className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted"
           >
             <Settings className="w-4 h-4" />
@@ -285,15 +288,15 @@ export default function AvatarPage() {
                 <div className="w-8 h-8 rounded-full overflow-hidden border-2 border-indigo-500/30">
                   <img
                     src="/images/avatar/svetlana-master.jpg"
-                    alt="Svetlana"
+                    alt="Светлана"
                     className="w-full h-full object-cover"
                   />
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold">Светлана</h3>
-                  <p className="text-xs text-emerald-400 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    {activeProvider ? `Online via ${activeProvider.name}` : 'Offline (CRM доступна)'}
+                  <p className={`text-xs flex items-center gap-1 ${activeProvider ? 'text-sv-muted' : 'text-yellow-400'}`}>
+                    {activeProvider ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+                    {activeProvider ? `Отвечает через: ${activeProvider.name}` : 'ИИ не выбран (CRM доступна)'}
                   </p>
                 </div>
               </div>
@@ -309,6 +312,7 @@ export default function AvatarPage() {
                 </button>
                 <button
                   onClick={() => isSpeaking ? stop() : speak('Привет! Я Светлана.')}
+                  title={isSpeaking ? 'Остановить голос' : 'Проверить голос'}
                   className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted"
                 >
                   {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
@@ -369,13 +373,14 @@ export default function AvatarPage() {
                   value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && sendMessage(input)}
-                  placeholder={activeProvider ? 'Напишите Светлане...' : 'CRM-команды работают и без AI провайдера'}
+                  placeholder={activeProvider ? 'Напишите Светлане...' : 'CRM-команды работают и без ИИ'}
                   className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm focus:outline-none focus:border-indigo-500/50 disabled:opacity-50"
                   disabled={isLoading}
                 />
                 <button
                   onClick={() => sendMessage(input)}
                   disabled={!input.trim() || isLoading}
+                  title="Отправить"
                   className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white transition-colors"
                 >
                   <Send className="w-4 h-4" />
@@ -412,30 +417,25 @@ export default function AvatarPage() {
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-              <h4 className="text-sm font-medium text-cyan-400 mb-2">Speech-to-Text</h4>
-              <p className="text-xs text-sv-muted mb-2">Web Speech API</p>
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span className="text-xs text-emerald-400">Available</span>
-              </div>
-              <p className="text-xs text-sv-muted mt-2">Язык: Русский (ru-RU)</p>
+              <h4 className="text-sm font-medium text-cyan-400 mb-2 flex items-center gap-1.5"><Mic className="w-4 h-4" />Распознавание речи</h4>
+              <p className="text-xs text-sv-muted mb-2">Распознавание системы (Web Speech)</p>
+              <p className="text-xs text-sv-muted mt-2">Язык: русский (ru-RU)</p>
             </div>
             <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-              <h4 className="text-sm font-medium text-purple-400 mb-2">Text-to-Speech</h4>
-              <p className="text-xs text-sv-muted mb-2">Web Speech Synthesis</p>
+              <h4 className="text-sm font-medium text-purple-400 mb-2 flex items-center gap-1.5"><Volume2 className="w-4 h-4" />Синтез речи</h4>
+              <p className="text-xs text-sv-muted mb-2">Голоса Windows</p>
               <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span className="text-xs text-emerald-400">Available</span>
+                <span className={`w-2 h-2 rounded-full ${voices.length ? 'bg-emerald-400' : 'bg-yellow-400'}`} />
+                <span className={`text-xs ${voices.length ? 'text-emerald-400' : 'text-yellow-400'}`}>{voices.length ? `Голосов: ${voices.length}` : 'Голоса не найдены'}</span>
               </div>
-              <p className="text-xs text-sv-muted mt-2">Голосов: {voices.length}</p>
             </div>
             <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-              <h4 className="text-sm font-medium text-yellow-400 mb-2">AI Provider</h4>
-              <p className="text-xs text-sv-muted mb-2">Active: {activeProvider?.name || 'None'}</p>
+              <h4 className="text-sm font-medium text-yellow-400 mb-2">ИИ</h4>
+              <p className="text-xs text-sv-muted mb-2">Сейчас: {activeProvider?.name || 'не выбран'}</p>
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${activeProvider ? 'bg-emerald-400' : 'bg-red-400'}`} />
                 <span className={`text-xs ${activeProvider ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {activeProvider ? 'Connected' : 'Not configured'}
+                  {activeProvider ? 'Выбран' : 'Не настроен'}
                 </span>
               </div>
             </div>
@@ -450,7 +450,7 @@ export default function AvatarPage() {
           Система эмоций
         </h3>
         <p className="text-sm text-sv-muted mb-4">
-          Светлана реагирует на контекст через реальный LLM. Модель определяет эмоцию и аватар переключается.
+          Светлана реагирует на контекст: модель выбирает эмоцию, аватар переключается.
         </p>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           {[
