@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Сетевая безопасность приложения.
+  Везде: только https (без открытого http) и только системные сертификаты (сертификаты пользователя не принимаются).
+  GigaChat (Сбер) подписан корневым сертификатом Минцифры, которого нет в Android: он добавлен
+  ТОЛЬКО для адресов GigaChat, остальные сайты ему не доверяют.
+  Локальные модели в домашней сети идут через LanHttp (свои проверки адреса), а не через эти правила.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">ngw.devices.sberbank.ru</domain>
+        <domain includeSubdomains="false">api.giga.chat</domain>
+        <domain includeSubdomains="false">gigachat.devices.sberbank.ru</domain>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/russian_trusted_root_ca" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>
