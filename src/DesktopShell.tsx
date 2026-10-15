@@ -1,26 +1,31 @@
-// Главное окно Светланы: сразу чат, потом настройки ИИ и телефон. Схемы, планы, оркестратор задач и демо
-// разработки (старый Command Center, App.tsx) убраны в вкладку «Для разработчика» и помечены: это описание,
-// а не работающая функция. При первом запуске открывается мастер настройки (FirstRunSetup): без него чат
-// не знает, куда слать вопрос. На сайте есть ещё вкладка «Скачать» (приложения Android и Windows).
+// Главное окно Светланы: сразу чат, потом настройки ИИ и телефон. Один и тот же интерфейс на сайте,
+// в приложении для Windows и в приложении для Android. Разница только в том, что есть у платформы:
+// на сайте вкладка «Скачать», в Android вкладка «Руки» (действия на телефоне) вместо «Телефон» (подключение к ПК).
+// Схемы, планы, оркестратор задач и демо разработки (старый Command Center, App.tsx) убраны во вкладку
+// «Для разработчика» и помечены: это описание, а не работающая функция. При первом запуске открывается
+// мастер настройки (FirstRunSetup): без него чат не знает, куда слать вопрос.
 import { useEffect, useState } from 'react';
-import { MessageCircle, Cpu, Smartphone, Wrench, Settings2, AlertTriangle, Mic, Download } from 'lucide-react';
+import { MessageCircle, Cpu, Smartphone, Wrench, Settings2, AlertTriangle, Mic, Download, Hand } from 'lucide-react';
 import App from './App';
 import AvatarPage from './pages/AvatarPage';
 import AIProvidersPage from './pages/AIProvidersPage';
 import AndroidConnectionPage from './pages/AndroidConnectionPage';
+import AndroidHandsPage from './pages/AndroidHandsPage';
 import DownloadPage from './pages/DownloadPage';
 import FirstRunSetup, { isSetupDone } from './components/FirstRunSetup';
 import { aiGateway } from './services/AIGateway';
 import { isNativeApp } from './services/security/NativeBridge';
+import { isAndroidApp } from './platform';
 import { APP_VERSION } from './version';
 
-type Tab = 'chat' | 'providers' | 'phone' | 'download' | 'dev';
+type Tab = 'chat' | 'providers' | 'phone' | 'hands' | 'download' | 'dev';
 
 // Только то, что реально работает. Оркестратор задач пока демо, он во вкладке «Для разработчика».
-const TABS: { id: Tab; label: string; icon: typeof MessageCircle; webOnly?: boolean }[] = [
+const TABS: { id: Tab; label: string; icon: typeof MessageCircle; webOnly?: boolean; androidOnly?: boolean; notOnAndroid?: boolean }[] = [
   { id: 'chat', label: 'Чат со Светланой', icon: MessageCircle },
   { id: 'providers', label: 'Модели ИИ', icon: Cpu },
-  { id: 'phone', label: 'Телефон', icon: Smartphone },
+  { id: 'hands', label: 'Руки', icon: Hand, androidOnly: true },
+  { id: 'phone', label: 'Телефон', icon: Smartphone, notOnAndroid: true },
   { id: 'download', label: 'Скачать приложения', icon: Download, webOnly: true },
   { id: 'dev', label: 'Для разработчика', icon: Wrench },
 ];
@@ -35,7 +40,8 @@ const readVerified = (): string | null => {
 
 export default function DesktopShell() {
   const native = isNativeApp();
-  const tabs = TABS.filter(t => !t.webOnly || !native);
+  const android = isAndroidApp();
+  const tabs = TABS.filter(t => (!t.webOnly || !native) && (!t.androidOnly || android) && (!t.notOnAndroid || !android));
   const [tab, setTab] = useState<Tab>('chat');
   const [setupOpen, setSetupOpen] = useState(() => !isSetupDone());
   const [active, setActive] = useState(() => aiGateway.getActiveProvider());
@@ -55,7 +61,7 @@ export default function DesktopShell() {
       : { text: 'ИИ не проверен', cls: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-300', title: `Выбран: ${active.name}. Проверьте связь в «Настройке»` };
 
   const bar = (
-    <header className="sticky top-0 z-40 bg-sv-darker/95 backdrop-blur-xl border-b border-sv-border px-4 py-2 flex flex-wrap items-center gap-2">
+    <header className="sticky top-0 z-40 bg-sv-darker/95 backdrop-blur-xl border-b border-sv-border px-3 sm:px-4 py-2 flex flex-wrap items-center gap-2">
       <div className="flex items-center gap-2 mr-3">
         <img src={AVATAR} alt="" className="w-8 h-8 rounded-full object-cover border border-indigo-500/40" />
         <div>
@@ -115,7 +121,7 @@ export default function DesktopShell() {
         {bar}
         <div className="px-4 py-2 bg-yellow-500/10 border-b border-yellow-500/30 text-xs text-yellow-300 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          Здесь схемы, план и демо разработки (в том числе оркестратор задач). Статусы и «демо-задачи» на этих страницах описывают замысел и не проверяют твой ПК. Работающий чат на вкладке «Чат со Светланой».
+          Здесь схемы, план и демо разработки (в том числе оркестратор задач). Статусы и «демо-задачи» на этих страницах описывают замысел и не проверяют ваше устройство. Работающий чат на вкладке «Чат со Светланой».
         </div>
         {/* Отступ снизу: там плавающие кнопки CRM / Бизнес / Голос (CRMLauncher). */}
         <div className="pb-28">
@@ -130,11 +136,12 @@ export default function DesktopShell() {
     <div className="min-h-screen">
       {bar}
       {/* Отступ снизу: там плавающие кнопки CRM / Бизнес / Голос (CRMLauncher). */}
-      <main className="p-6 pb-28 max-w-7xl mx-auto">
+      <main className="p-3 sm:p-6 pb-28 max-w-7xl mx-auto">
         {tab === 'chat' && (
           <>
-            {/* Честно про голос: встроенное распознавание браузера в WebView2 недоступно, локальная GigaAM проверяет только цифры. */}
-            {native && (
+            {/* Честно про голос в Windows: встроенное распознавание браузера в WebView2 недоступно, локальная GigaAM проверяет только цифры.
+                В Android слушает распознавание самого телефона, ключ не нужен, поэтому там подсказки нет. */}
+            {native && !android && (
               <div data-testid="voice-note" className="mb-4 px-4 py-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-xs text-indigo-200 flex items-start gap-2">
                 <Mic className="w-4 h-4 shrink-0 mt-0.5" />
                 <span>
@@ -147,6 +154,7 @@ export default function DesktopShell() {
         )}
         {tab === 'providers' && <AIProvidersPage />}
         {tab === 'phone' && <AndroidConnectionPage />}
+        {tab === 'hands' && <AndroidHandsPage />}
         {tab === 'download' && <DownloadPage />}
       </main>
       {setup}
