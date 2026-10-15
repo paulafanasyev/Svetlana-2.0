@@ -46,6 +46,18 @@ export function usableProvider(p: AIProvider | null | undefined, android: boolea
   return android && p.type === 'offline' ? null : p;
 }
 
+/**
+ * Телефон: если активна локальная модель компьютера, а «★ Светлана Сервер» включена и с ключом, переключаемся на неё.
+ * Проверяется на каждом тике: ключ могли добавить уже после запуска.
+ */
+export function switchOffOffline(android: boolean): boolean {
+  if (!android || aiGateway.getActiveProvider()?.type !== 'offline') return false;
+  const sv = aiGateway.getProvider('svetlana');
+  if (!sv || !sv.enabled || !sv.apiKey) return false;
+  aiGateway.setActiveProvider('svetlana');
+  return true;
+}
+
 export default function DesktopShell() {
   const native = isNativeApp();
   const android = isAndroidApp();
@@ -57,11 +69,13 @@ export default function DesktopShell() {
   const [verifiedId, setVerifiedId] = useState<string | null>(readVerified);
 
   useEffect(() => {
-    // Телефон: если выбрана локальная модель компьютера, а Светлана Сервер уже настроена — переключаемся на неё.
-    if (android && aiGateway.getActiveProvider()?.type === 'offline' && aiGateway.getProvider('svetlana')) {
-      aiGateway.setActiveProvider('svetlana');
-    }
-    const t = setInterval(() => { setActive(usableProvider(aiGateway.getActiveProvider(), android)); setVerifiedId(readVerified()); }, 1500);
+    const tick = () => {
+      switchOffOffline(android);
+      setActive(usableProvider(aiGateway.getActiveProvider(), android));
+      setVerifiedId(readVerified());
+    };
+    tick();
+    const t = setInterval(tick, 1500);
     return () => clearInterval(t);
   }, [android]);
 

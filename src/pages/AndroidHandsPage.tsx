@@ -13,6 +13,10 @@ const errText = (e: unknown): string => {
 
 const EXAMPLES = ['открой Telegram', 'что на экране', 'пролистай вниз', 'назад'];
 
+/** Сложные просьбы разбирает ИИ; локальная модель компьютера (127.0.0.1) с телефона недоступна. */
+export const HANDS_NO_AI = 'Для сложных просьб нужен ИИ: нажмите «Настройка» и подключите «★ Светлана Сервер» или облачный ИИ. Простые команды («открой Telegram», «назад») работают и без него.';
+export const HANDS_OFFLINE = 'На телефоне локальные модели компьютера не работают: нажмите «Настройка» и подключите «★ Светлана Сервер» или облачный ИИ. Простые команды работают и без него.';
+
 type Line = { who: 'me' | 'sv'; text: string };
 
 export default function AndroidHandsPage() {
@@ -43,6 +47,9 @@ export default function AndroidHandsPage() {
     try {
       let actions: HandsAction[] | null = quickActions(t);
       if (!actions) {
+        const provider = aiGateway.getActiveProvider();
+        if (!provider) { add('sv', HANDS_NO_AI); return; }
+        if (provider.type === 'offline') { add('sv', HANDS_OFFLINE); return; }
         const res = await aiGateway.chat([{ role: 'system', content: HANDS_SYSTEM_PROMPT }, { role: 'user', content: t }], { max_tokens: 800 });
         const parsed = extractActions(res.content ?? '');
         if (parsed.text) add('sv', parsed.text);

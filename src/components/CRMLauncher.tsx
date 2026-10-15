@@ -1,5 +1,7 @@
 // Floating button + full-screen overlay with Svetlana's CRM and Business tools, available on every page.
 // Also opens with the URL hash: #crm, #biz, #booking, #stats, #bank or #cabinet (e.g. http://tauri.localhost/#biz).
+// В Android нет «Кабинета»: привязка и пульс сделаны для компьютера (платформа windows, модели Ollama),
+// поэтому телефон ничего туда не отправляет и вкладку не показывает.
 import { useEffect, useState } from 'react';
 import { Users, Briefcase, ShieldCheck, BarChart3, CalendarClock, UserCircle, X } from 'lucide-react';
 import CRMPage from '../pages/CRMPage';
@@ -9,6 +11,7 @@ import AnalyticsPage from '../pages/AnalyticsPage';
 import BookingPage from '../pages/BookingPage';
 import CabinetPage from '../pages/CabinetPage';
 import { startHeartbeat } from '../services/cabinet/CabinetClient';
+import { isAndroidApp } from '../platform';
 import VoiceButton from './VoiceButton';
 import ActionConfirmHost from './ActionConfirmHost';
 
@@ -17,13 +20,15 @@ type Section = 'crm' | 'biz' | 'bank' | 'stats' | 'booking' | 'cabinet';
 function sectionFromHash(): Section | null {
   if (typeof window === 'undefined') return null;
   const h = window.location.hash;
-  return h === '#crm' ? 'crm' : h === '#biz' ? 'biz' : h === '#bank' ? 'bank' : h === '#stats' ? 'stats' : h === '#booking' ? 'booking' : h === '#cabinet' ? 'cabinet' : null;
+  if (h === '#cabinet') return isAndroidApp() ? null : 'cabinet';
+  return h === '#crm' ? 'crm' : h === '#biz' ? 'biz' : h === '#bank' ? 'bank' : h === '#stats' ? 'stats' : h === '#booking' ? 'booking' : null;
 }
 
 export default function CRMLauncher() {
+  const android = isAndroidApp();
   const [section, setSection] = useState<Section | null>(sectionFromHash);
-  // Пульс в личный кабинет (только если компьютер привязан; иначе ничего не отправляется).
-  useEffect(() => startHeartbeat(), []);
+  // Пульс в личный кабинет (только компьютер и только если он привязан; иначе ничего не отправляется).
+  useEffect(() => (android ? undefined : startHeartbeat()), [android]);
 
   useEffect(() => {
     const onHash = () => setSection(sectionFromHash());
@@ -38,7 +43,7 @@ export default function CRMLauncher() {
 
   function close() {
     setSection(null);
-    if (sectionFromHash()) {
+    if (window.location.hash) {
       history.replaceState(null, '', window.location.pathname + window.location.search);
     }
   }
@@ -71,10 +76,10 @@ export default function CRMLauncher() {
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/95 backdrop-blur-sm p-3 sm:p-4 md:p-8" role="dialog" aria-modal="true" aria-label="CRM и бизнес">
           <div className="max-w-7xl mx-auto space-y-5">
             <div className="flex items-start justify-between gap-3">
-              <div className="flex flex-wrap gap-2">{tab('crm', 'CRM', Users)}{tab('biz', 'Бизнес', Briefcase)}{tab('booking', 'Запись', CalendarClock)}{tab('stats', 'Аналитика', BarChart3)}{tab('bank', 'Банк и ИНН', ShieldCheck)}{tab('cabinet', 'Кабинет', UserCircle)}</div>
+              <div className="flex flex-wrap gap-2">{tab('crm', 'CRM', Users)}{tab('biz', 'Бизнес', Briefcase)}{tab('booking', 'Запись', CalendarClock)}{tab('stats', 'Аналитика', BarChart3)}{tab('bank', 'Банк и ИНН', ShieldCheck)}{!android && tab('cabinet', 'Кабинет', UserCircle)}</div>
               <button onClick={close} className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10" aria-label="Закрыть"><X className="w-4 h-4" /><span className="hidden sm:inline">Закрыть</span></button>
             </div>
-            {section === 'crm' ? <CRMPage /> : section === 'biz' ? <BizPage /> : section === 'stats' ? <AnalyticsPage /> : section === 'booking' ? <BookingPage /> : section === 'cabinet' ? <CabinetPage /> : <BankInnPage />}
+            {section === 'crm' ? <CRMPage /> : section === 'biz' ? <BizPage /> : section === 'stats' ? <AnalyticsPage /> : section === 'booking' ? <BookingPage /> : section === 'cabinet' && !android ? <CabinetPage /> : <BankInnPage />}
           </div>
         </div>
       )}

@@ -192,17 +192,26 @@ class MainActivity : Activity() {
             cb(true)
             return
         }
+        if (isFinishing || isDestroyed) {
+            cb(false)
+            return
+        }
         audioWaiters.add(cb)
         if (audioWaiters.size == 1) requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_AUDIO)
+    }
+
+    /** Всем, кто ждёт микрофон, ответить сразу: ни один запрос не висит бесконечно. */
+    private fun drainAudioWaiters(ok: Boolean) {
+        val waiting = audioWaiters.toList()
+        audioWaiters.clear()
+        waiting.forEach { runCatching { it(ok) } }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQ_AUDIO) return
         val ok = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
-        val waiting = audioWaiters.toList()
-        audioWaiters.clear()
-        waiting.forEach { it(ok) }
+        drainAudioWaiters(ok)
     }
 
     @Deprecated("Deprecated in Java")
@@ -277,6 +286,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         confirmDialog?.dismiss()
         confirmDialog = null
+        drainAudioWaiters(false)
         bridge?.close()
         bridge = null
         fileCallback?.onReceiveValue(null)
