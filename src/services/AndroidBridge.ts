@@ -1,6 +1,8 @@
 // Команды, которые есть только в приложении для Android: голос телефона и «руки» (спец. возможности).
 // Ключи и облако идут через те же команды, что в Windows (NativeBridge.ts), здесь только то, чего в Windows нет.
 // Руки ничего не делают без спроса: телефон сам показывает список шагов в своём окне и ждёт «ОК».
+// Шаги те же, что у рук телефона в Windows-версии (Svetlana-home): открыть, нажать, долго нажать, смахнуть,
+// напечатать, очистить поле, «Ввод», прокрутка, «Назад»/«Домой»/«Недавние», чтение экрана (см. Steps.kt).
 import { isAndroidApp } from '../platform';
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -11,18 +13,23 @@ function inv(): Invoke {
   return f as Invoke;
 }
 
-type SimpleAction = 'back' | 'home' | 'recents' | 'notifications' | 'read_screen';
+type SimpleAction = 'back' | 'home' | 'recents' | 'notifications' | 'read_screen' | 'enter';
+export type SwipeDirection = 'left' | 'right' | 'up' | 'down';
 
 export type HandsAction =
   | { type: 'open_app'; name: string }
   | { type: 'tap'; target: string }
+  | { type: 'long_press'; target: string }
   | { type: 'type'; text: string; field?: string }
+  | { type: 'clear'; field?: string }
   | { type: 'scroll'; direction: 'up' | 'down' }
+  | { type: 'swipe'; direction: SwipeDirection }
   | { type: SimpleAction }
   | { type: 'wait'; ms: number };
 
 export const MAX_ACTIONS = 12;
-const SIMPLE: readonly SimpleAction[] = ['back', 'home', 'recents', 'notifications', 'read_screen'];
+const SIMPLE: readonly SimpleAction[] = ['back', 'home', 'recents', 'notifications', 'read_screen', 'enter'];
+const SWIPE_DIRS: readonly SwipeDirection[] = ['left', 'right', 'up', 'down'];
 
 /** Распознать фразу голосом телефона (русский). Пустая строка — ничего не расслышала или остановлено. */
 export async function androidListen(): Promise<string> {
@@ -59,13 +66,19 @@ function sanitize(a: unknown): HandsAction | null {
   switch (type) {
     case 'open_app': { const name = str(o.name, 60); return name ? { type: 'open_app', name } : null; }
     case 'tap': { const target = str(o.target, 80); return target ? { type: 'tap', target } : null; }
+    case 'long_press': { const target = str(o.target, 80); return target ? { type: 'long_press', target } : null; }
     case 'type': {
       const text = typeof o.text === 'string' && o.text ? o.text.slice(0, 2000) : null;
       if (!text) return null;
       const field = str(o.field, 80);
       return field ? { type: 'type', text, field } : { type: 'type', text };
     }
+    case 'clear': { const field = str(o.field, 80); return field ? { type: 'clear', field } : { type: 'clear' }; }
     case 'scroll': return { type: 'scroll', direction: o.direction === 'up' ? 'up' : 'down' };
+    case 'swipe': {
+      const d = typeof o.direction === 'string' && (SWIPE_DIRS as readonly string[]).includes(o.direction) ? o.direction as SwipeDirection : 'left';
+      return { type: 'swipe', direction: d };
+    }
     case 'wait': {
       const ms = Number(o.ms);
       return { type: 'wait', ms: Number.isFinite(ms) ? Math.min(5000, Math.max(200, Math.round(ms))) : 1000 };
@@ -94,7 +107,9 @@ export function normText(s: string): string {
   return s.toLowerCase().replace(/ё/g, 'е').replace(/["'«»“”„.,!?:;]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-/** Быстрые команды без ИИ (работают даже без ключа): «открой Telegram», «назад», «пролистай»… */
+const SWIPE_RU: Record<string, SwipeDirection> = { 'влево': 'left', 'вправо': 'right', 'вверх': 'up', 'вниз': 'down' };
+
+/** Быстрые команды без ИИ (работают даже без ключа): «открой Telegram», «назад», «смахни влево»… Те же, что Steps.quick. */
 export function quickActions(input: string): HandsAction[] | null {
   let t = normText(input);
   for (const p of ['света ', 'светлана ', 'светочка ', 'пожалуйста ']) if (t.startsWith(p)) t = t.slice(p.length);
@@ -105,11 +120,19 @@ export function quickActions(input: string): HandsAction[] | null {
     case 'домой': case 'на главный экран': case 'главный экран': return [{ type: 'home' }];
     case 'что на экране': case 'прочитай экран': return [{ type: 'read_screen' }];
     case 'уведомления': case 'открой уведомления': case 'покажи уведомления': return [{ type: 'notifications' }];
+    case 'недавние': case 'недавние приложения': case 'покажи недавние': return [{ type: 'recents' }];
+    case 'очисти поле': case 'сотри текст': case 'очисти текст': return [{ type: 'clear' }];
+    // «нажми ввод» проверяем ДО общего «нажми X», иначе руки искали бы кнопку «ввод».
+    case 'нажми ввод': case 'нажми enter': case 'ввод': return [{ type: 'enter' }];
   }
   let m = /^(?:пролистай|прокрути|листай)(?:\s+(вниз|вверх))?$/.exec(t);
   if (m) return [{ type: 'scroll', direction: m[1] === 'вверх' ? 'up' : 'down' }];
+  m = /^(?:смахни|свайпни|свайп)\s+(влево|вправо|вверх|вниз)$/.exec(t);
+  if (m) return [{ type: 'swipe', direction: SWIPE_RU[m[1]] }];
   m = /^(?:открой|запусти)\s+(?:приложение\s+)?(.{2,40})$/.exec(t);
   if (m) return [{ type: 'open_app', name: m[1] }];
+  m = /^(?:зажми|удержи|долго нажми)(?:\s+на)?\s+(.{1,60})$/.exec(t);
+  if (m) return [{ type: 'long_press', target: m[1] }];
   m = /^(?:нажми|тапни|кликни)(?:\s+на)?\s+(.{1,60})$/.exec(t);
   if (m) return [{ type: 'tap', target: m[1] }];
   m = /^\s*(?:света,?\s+)?(?:напечатай|введи)\s+(.+)$/i.exec(String(input ?? '').trim());
@@ -121,8 +144,10 @@ export function quickActions(input: string): HandsAction[] | null {
 export const HANDS_SYSTEM_PROMPT = [
   'Ты Светлана, помощник на телефоне Android. Пользователь просит сделать что-то на телефоне.',
   'Ответь одной короткой фразой по-русски и добавь блок ```json {"actions":[...]}```.',
-  'Разрешённые шаги: {"type":"open_app","name":"Telegram"}, {"type":"tap","target":"текст кнопки"}, {"type":"type","text":"что напечатать","field":"подпись поля"},',
-  '{"type":"scroll","direction":"down"} или "up", {"type":"back"}, {"type":"home"}, {"type":"notifications"}, {"type":"read_screen"}, {"type":"wait","ms":1000}.',
-  `Не больше ${MAX_ACTIONS} шагов. Ничего не отправляй, не оплачивай и не удаляй без прямой просьбы. Телефон покажет шаги и спросит подтверждение.`,
+  'Разрешённые шаги: {"type":"open_app","name":"Telegram"}, {"type":"tap","target":"текст кнопки"}, {"type":"long_press","target":"текст"},',
+  '{"type":"type","text":"что напечатать","field":"подпись поля"}, {"type":"clear","field":"подпись поля"}, {"type":"enter"},',
+  '{"type":"scroll","direction":"down"} или "up", {"type":"swipe","direction":"left"} (left/right/up/down),',
+  '{"type":"back"}, {"type":"home"}, {"type":"recents"}, {"type":"notifications"}, {"type":"read_screen"}, {"type":"wait","ms":1000}.',
+  `Не больше ${MAX_ACTIONS} шагов. Ничего не отправляй, не оплачивай и не удаляй без прямой просьбы. «Ввод» часто отправляет сообщение. Телефон покажет шаги и спросит подтверждение.`,
   'Если просьба не про действия на телефоне, ответь текстом без блока json.',
 ].join('\n');
