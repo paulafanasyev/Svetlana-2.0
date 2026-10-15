@@ -1,7 +1,8 @@
 // То, чего в Android WebView нет самого по себе, чтобы интерфейс работал как на сайте и в Windows (код страниц один):
 // - скачивание файлов (<a download href="blob:…">) → системное окно «Сохранить как»;
 // - печать (window.print и печать из iframe) → системное окно печати Android (там же «Сохранить как PDF»);
-// - копирование (navigator.clipboard.writeText) → буфер обмена телефона, как в браузере — только по нажатию;
+// - копирование (navigator.clipboard.writeText) → буфер обмена телефона, как в браузере — только по нажатию
+//   (проверяется и здесь, и в нативной части по настоящему касанию экрана);
 // - http-адреса домашней сети (Ollama/LM Studio на компьютере, Svetlana-home) → нативная команда lan_http:
 //   страница открыта по https и сама по http ходить не может. Первая отправка данных на новое устройство —
 //   только после нативного подтверждения. Остальное: https, blob: и data: — обычным fetch (и CSP), любой другой
@@ -53,7 +54,7 @@ export async function androidPrintHtml(html: string, title = ''): Promise<void> 
   await need()('print_html', { html, title: String(title).slice(0, 80) });
 }
 
-/** Скопировать в буфер обмена телефона. */
+/** Скопировать в буфер обмена телефона (нативная часть примет только сразу после касания экрана). */
 export async function androidCopyText(text: string): Promise<void> {
   await need()('clipboard_set', { text: String(text).slice(0, 100_000) });
 }
@@ -61,7 +62,7 @@ export async function androidCopyText(text: string): Promise<void> {
 /** Как в браузере: писать в буфер можно только сразу после нажатия человека. */
 export function userJustActed(): boolean {
   const ua = (typeof navigator !== 'undefined' ? (navigator as any).userActivation : undefined) as { isActive?: boolean } | undefined;
-  return ua?.isActive !== false;
+  return ua?.isActive === true;
 }
 
 export interface PhoneContact { id: string; name: string; phones: string[] }
@@ -199,7 +200,7 @@ export function installAndroidDownloads(): void {
   }
 
   // Копирование в буфер обмена телефона (в WebView writeText часто недоступен). Как в браузере — только после
-  // нажатия: скрипт сам по себе буфер не перепишет.
+  // нажатия: скрипт сам по себе буфер не перепишет (нативная часть проверяет настоящее касание).
   const writeText = (text: string): Promise<void> => {
     if (!userJustActed()) {
       return Promise.reject(Object.assign(new Error('Копировать можно только по нажатию'), { name: 'NotAllowedError' }));
