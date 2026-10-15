@@ -11,7 +11,9 @@ import android.view.accessibility.AccessibilityNodeInfo
 
 /**
  * Руки Светланы: чтение экрана и действия в других приложениях через спец. возможности Android.
- * Сервис ничего не делает сам: только выполняет шаги, которые прислал чат (Steps.run).
+ * Сервис ничего не делает сам: только выполняет шаги, которые подтвердил человек (Steps.run).
+ * pkg — приложение, в котором разрешено действовать: проверяется и у элемента, и у активного окна
+ * непосредственно перед нажатием, жестом или вводом текста (если поверх всплыло чужое — отказ).
  */
 class HandsService : AccessibilityService() {
 
@@ -62,11 +64,17 @@ class HandsService : AccessibilityService() {
 
     fun currentApp(): String? = rootInActiveWindow?.packageName?.toString()
 
-    fun screenText(limit: Int = 3000): String {
+    /** Активное окно принадлежит нужному приложению (null — привязки нет). */
+    fun inApp(pkg: String?): Boolean = pkg == null || currentApp() == pkg
+
+    private fun nodeIn(n: AccessibilityNodeInfo, pkg: String?): Boolean = pkg == null || n.packageName?.toString() == pkg
+
+    fun screenText(limit: Int = 3000, pkg: String? = null): String {
+        if (!inApp(pkg)) return ""
         val sb = StringBuilder()
         val seen = HashSet<String>()
         for (n in nodes()) {
-            if (!n.isVisibleToUser) continue
+            if (!n.isVisibleToUser || !nodeIn(n, pkg)) continue
             val t = label(n)
             if (t.isNotEmpty() && seen.add(t)) {
                 sb.append(t).append('\n')
@@ -77,13 +85,13 @@ class HandsService : AccessibilityService() {
     }
 
     /** Элемент по тексту, описанию, подсказке или id. Точное совпадение важнее частичного. */
-    fun find(query: String): AccessibilityNodeInfo? {
+    fun find(query: String, pkg: String? = null): AccessibilityNodeInfo? {
         val q = norm(query)
         if (q.isEmpty()) return null
         var best: AccessibilityNodeInfo? = null
         var bestScore = Int.MAX_VALUE
         for (n in nodes()) {
-            if (!n.isVisibleToUser) continue
+            if (!n.isVisibleToUser || !nodeIn(n, pkg)) continue
             val l = norm(label(n))
             val id = n.viewIdResourceName?.substringAfterLast('/')?.lowercase() ?: ""
             val score = when {
@@ -101,18 +109,22 @@ class HandsService : AccessibilityService() {
         return best
     }
 
-    fun tap(query: String): Boolean {
-        val node = find(query) ?: return false
+    fun tap(query: String, pkg: String? = null): Boolean {
+        if (!inApp(pkg)) return false
+        val node = find(query, pkg) ?: return false
         var n: AccessibilityNodeInfo? = node
         var depth = 0
         while (n != null && depth < 8) {
-            if (n.isClickable && n.isEnabled) {
+            if (n.isClickable && n.isEnabled && nodeIn(n, pkg)) {
+                if (!inApp(pkg)) return false
                 if (n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
                 break
             }
             n = n.parent
             depth++
         }
+        // Жест по координатам — только если сверху всё ещё то же приложение.
+        if (!inApp(pkg)) return false
         return tapNode(node)
     }
 
@@ -131,10 +143,12 @@ class HandsService : AccessibilityService() {
         return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
     }
 
-    fun scroll(down: Boolean): Boolean {
+    fun scroll(down: Boolean, pkg: String? = null): Boolean {
+        if (!inApp(pkg)) return false
         val action = if (down) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
-        val target = nodes().firstOrNull { it.isScrollable && it.isVisibleToUser }
-        if (target != null && target.performAction(action)) return true
+        val target = nodes().firstOrNull { it.isScrollable && it.isVisibleToUser && nodeIn(it, pkg) }
+        if (target != null && inApp(pkg) && target.performAction(action)) return true
+        if (!inApp(pkg)) return false
         val m = resources.displayMetrics
         val x = m.widthPixels / 2f
         val top = m.heightPixels * 0.3f
@@ -142,11 +156,13 @@ class HandsService : AccessibilityService() {
         return if (down) gesture(x, bottom, x, top, 350) else gesture(x, top, x, bottom, 350)
     }
 
-    fun type(text: String, field: String?): Boolean {
-        val byLabel = field?.takeIf { it.isNotBlank() }?.let { f -> find(f) }?.takeIf { it.isEditable }
-        val focused = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable }
-        val target = byLabel ?: focused ?: nodes().firstOrNull { it.isEditable && it.isVisibleToUser } ?: return false
+    fun type(text: String, field: String?, pkg: String? = null): Boolean {
+        if (!inApp(pkg)) return false
+        val byLabel = field?.takeIf { it.isNotBlank() }?.let { f -> find(f, pkg) }?.takeIf { it.isEditable }
+        val focused = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable && nodeIn(it, pkg) }
+        val target = byLabel ?: focused ?: nodes().firstOrNull { it.isEditable && it.isVisibleToUser && nodeIn(it, pkg) } ?: return false
         target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        if (!inApp(pkg)) return false
         val args = Bundle()
         args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         return target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)

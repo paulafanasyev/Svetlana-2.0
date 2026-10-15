@@ -66,7 +66,8 @@ object Steps {
     /** Найти приложения заранее, чтобы показать в окне подтверждения, ЧТО именно откроется. */
     fun resolveApps(ctx: Context, steps: List<Step>): List<Step> = steps.map { s ->
         if (s is Step.OpenApp && s.target == null) {
-            val t = Apps.resolve(ctx, s.name) ?: throw SecureAi.Fail("Не нашла приложение «${s.name}» на телефоне")
+            val t = Apps.resolve(ctx, s.name)
+                ?: throw SecureAi.Fail("Не нашла приложение «${s.name}» на телефоне (для известных приложений — только официальное)")
             Step.OpenApp(s.name, t)
         } else {
             s
@@ -116,7 +117,7 @@ object Steps {
     /**
      * Выполняет шаги по порядку и останавливается на первой неудаче. Вызывать не из главного потока.
      * Действия на экране привязаны к приложению: после «Открыть X» — к пакету X, иначе к тому, что было
-     * на экране при первом действии. Если перед действием на экране другое приложение — остановка.
+     * на экране при первом действии. Пакет проверяется и здесь, и в HandsService прямо перед каждым нажатием.
      */
     fun run(ctx: Context, steps: List<Step>): String {
         val log = StringBuilder()
@@ -130,7 +131,7 @@ object Steps {
                         throw IllegalStateException("на экране другое приложение (${cur ?: "неизвестно"}), а не ${expected ?: "нужное"}")
                     }
                 }
-                runOne(ctx, s)
+                runOne(ctx, s, if (touchesScreen(s)) expected else null)
             } catch (e: Exception) {
                 false to (e.message ?: "ошибка: ${e.javaClass.simpleName}")
             }
@@ -149,7 +150,7 @@ object Steps {
         return log.toString().trim()
     }
 
-    private fun runOne(ctx: Context, s: Step): Pair<Boolean, String> {
+    private fun runOne(ctx: Context, s: Step, pkg: String?): Pair<Boolean, String> {
         if (s is Step.OpenApp) {
             val t = s.target ?: Apps.resolve(ctx, s.name) ?: return false to "не нашла приложение «${s.name}»"
             return if (Apps.start(ctx, t)) true to "открыла «${t.label}»" else false to "не получилось открыть «${t.label}»"
@@ -161,15 +162,17 @@ object Steps {
         val hands = HandsService.instance ?: return false to "руки выключены: включите «Светлана: руки» в настройках → Специальные возможности"
         // В окне самой Светланы руки не нажимают и не печатают: иначе ИИ мог бы сам нажать «ОК»
         // в окне подтверждения (ключ, отправка в облако, новые шаги).
-        if ((s is Step.Tap || s is Step.Type || s is Step.Scroll) && hands.currentApp() == ctx.packageName) {
+        if ((s is Step.Tap || s is Step.Type || s is Step.Scroll) && (hands.currentApp() == ctx.packageName || pkg == ctx.packageName)) {
             return false to "на экране сама Светлана: здесь руки ничего не нажимают, чтобы никто не подтвердил окна за вас"
         }
+        val moved = "экран сменился на другое приложение"
+        if (!hands.inApp(pkg)) return false to moved
         return when (s) {
-            is Step.Tap -> if (hands.tap(s.target)) true to "нажала «${s.target}»" else false to "не нашла «${s.target}» на экране"
-            is Step.Type -> if (hands.type(s.text, s.field)) true to "напечатала текст" else false to "не нашла поле для текста"
-            is Step.Scroll -> if (hands.scroll(s.down)) true to s.title.lowercase() else false to "не получилось пролистать"
+            is Step.Tap -> if (hands.tap(s.target, pkg)) true to "нажала «${s.target}»" else false to (if (hands.inApp(pkg)) "не нашла «${s.target}» на экране" else moved)
+            is Step.Type -> if (hands.type(s.text, s.field, pkg)) true to "напечатала текст" else false to (if (hands.inApp(pkg)) "не нашла поле для текста" else moved)
+            is Step.Scroll -> if (hands.scroll(s.down, pkg)) true to s.title.lowercase() else false to (if (hands.inApp(pkg)) "не получилось пролистать" else moved)
             is Step.Global -> if (hands.global(s.action)) true to s.title.lowercase() else false to "не получилось: ${s.title.lowercase()}"
-            is Step.ReadScreen -> true to ("на экране:\n" + hands.screenText(1500).ifBlank { "(ничего не видно)" })
+            is Step.ReadScreen -> true to ("на экране:\n" + hands.screenText(1500, pkg).ifBlank { "(ничего не видно)" })
             else -> false to "неизвестный шаг"
         }
     }

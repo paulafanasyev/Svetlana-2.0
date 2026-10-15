@@ -5,8 +5,9 @@ import android.content.Intent
 
 /**
  * Поиск и запуск установленных приложений по названию (по-русски и по-английски).
- * Для популярных приложений сначала ищем официальный пакет: подделка с тем же названием не выиграет.
- * В окне подтверждения показывается и название, и пакет найденного приложения.
+ * Для популярных приложений — ТОЛЬКО официальный пакет: если его нет, подделка с тем же названием
+ * не откроется (отказ). Для остальных — только по названию (без угадывания по куску пакета),
+ * и в окне подтверждения видны название и пакет.
  */
 object Apps {
     private val ALIASES = mapOf(
@@ -55,18 +56,18 @@ object Apps {
         if (q.isEmpty()) return null
         val alias = ALIASES[q]
         val apps = all(ctx)
-        KNOWN[alias ?: q]?.forEach { pkg -> apps.firstOrNull { it.pkg == pkg }?.let { return it } }
+        // Известное приложение: только официальный пакет, иначе отказ (fail closed).
+        KNOWN[alias ?: q]?.let { pkgs ->
+            return pkgs.firstNotNullOfOrNull { p -> apps.firstOrNull { it.pkg == p } }
+        }
         fun score(a: Target): Int {
             val l = norm(a.label)
-            val p = a.pkg.lowercase()
             return when {
                 l == q -> 0
                 alias != null && l == alias -> 1
-                alias != null && p.contains(alias) -> 2
                 l.startsWith(q) -> 3
                 l.contains(q) -> 4
                 alias != null && l.contains(alias) -> 5
-                q.length >= 4 && p.contains(q) -> 6
                 else -> 99
             }
         }
