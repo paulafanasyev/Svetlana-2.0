@@ -1,6 +1,7 @@
 // Глобальная кнопка «Голос»: команды бизнеса и CRM голосом с любого экрана + настройки распознавания и озвучки.
-// В Android слушает распознавание самого телефона (ключ не нужен), в браузере и Windows — как раньше.
-// Панель настроек закрывается системной кнопкой «Назад» телефона.
+// Настройки одинаковые на сайте, в Windows и в Android: запись своего голоса, модель распознавания на
+// устройстве (в приложениях), облачное распознавание (Groq/OpenAI), озвучка. В Android без записанного голоса
+// слушает распознавание самого телефона (ключ не нужен). Панель закрывается системной кнопкой «Назад».
 import { useEffect, useRef, useState } from 'react';
 import { Mic, MicOff, Settings2, X, Volume2, VolumeX } from 'lucide-react';
 import { sttSupport, getCloudStt, setCloudStt, resetWebStt, STT_PRESETS, type Listener } from '../services/voice/SpeechEngine';
@@ -107,8 +108,12 @@ function VoiceSettings({ onClose }: { onClose: () => void }) {
   const save = () => {
     setCloudStt(key.trim() ? { baseUrl: p.baseUrl, apiKey: key, model: p.model } : null);
     resetWebStt();
-    setMsg(key.trim() ? 'Сохранено. Если встроенное распознавание не сработает, включится облачное.' : 'Облачное распознавание отключено.');
+    setMsg(key.trim()
+      ? (android ? 'Сохранено. Если модель на телефон не скачана, голос будет проверяться через облачное распознавание.' : 'Сохранено. Если встроенное распознавание не сработает, включится облачное.')
+      : 'Облачное распознавание отключено.');
   };
+
+  const now = s.mode === 'native' ? 'распознавание телефона' : s.mode === 'web' ? 'встроенное распознавание' : s.mode === 'cloud' ? 'облачное распознавание' : 'распознавание не настроено';
 
   return (
     <div className="fixed bottom-20 left-3 sm:left-5 z-50 w-[22rem] max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-y-auto rounded-xl bg-slate-900/98 border border-white/10 p-4 text-sm text-white shadow-2xl space-y-3">
@@ -116,29 +121,29 @@ function VoiceSettings({ onClose }: { onClose: () => void }) {
         <h3 className="font-semibold">Голос Светланы</h3>
         <button onClick={onClose} className="text-slate-400 hover:text-white" aria-label="Закрыть"><X className="w-4 h-4" /></button>
       </div>
-      {android ? (
+      {android && (
         <p data-testid="android-voice" className="text-xs text-slate-300">
-          Распознавание и озвучка: голос самого телефона, ключ не нужен. Команды голосом выполняются только после нажатия кнопки подтверждения.
+          Пока голос не записан, слушает распознавание самого телефона (ключ не нужен), а команды выполняются после нажатия кнопки подтверждения.
+          Запишите голос и скачайте модель (или вставьте ключ Groq): тогда, как на компьютере, команды принимаются только по вашему голосу и работает «Светлана, …» без рук.
           Если телефон не слышит: настройки телефона → Приложения → Светлана → Разрешения → Микрофон.
         </p>
-      ) : (
-        <>
-          <VoiceEnroll />
-          <p className="text-xs text-slate-400">
-            Сейчас: {s.mode === 'web' ? 'встроенное распознавание' : s.mode === 'cloud' ? 'облачное распознавание' : 'распознавание не настроено'}.
-            В браузере Chrome/Edge работает встроенное. В приложении для Windows нужно облачное — ключ Groq бесплатный.
-          </p>
-          <div className="flex gap-2">
-            {STT_PRESETS.map(x => (
-              <button key={x.id} onClick={() => setPreset(x.id)} className={`px-3 py-1.5 rounded-lg text-xs ${preset === x.id ? 'bg-indigo-600' : 'bg-white/5 hover:bg-white/10'}`}>{x.title}</button>
-            ))}
-          </div>
-          <input className={input} type="password" placeholder="API-ключ" value={key} onChange={e => setKey(e.target.value)} />
-          <a className="text-xs text-indigo-300 underline" href={p.keyUrl} target="_blank" rel="noreferrer">Получить ключ {p.title}</a>
-        </>
       )}
+      <VoiceEnroll />
+      <p className="text-xs text-slate-400">
+        Сейчас: {now}.{' '}
+        {android
+          ? 'Облачное распознавание нужно, только если не хотите скачивать модель на телефон. Ключ Groq бесплатный.'
+          : 'В браузере Chrome/Edge работает встроенное. В приложении для Windows нужно облачное — ключ Groq бесплатный.'}
+      </p>
+      <div className="flex gap-2">
+        {STT_PRESETS.map(x => (
+          <button key={x.id} onClick={() => setPreset(x.id)} className={`px-3 py-1.5 rounded-lg text-xs ${preset === x.id ? 'bg-indigo-600' : 'bg-white/5 hover:bg-white/10'}`}>{x.title}</button>
+        ))}
+      </div>
+      <input className={input} type="password" placeholder="API-ключ" value={key} onChange={e => setKey(e.target.value)} />
+      <a className="text-xs text-indigo-300 underline" href={p.keyUrl} target="_blank" rel="noreferrer">Получить ключ {p.title}</a>
       <div className="flex flex-wrap gap-2">
-        {!android && <button className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700" onClick={save}>Сохранить</button>}
+        <button className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700" onClick={save}>Сохранить</button>
         {ttsAvailable() && (
           <button className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 inline-flex items-center gap-1.5" onClick={() => { const m = !muted; setMuted(m); setMutedState(m); }}>
             {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}{muted ? 'Озвучка выкл.' : 'Озвучка вкл.'}
@@ -151,7 +156,7 @@ function VoiceSettings({ onClose }: { onClose: () => void }) {
         <p className="mb-1">Попробуйте сказать:</p>
         {EXAMPLES.map(e => <p key={e}>• {e}</p>)}
       </div>
-      {!android && <p className="text-[11px] text-slate-500">Ключ хранится только на этом устройстве. Запись голоса уходит в выбранный сервис только при нажатии «Голос».</p>}
+      <p className="text-[11px] text-slate-500">Ключ хранится только на этом устройстве. Запись голоса уходит в выбранный сервис только при нажатии «Голос».</p>
     </div>
   );
 }

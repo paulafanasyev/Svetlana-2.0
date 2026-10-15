@@ -2,10 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { SVETLANA_IDENTITY, getAvatarStateOverlay, getAvatarStateFromEmotion } from '../services/AvatarIdentity';
 import { Mic, MicOff } from 'lucide-react';
-import { listen, sttSupport, type Listener, type ListenOptions } from '../services/voice/SpeechEngine';
-import { listenVerified } from '../services/voice/VoiceGuard';
+import { listen, sttSupport, recordedRecognizer, type Listener, type ListenOptions } from '../services/voice/SpeechEngine';
+import { listenVerified, verifiedVoiceReady } from '../services/voice/VoiceGuard';
 import { hasWakeWord, normalizeSpoken, pickRussianVoice } from '../services/voice/VoiceText';
-import { speakText, stopSpeaking, ttsAvailable } from '../services/voice/Tts';
+import { speakText, speakingNow, stopSpeaking, ttsAvailable } from '../services/voice/Tts';
 import { isAndroidApp } from '../platform';
 
 type Emotion = 'neutral' | 'happy' | 'sad' | 'laughing' | 'crying' | 'surprised' | 'talking';
@@ -118,21 +118,21 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
   );
 }
 
-/** Не слушаем саму себя: в браузере и Windows идёт озвучка (в Android WebView speechSynthesis нет — там всегда false). */
-const selfSpeaking = (): boolean => typeof window !== 'undefined' && !!window.speechSynthesis?.speaking;
+/** Не слушаем саму себя: идёт озвучка (браузер, Windows или голос телефона). */
+const selfSpeaking = (): boolean => speakingNow();
 
 /**
- * Слушать голосовую команду. В браузере и Windows — с проверкой голоса владельца (VoiceGuard).
- * В Android микрофон занимает распознавание телефона, сверить голос по той же записи нельзя, поэтому
- * команда идёт как «голосовая»: любое действие CRM только после нажатия кнопки (ActionGate), данные
- * CRM из голоса в ИИ не уходят — как и для голосовых команд на других платформах.
+ * Слушать голосовую команду с проверкой голоса владельца (VoiceGuard) — на сайте, в Windows и в Android.
+ * В Android для этого нужен записанный голос и распознавание записи (GigaAM на телефоне или Groq): тогда как
+ * на компьютере. Пока этого нет, слушает распознавание телефона: команда идёт как «голосовая», любое
+ * действие CRM только после нажатия кнопки (ActionGate), данные CRM из голоса в ИИ не уходят.
  */
 export function listenCommand(opts: ListenOptions & { accept?: (text: string) => boolean }): Listener | null {
-  if (isAndroidApp()) return listen(opts);
+  if (isAndroidApp() && !verifiedVoiceReady()) return listen(opts);
   return listenVerified(opts);
 }
 
-// Voice Control Component: Web Speech API where available, otherwise cloud speech-to-text (see services/voice).
+// Voice Control Component: Web Speech API where available, otherwise cloud or on-device speech-to-text (see services/voice).
 // Hands-free mode: always listening, reacts to phrases that start with «Светлана, …».
 // Every phrase is checked against the owner's voiceprint (VoiceGuard): other voices are ignored.
 // The first command also needs 3 random digits spoken aloud (protection against a recorded voice).
@@ -146,6 +146,9 @@ export function VoiceControl({ onCommand }: { onCommand?: (command: string) => v
   const onCommandRef = useRef(onCommand);
   const support = sttSupport();
   const android = isAndroidApp();
+  // Телефон с записанным голосом и распознаванием записи слушает как компьютер (в том числе «без рук»).
+  const phoneVerified = android && verifiedVoiceReady();
+  const phoneStt = phoneVerified ? recordedRecognizer()?.mode : undefined;
 
   useEffect(() => { onCommandRef.current = onCommand; }, [onCommand]);
   useEffect(() => () => listenerRef.current?.stop(), []);
@@ -194,8 +197,10 @@ export function VoiceControl({ onCommand }: { onCommand?: (command: string) => v
     else { listenerRef.current?.stop(); start(true); }
   };
 
-  const modeText = support.mode === 'native'
-    ? 'Распознавание: голос телефона · действия вы подтверждаете кнопкой'
+  const modeText = android
+    ? phoneVerified
+      ? `Распознавание: ${phoneStt === 'local' ? 'на телефоне (GigaAM)' : 'облачное'} · только ваш голос`
+      : 'Распознавание: голос телефона · действия вы подтверждаете кнопкой. Запишите голос и скачайте модель (Голос → настройки), чтобы включить «Светлана, …» без рук'
     : `${support.mode === 'web' ? 'Распознавание: встроенное' : support.mode === 'cloud' ? 'Распознавание: облачное' : 'Распознавание не настроено: кнопка «Голос» внизу слева → настройки'} · только ваш голос`;
 
   return (
@@ -230,8 +235,8 @@ export function VoiceControl({ onCommand }: { onCommand?: (command: string) => v
         </p>
         {transcript && <p className="text-sm text-indigo-300 italic">"{transcript}"</p>}
         {error && <p className="text-xs text-amber-300">{error}</p>}
-        {support.web && !android && (
-          <button onClick={toggleHandsFree} className={`text-xs px-3 py-1 rounded-full border ${handsFree ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-white/5 border-white/10 text-sv-muted hover:bg-white/10'}`}>
+        {((support.web && !android) || phoneVerified) && (
+          <button data-testid="hands-free" onClick={toggleHandsFree} className={`text-xs px-3 py-1 rounded-full border ${handsFree ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-white/5 border-white/10 text-sv-muted hover:bg-white/10'}`}>
             {handsFree ? 'Режим «Светлана, …» включён' : 'Включить «Светлана, …» без рук'}
           </button>
         )}
