@@ -8,15 +8,25 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Нативный мост для общего интерфейса. Страница видит те же команды, что в Windows (Tauri invoke):
  * secret_set, secret_has, ai_new_conversation, ai_cloud_chat — плюс то, что есть только в телефоне:
- * голос (voice_*, tts_*) и руки (hands_*). Любая другая команда отклоняется.
+ * голос (voice_*, tts_*), руки (hands_*), сохранение файлов (save_file) и полное удаление ключей
+ * (secret_wipe_all). Любая другая команда отклоняется.
  *
  * Сообщения принимаются только из главного окна своего адреса (проверка в MainActivity), размер — до
- * разбора JSON. Ключи, облако и руки всегда спрашивают пользователя в нативном окне.
+ * разбора JSON. Ключи, облако и руки всегда спрашивают пользователя в нативном окне; файл
+ * сохраняется только туда, куда человек сам выбрал в системном окне.
  */
 class Bridge(private val act: MainActivity) {
     companion object {
         private val ID_RE = Regex("^\\{\"id\":(\\d{1,9}),")
         private const val MAX_MESSAGE = 3 * 1024 * 1024
+        private const val MAX_SAVE_CHARS = 2_500_000
+        private val SAVE_MIMES = setOf("text/csv", "application/json", "text/html", "text/calendar", "text/plain")
+
+        /** Имя файла без путей, управляющих и служебных символов. */
+        fun safeFileName(raw: String): String {
+            val s = Steps.safe(raw).replace(Regex("[\\\\/:*?\"<>|]"), "_").trim('.', ' ')
+            return s.take(100).ifBlank { "svetlana.txt" }
+        }
 
         /** Ставится до загрузки страницы: тот же window.__TAURI_INTERNALS__.invoke, что в Windows. */
         val SHIM = """
@@ -79,6 +89,21 @@ class Bridge(private val act: MainActivity) {
                 val value = if (args.isNull("value")) null else args.opt("value") as? String ?: throw SecureAi.Fail("Некорректный ключ")
                 SecureAi.secretSet(act, args.optString("name"), value, act::confirm)
                 null
+            }
+            "secret_wipe_all" -> bg(done) {
+                if (!act.confirm("Удалить с этого телефона все ключи ИИ и сам ключ шифрования? Отменить нельзя.")) {
+                    throw SecureAi.Fail(SecureAi.CANCELLED)
+                }
+                SecretStore.clearAll(act)
+            }
+            "save_file" -> {
+                val mime = args.optString("mime").substringBefore(';').trim().lowercase()
+                val text = args.optString("text")
+                when {
+                    mime !in SAVE_MIMES -> done(false, "Этот тип файла нельзя сохранить")
+                    text.length > MAX_SAVE_CHARS -> done(false, "Файл слишком большой")
+                    else -> act.saveFile(safeFileName(args.optString("name")), mime, text, done)
+                }
             }
             "ai_new_conversation" -> bg(done) { SecureAi.newConversation() }
             "ai_cloud_chat" -> bg(done) {

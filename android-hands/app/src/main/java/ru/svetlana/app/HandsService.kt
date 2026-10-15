@@ -15,6 +15,7 @@ import android.view.accessibility.AccessibilityNodeInfo
  * pkg — приложение, в котором разрешено действовать: проверяется и у элемента, и у активного окна
  * непосредственно перед нажатием, вводом текста и внутри самого жеста (прямо перед dispatchGesture).
  * Открытого «жеста без привязки» нет: все жесты через gestureIn(pkg, ...).
+ * Нажимается только то, что подписано как в подтверждении: родительский элемент с ДРУГОЙ подписью не нажимается.
  */
 class HandsService : AccessibilityService() {
 
@@ -112,12 +113,19 @@ class HandsService : AccessibilityService() {
 
     fun tap(query: String, pkg: String? = null): Boolean {
         if (!inApp(pkg)) return false
+        val q = norm(query)
         val node = find(query, pkg) ?: return false
         var n: AccessibilityNodeInfo? = node
         var depth = 0
         while (n != null && depth < 8) {
             if (n.isClickable && n.isEnabled && nodeIn(n, pkg)) {
-                if (!inApp(pkg)) return false
+                // Родитель с собственной ДРУГОЙ подписью (например, «Оплатить» вокруг текста «Подробнее») не нажимаем:
+                // человек подтвердил другую кнопку.
+                if (depth > 0) {
+                    val own = norm(label(n))
+                    if (own.isNotEmpty() && !own.contains(q)) return false
+                }
+                if (!n.refresh() || !n.isVisibleToUser || !inApp(pkg)) return false
                 if (n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
                 break
             }
