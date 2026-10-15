@@ -1,9 +1,13 @@
 // Голос: озвучка ответов. Делит текст на фразы, выбирает русский женский голос, чистит эмодзи и ссылки.
+// В приложении для Android говорит синтез речи самого телефона (в Android WebView speechSynthesis нет).
 import { chunkForSpeech, pickRussianVoice, speakable } from './VoiceText';
+import { isAndroidApp } from '../../platform';
+import { androidSpeak, androidStopSpeaking } from '../AndroidBridge';
 
 const MUTE_KEY = 'svetlana_tts_muted';
 
 export function ttsAvailable(): boolean {
+  if (isAndroidApp()) return true;
   return typeof window !== 'undefined' && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
 }
 export function isMuted(): boolean {
@@ -14,11 +18,19 @@ export function setMuted(muted: boolean): void {
   if (muted) stopSpeaking();
 }
 export function stopSpeaking(): void {
+  if (isAndroidApp()) { void androidStopSpeaking().catch(() => undefined); return; }
   if (ttsAvailable()) window.speechSynthesis.cancel();
 }
 
 export function speakText(text: string, opts: { voice?: SpeechSynthesisVoice; onStart?: () => void; onEnd?: () => void; force?: boolean } = {}): void {
   if (!ttsAvailable() || (isMuted() && !opts.force)) { opts.onEnd?.(); return; }
+  if (isAndroidApp()) {
+    const clean = speakable(text).trim();
+    if (!clean) { opts.onEnd?.(); return; }
+    opts.onStart?.();
+    void androidSpeak(clean).catch(() => undefined).finally(() => opts.onEnd?.());
+    return;
+  }
   const synth = window.speechSynthesis;
   synth.cancel();
   const chunks = chunkForSpeech(speakable(text));

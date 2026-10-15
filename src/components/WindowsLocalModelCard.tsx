@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { isAndroidApp } from '../platform';
 
-export const WindowsLocalModelCard: React.FC = () => {
+// Локальная модель через Ollama живёт на компьютере: в приложении для Android карточку не показываем.
+const OllamaCard: React.FC = () => {
   const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'running' | 'not_running'>('checking');
   const [models, setModels] = useState<string[]>([]);
 
@@ -62,3 +64,5 @@ export const WindowsLocalModelCard: React.FC = () => {
     </div>
   );
 };
+
+export const WindowsLocalModelCard: React.FC = () => (isAndroidApp() ? null : <OllamaCard />);

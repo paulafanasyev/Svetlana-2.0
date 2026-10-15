@@ -1,7 +1,9 @@
-// Распознавание речи на самом компьютере (приложение для Windows): модель GigaAM-v3, работает в нативной
+// Распознавание речи на самом компьютере (только приложение для Windows): модель GigaAM-v3, работает в нативной
 // части (src-tauri/src/local_stt.rs). Используется для проверки голоса цифрами: текст распознаётся из той же
 // записи, по которой сверяется голос, и запись никуда не отправляется. Модель скачивается только после
-// подтверждения в нативном окне Windows и проверяется по SHA-256.
+// подтверждения в нативном окне Windows и проверяется по SHA-256. В Android этой модели нет (там своё
+// распознавание телефона), поэтому там всё это выключено.
+import { isWindowsApp } from '../../platform';
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
@@ -16,7 +18,7 @@ export interface LocalSttStatus {
 
 function invoker(): Invoke | null {
   const inv = (globalThis as any).__TAURI_INTERNALS__?.invoke;
-  return typeof inv === 'function' ? (inv as Invoke) : null;
+  return typeof inv === 'function' && isWindowsApp() ? (inv as Invoke) : null;
 }
 
 function need(): Invoke {
@@ -28,7 +30,7 @@ function need(): Invoke {
 let ready = false;
 
 /** Установлена ли модель (по последней проверке состояния). */
-export function localSttReady(): boolean { return ready; }
+export function localSttReady(): boolean { return ready && isWindowsApp(); }
 
 /** Есть ли вообще возможность распознавать на компьютере (запущено приложение для Windows). */
 export function localSttAvailable(): boolean { return invoker() !== null; }
