@@ -1,19 +1,26 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { aiGateway, type AIProvider } from '../services/AIGateway';
 import { SVETLANA_CORE_ORIGIN, SVETLANA_CORE_MODEL } from '../services/SvetlanaCore';
+import { isNativeApp } from '../services/security/NativeBridge';
+import { isAndroidApp, secureStoreName } from '../platform';
 import {
   Cpu, Server, Settings, Key, Zap, Cloud, HardDrive,
-  TestTube, AlertCircle, CheckCircle2, X, Plus, Trash2,
-  Loader2, Download, Terminal, RefreshCw, Check
+  TestTube, AlertCircle, CheckCircle2, X,
+  Loader2, Download, Terminal, Check
 } from 'lucide-react';
 
-// Ошибки нативной части (Windows) приходят строкой, остальные — Error.
+// Ошибки нативной части (Windows и Android) приходят строкой, остальные — Error.
 const errorText = (e: unknown): string => {
   const m = (e as { message?: unknown } | null)?.message;
   const s = typeof m === 'string' && m ? m : String(e ?? '');
   return s.slice(0, 300) || 'Ошибка подключения';
 };
+
+/** Где хранится ключ на этой платформе. */
+export function keyStoredText(): string {
+  return isNativeApp() ? `Ключ хранится в ${secureStoreName()}.` : 'Ключ хранится в зашифрованном хранилище браузера.';
+}
 
 // ==================== PRESET PROVIDERS ====================
 const PRESET_PROVIDERS: Omit<AIProvider, 'enabled' | 'apiKey'>[] = [
@@ -87,7 +94,7 @@ function ConfigModal({ provider, onSave, onClose }: {
     };
 
     try {
-      // Проверка сохраняет настройки и ЖДЁТ записи ключа (в Windows — после окна подтверждения),
+      // Проверка сохраняет настройки и ЖДЁТ записи ключа (в приложении — после окна подтверждения),
       // иначе пробный запрос уходил бы ещё без ключа.
       await aiGateway.addProvider(tempProvider);
       setSaved(true);
@@ -130,7 +137,7 @@ function ConfigModal({ provider, onSave, onClose }: {
       <motion.div
         initial={{ scale: 0.95, y: 15 }}
         animate={{ scale: 1, y: 0 }}
-        className="w-full max-w-lg glass-card rounded-2xl p-6 border border-slate-700 bg-slate-900 text-white"
+        className="w-full max-w-lg max-h-[90vh] overflow-y-auto glass-card rounded-2xl p-5 sm:p-6 border border-slate-700 bg-slate-900 text-white"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-6">
@@ -138,7 +145,7 @@ function ConfigModal({ provider, onSave, onClose }: {
             <h3 className="text-lg font-semibold">{provider.name}</h3>
             <p className="text-xs text-slate-400">{provider.type === 'offline' ? 'Офлайн / Локальный движок' : isCore ? 'Единая Светлана на своём сервере (мир-самозанятых.рф)' : 'Внешний облачный ИИ'}</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400">
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400" aria-label="Закрыть">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -146,23 +153,21 @@ function ConfigModal({ provider, onSave, onClose }: {
         <div className="space-y-4">
           {provider.type === 'online' && (
             <div>
-              <label className="text-sm text-slate-300 mb-1 block">{isCore ? 'Ключ Светланы (ASSISTANT_KEY_SVETLANA2)' : 'Ключ API (API Key)'}</label>
+              <label className="text-sm text-slate-300 mb-1 block">{isCore ? 'Ключ Светланы' : 'Ключ API (API Key)'}</label>
               <div className="relative">
                 <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                 <input
                   type="password"
                   value={apiKey}
                   onChange={e => { setApiKey(e.target.value); setSaved(false); }}
-                  placeholder={isCore ? 'ключ с сервера Светланы' : 'sk-...'}
+                  placeholder={isCore ? 'ключ Светланы' : 'sk-...'}
                   autoComplete="off"
                   className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-indigo-500"
                 />
               </div>
-              {isCore && (
-                <p className="text-xs text-slate-400 mt-1.5">
-                  На сервере: <span className="font-mono">grep ASSISTANT_KEY_SVETLANA2 /etc/svetlana/backend.env</span>. Ключ хранится в Диспетчере учётных данных Windows.
-                </p>
-              )}
+              <p data-testid="key-storage" className="text-xs text-slate-400 mt-1.5">
+                {isCore ? 'Ключ выдаёт владелец сервера Светланы. ' : ''}{keyStoredText()}
+              </p>
             </div>
           )}
 
@@ -186,7 +191,7 @@ function ConfigModal({ provider, onSave, onClose }: {
               <select
                 value={model}
                 onChange={e => { setModel(e.target.value); setSaved(false); }}
-                className="flex-1 px-4 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-indigo-500"
+                className="flex-1 min-w-0 px-4 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-indigo-500"
               >
                 {models.map(m => (
                   <option key={m} value={m} className="bg-slate-900">{m}</option>
@@ -248,7 +253,9 @@ function ConfigModal({ provider, onSave, onClose }: {
 
 // ==================== MAIN PAGE ====================
 export default function AIProvidersPage() {
-  const [activeTab, setActiveTab] = useState<'offline' | 'online'>('offline');
+  // Локальные модели (Ollama и др.) работают на компьютере; в приложении для Android их не показываем.
+  const android = isAndroidApp();
+  const [activeTab, setActiveTab] = useState<'offline' | 'online'>(android ? 'online' : 'offline');
   const [providers, setProviders] = useState<AIProvider[]>(aiGateway.getAllProviders());
   const [configuringProvider, setConfiguringProvider] = useState<(Omit<AIProvider, 'enabled'> & { enabled?: boolean }) | null>(null);
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
@@ -261,6 +268,7 @@ export default function AIProvidersPage() {
   }, []);
 
   const activeProvider = aiGateway.getActiveProvider();
+  const tab = android ? 'online' : activeTab;
 
   const handleCopy = (command: string) => {
     void navigator.clipboard?.writeText(command).catch(() => undefined);
@@ -287,13 +295,6 @@ export default function AIProvidersPage() {
     setConfiguringProvider(null);
   };
 
-  const handleRemoveProvider = (id: string) => {
-    aiGateway.removeProvider(id)
-      .catch(e => console.error('Не удалось удалить ключ', e))
-      .finally(() => setProviders(aiGateway.getAllProviders()));
-  };
-  void handleRemoveProvider;
-
   return (
     <div className="space-y-6 text-white max-w-6xl mx-auto">
       {/* Header */}
@@ -304,19 +305,28 @@ export default function AIProvidersPage() {
             Модели и Провайдеры ИИ
           </h2>
           <p className="text-sm text-slate-400 mt-1">
-            Переключайтесь между локальными офлайн-моделями на вашем ПК и мощными облачными ИИ.
+            {android
+              ? 'На телефоне Светлана отвечает через свой сервер или облачные ИИ. Локальные модели (Ollama и др.) работают только на компьютере.'
+              : 'Переключайтесь между локальными офлайн-моделями на вашем ПК и мощными облачными ИИ.'}
           </p>
         </div>
       </div>
 
+      {android && activeProvider?.type === 'offline' && (
+        <div data-testid="offline-on-phone" className="rounded-xl p-4 border border-yellow-500/30 bg-yellow-500/10 text-sm text-yellow-200 flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>Сейчас выбрана локальная модель компьютера — на телефоне она не работает. Подключите «★ Светлана Сервер» или облачный ИИ ниже.</span>
+        </div>
+      )}
+
       {/* Active Provider Card */}
-      {activeProvider && (
-        <div className="glass-card rounded-2xl p-5 border border-emerald-500/30 bg-emerald-950/20 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-emerald-500/20 flex items-center justify-center">
+      {activeProvider && !(android && activeProvider.type === 'offline') && (
+        <div className="glass-card rounded-2xl p-5 border border-emerald-500/30 bg-emerald-950/20 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="w-12 h-12 shrink-0 rounded-xl bg-emerald-500/20 flex items-center justify-center">
               <Zap className="w-6 h-6 text-emerald-400" />
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                   Активный ИИ
@@ -324,7 +334,7 @@ export default function AIProvidersPage() {
                 <span className="text-xs text-slate-400">{activeProvider.type === 'offline' ? 'Локальный (без интернета)' : 'Облачный API'}</span>
               </div>
               <h3 className="text-lg font-bold text-white mt-0.5">{activeProvider.name}</h3>
-              <p className="text-xs font-mono text-slate-300">Модель: {activeProvider.model} • {activeProvider.endpoint}</p>
+              <p className="text-xs font-mono text-slate-300 break-all">Модель: {activeProvider.model} • {activeProvider.endpoint}</p>
             </div>
           </div>
           <button
@@ -337,39 +347,41 @@ export default function AIProvidersPage() {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-slate-800 pb-2">
-        <button
-          onClick={() => setActiveTab('offline')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-            activeTab === 'offline'
-              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-lg shadow-cyan-500/10'
-              : 'text-slate-400 hover:text-white hover:bg-slate-800'
-          }`}
-        >
-          <HardDrive className="w-4 h-4" />
-          Локальные модели (Офлайн)
-        </button>
+      <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-2">
+        {!android && (
+          <button
+            onClick={() => setActiveTab('offline')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+              tab === 'offline'
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-lg shadow-cyan-500/10'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <HardDrive className="w-4 h-4" />
+            Локальные модели (Офлайн)
+          </button>
+        )}
         <button
           onClick={() => setActiveTab('online')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-            activeTab === 'online'
+            tab === 'online'
               ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-lg shadow-purple-500/10'
               : 'text-slate-400 hover:text-white hover:bg-slate-800'
           }`}
         >
           <Cloud className="w-4 h-4" />
-          Внешние облачные ИИ (OpenAI, Claude, Groq...)
+          {android ? 'Светлана Сервер и облачные ИИ' : 'Внешние облачные ИИ (OpenAI, Claude, Groq...)'}
         </button>
       </div>
 
-      {/* Tab 1: Offline Models Catalog */}
-      {activeTab === 'offline' && (
+      {/* Tab 1: Offline Models Catalog (только компьютер) */}
+      {tab === 'offline' && (
         <div className="space-y-6">
           <div>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <h3 className="text-base font-semibold flex items-center gap-2 text-cyan-300">
                 <Download className="w-4 h-4" />
-                Каталог локальных моделей для скачивания на Windows
+                Каталог локальных моделей для компьютера
               </h3>
               <span className="text-xs text-slate-400">Работают через Ollama / LM Studio без отправки данных в сеть</span>
             </div>
@@ -450,13 +462,13 @@ export default function AIProvidersPage() {
                         : 'border-slate-800 bg-slate-900/40'
                     }`}
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
                       <div className="p-2.5 rounded-lg bg-cyan-500/10 text-cyan-400">
                         <HardDrive className="w-5 h-5" />
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <h4 className="font-semibold text-sm">{p.name}</h4>
-                        <p className="text-xs font-mono text-slate-400">{configured?.model || p.model} • {configured?.endpoint || p.endpoint}</p>
+                        <p className="text-xs font-mono text-slate-400 truncate">{configured?.model || p.model} • {configured?.endpoint || p.endpoint}</p>
                       </div>
                     </div>
 
@@ -477,6 +489,7 @@ export default function AIProvidersPage() {
                         onClick={() => setConfiguringProvider(configured || { ...p, apiKey: '' })}
                         className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
                         title="Настройки"
+                        aria-label="Настройки"
                       >
                         <Settings className="w-4 h-4" />
                       </button>
@@ -490,7 +503,7 @@ export default function AIProvidersPage() {
       )}
 
       {/* Tab 2: Online Cloud Providers */}
-      {activeTab === 'online' && (
+      {tab === 'online' && (
         <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {PRESET_PROVIDERS.filter(p => p.type === 'online').map(p => {
