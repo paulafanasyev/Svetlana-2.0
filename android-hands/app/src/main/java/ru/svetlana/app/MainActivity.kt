@@ -37,7 +37,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * в WebView по адресу https://appassets.androidplatform.net. Ключи, облако, голос и руки — через Bridge.
  *
  * WebView закрыт: без доступа к файлам и content://, без смешанного контента, с Safe Browsing, без отладки;
- * чужие адреса открываются во внешнем браузере (только https, mailto, tel), микрофон — только своей странице.
+ * чужие адреса открываются во внешнем браузере (только https, mailto, tel, sms), микрофон — только своей странице.
+ * Файлы (экспорт CRM, документы, .ics) сохраняются через системное окно «Сохранить как»: место выбирает человек.
+ * Системная кнопка «Назад» сначала закрывает открытое окно страницы (CRM, мастер настройки), и только потом выходит.
  */
 class MainActivity : Activity() {
     companion object {
@@ -45,17 +47,23 @@ class MainActivity : Activity() {
         const val ORIGIN = "https://$HOST"
         private const val REQ_AUDIO = 41
         private const val REQ_FILE = 42
+        private const val REQ_SAVE = 43
         private const val CONFIRM_TIMEOUT_MIN = 3L
+        /** Спросить страницу: есть ли что закрыть по «Назад» (src/services/BackStack.ts). */
+        private const val BACK_JS = "(function(){try{var f=window.__svetlanaBack;return typeof f==='function'&&f()===true;}catch(e){return false;}})()"
         private const val OUTDATED = "<html><body style='font-family:sans-serif;padding:24px;background:#0b1020;color:#fff'>" +
             "<h2>Обновите Android System WebView</h2>" +
             "<p>Светлане нужен свежий компонент WebView (или Chrome). Обновите его в Google Play и откройте приложение снова.</p>" +
             "</body></html>"
     }
 
+    private class PendingSave(val text: String, val done: Done)
+
     val main = Handler(Looper.getMainLooper())
     private lateinit var web: WebView
     private var bridge: Bridge? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
+    private var pendingSave: PendingSave? = null
     private val audioWaiters = ArrayList<(Boolean) -> Unit>()
     private val confirmLock = Any()
     /** Открытое окно подтверждения (только главный поток). */
@@ -123,7 +131,7 @@ class MainActivity : Activity() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val u = request.url
                 if (u.scheme == "https" && u.host == HOST) return false
-                if (request.isForMainFrame && u.scheme in setOf("https", "mailto", "tel")) openExternal(u)
+                if (request.isForMainFrame && u.scheme in setOf("https", "mailto", "tel", "sms")) openExternal(u)
                 return true
             }
 
@@ -186,6 +194,25 @@ class MainActivity : Activity() {
         ""
     }
 
+    /**
+     * Сохранить текстовый файл через системное окно «Сохранить как» (без разрешений на память).
+     * Ответ: true — сохранён, false — человек отменил. Вызывать в главном потоке.
+     */
+    fun saveFile(name: String, mime: String, text: String, done: Done) {
+        if (pendingSave != null) { done(false, "Уже сохраняю другой файл"); return }
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(mime)
+            .putExtra(Intent.EXTRA_TITLE, name)
+        pendingSave = PendingSave(text, done)
+        try {
+            startActivityForResult(intent, REQ_SAVE)
+        } catch (e: ActivityNotFoundException) {
+            pendingSave = null
+            done(false, "На телефоне нет приложения для сохранения файлов")
+        }
+    }
+
     /** Микрофон: спросить разрешение Android, если его ещё нет. Вызывать в главном потоке. */
     fun withAudio(cb: (Boolean) -> Unit) {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
@@ -218,6 +245,22 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_SAVE) {
+            val p = pendingSave ?: return
+            pendingSave = null
+            val uri = data?.data
+            if (resultCode != RESULT_OK || uri == null) { p.done(true, false); return }
+            Thread {
+                try {
+                    val out = contentResolver.openOutputStream(uri, "wt") ?: throw IllegalStateException("Нет доступа к файлу")
+                    out.use { it.write(p.text.toByteArray(Charsets.UTF_8)) }
+                    p.done(true, true)
+                } catch (e: Exception) {
+                    p.done(false, "Не удалось сохранить файл")
+                }
+            }.start()
+            return
+        }
         if (requestCode != REQ_FILE) return
         fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data))
         fileCallback = null
@@ -265,12 +308,20 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (::web.isInitialized && web.canGoBack()) {
-            web.goBack()
-        } else {
-            @Suppress("DEPRECATION")
-            super.onBackPressed()
+        if (!::web.isInitialized || bridge == null) {
+            systemBack()
+            return
         }
+        // Сначала страница: открытое окно (CRM, Бизнес, Кабинет, мастер настройки) закрывается, а не всё приложение.
+        web.evaluateJavascript(BACK_JS) { r ->
+            if (r == "true" || isFinishing || isDestroyed) return@evaluateJavascript
+            if (web.canGoBack()) web.goBack() else systemBack()
+        }
+    }
+
+    private fun systemBack() {
+        @Suppress("DEPRECATION")
+        super.onBackPressed()
     }
 
     override fun onPause() {
@@ -287,6 +338,8 @@ class MainActivity : Activity() {
         confirmDialog?.dismiss()
         confirmDialog = null
         drainAudioWaiters(false)
+        pendingSave?.done?.invoke(false, "Приложение закрыто")
+        pendingSave = null
         bridge?.close()
         bridge = null
         fileCallback?.onReceiveValue(null)

@@ -32,6 +32,10 @@ const AVATAR_SRC = `${import.meta.env.BASE_URL}images/avatar/svetlana-master.jpg
 /** На телефоне локальная модель компьютера (127.0.0.1) недоступна. */
 export const OFFLINE_ON_PHONE = 'На телефоне локальные модели компьютера не работают: нажми «Настройка» и подключи «★ Светлана Сервер» или облачный ИИ. CRM-команды работают и без него.';
 
+/** Быстрые команды чата. На телефоне нет переноса контактов с телефона через Svetlana Home (это функция ПК). */
+export const QUICK_DESKTOP = ['Привет!', 'Занеси контакты с телефона в CRM', 'Сводка CRM', 'Расскажи шутку', 'Кто ты?'];
+export const QUICK_PHONE = ['Привет!', 'Сводка CRM', 'Расскажи шутку', 'Кто ты?'];
+
 /** Что написать в настройках голоса на каждой платформе. */
 export function voiceLabels(platform: 'windows' | 'android' | 'web', voices: number) {
   if (platform === 'android') {
@@ -85,6 +89,7 @@ function cleanEmotionTag(text: string): string {
 export default function AvatarPage() {
   const platform = appPlatform();
   const android = platform === 'android';
+  const quick = android ? QUICK_PHONE : QUICK_DESKTOP;
   const [emotion, setEmotion] = useState<Emotion>('neutral');
   const [messages, setMessages] = useState<Message[]>(() => [greeting()]);
   const [input, setInput] = useState('');
@@ -163,7 +168,9 @@ export default function AvatarPage() {
 
       const provider = aiGateway.getActiveProvider();
       if (!provider) {
-        throw new Error('ИИ не выбран: нажми «Настройка» вверху или открой «Модели ИИ». CRM-команды («Сводка CRM», «Занеси контакты с телефона в CRM») работают и без него.');
+        throw new Error(android
+          ? 'ИИ не выбран: нажми «Настройка» вверху или открой «Модели ИИ». CRM-команды («Сводка CRM») работают и без него.'
+          : 'ИИ не выбран: нажми «Настройка» вверху или открой «Модели ИИ». CRM-команды («Сводка CRM», «Занеси контакты с телефона в CRM») работают и без него.');
       }
       if (android && provider.type === 'offline') throw new Error(OFFLINE_ON_PHONE);
 
@@ -382,12 +389,12 @@ export default function AvatarPage() {
               </div>
 
               <div className="flex flex-wrap gap-2 mt-3">
-                {['Привет!', 'Занеси контакты с телефона в CRM', 'Сводка CRM', 'Расскажи шутку', 'Кто ты?'].map(phrase => (
+                {quick.map(phrase => (
                   <button
                     key={phrase}
                     onClick={() => sendMessage(phrase)}
                     disabled={isLoading}
-                    className="px-3 py-1 text-xs rounded-full bg-white/5 border border-white/10 text-sv-muted hover:bg-white/10 transition-colors disabled:opacity-50"
+                    className="px-3 py-1.5 text-xs rounded-full bg-white/5 border border-white/10 text-sv-muted hover:bg-white/10 transition-colors disabled:opacity-50"
                   >
                     {phrase}
                   </button>

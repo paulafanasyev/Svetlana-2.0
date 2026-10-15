@@ -8,6 +8,7 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.URL
 import java.security.SecureRandom
+import java.util.concurrent.locks.ReentrantReadWriteLock
 import javax.net.ssl.HttpsURLConnection
 
 /**
@@ -19,6 +20,12 @@ import javax.net.ssl.HttpsURLConnection
  * фиксированный официальный адрес выбранного сервиса, без редиректов, с ограничением размера и времени.
  * Любое изменение ключа и отправка переписки в облако подтверждаются в НАТИВНОМ окне телефона;
  * разрешение привязано к провайдеру, модели и случайному ID разговора (128 бит SecureRandom), 15 минут и 30 запросов.
+ *
+ * Полное удаление (wipeAll) — «забор»: поколение ключей меняется, разрешения сбрасываются, идущие запросы рвутся.
+ * Последняя проверка поколения и отправка тела запроса идут под замком чтения, а смена поколения — под
+ * замком записи: тело, уже уходящее в момент нажатия «Удалить», досылается и затем обрывается,
+ * а ни одна новая отправка после этой черты не начинается. Запрос или сохранение ключа, начатые до
+ * удаления, после него ничего не отправят и не запишут.
  */
 object SecureAi {
     class Fail(message: String) : Exception(message)
@@ -43,6 +50,8 @@ object SecureAi {
     const val CONVERSATION_UNKNOWN = "CONVERSATION_UNKNOWN: разговор не выдан приложением или устарел"
     const val TOO_BIG_RESPONSE = "Ответ слишком большой"
     const val CANCELLED = "Отменено пользователем"
+    const val WIPED = "Ключи удалены: запрос остановлен"
+    const val WIPE_QUESTION = "Удалить с этого телефона все ключи ИИ и сам ключ шифрования? Отменить нельзя."
 
     private class Consent(val provider: String, val model: String, val conversation: String, val at: Long, var uses: Int)
     private class Issued(val id: String, val at: Long)
@@ -53,6 +62,14 @@ object SecureAi {
     private val consents = ArrayList<Consent>()
     private val issued = ArrayDeque<Issued>()
     private val random = SecureRandom()
+
+    /** Забор полного удаления: поколение ключей и идущие соединения (всё под wipeLock). */
+    private val wipeLock = Any()
+    /** Отправка тела запроса — замок чтения (можно параллельно), смена поколения — замок записи. Честный: удаление не голодает. */
+    private val dispatch = ReentrantReadWriteLock(true)
+    @Volatile
+    private var generation = 0L
+    private val active = HashSet<HttpsURLConnection>()
 
     private fun now() = SystemClock.elapsedRealtime()
 
@@ -70,6 +87,7 @@ object SecureAi {
     }
 
     fun secretSet(ctx: Context, name: String, value: String?, confirm: (String) -> Boolean) {
+        val gen = generation
         val provider = providerOfSecret(name) ?: throw Fail("Недопустимое имя ключа")
         val v = value?.takeIf { it.isNotEmpty() }
         if (v != null) {
@@ -85,7 +103,32 @@ object SecureAi {
             "Удалить API-ключ «$provider» из хранилища телефона?"
         }
         if (!confirm(question)) throw Fail(CANCELLED)
-        SecretStore.put(ctx, storeName(provider), v)
+        // Если пока ждали ответа, всё удалили — старый запрос ключ не восстанавливает.
+        synchronized(wipeLock) {
+            if (generation != gen) throw Fail(WIPED)
+            SecretStore.put(ctx, storeName(provider), v)
+        }
+    }
+
+    /**
+     * Удалить все ключи и ключ шифрования после нативного подтверждения. Ждёт отправки уже уходящих тел
+     * запросов (замок записи), затем меняет поколение, сбрасывает разрешения и рвёт идущие соединения.
+     */
+    fun wipeAll(ctx: Context, confirm: (String) -> Boolean): Any? {
+        if (!confirm(WIPE_QUESTION)) throw Fail(CANCELLED)
+        val w = dispatch.writeLock()
+        w.lock()
+        try {
+            synchronized(wipeLock) {
+                generation++
+                synchronized(consents) { consents.clear() }
+                active.forEach { runCatching { it.disconnect() } }
+                active.clear()
+                return SecretStore.clearAll(ctx)
+            }
+        } finally {
+            w.unlock()
+        }
     }
 
     /** Новый разговор: случайный ID, к которому будет привязано разрешение на облако. */
@@ -148,6 +191,7 @@ object SecureAi {
     }
 
     fun cloudChat(ctx: Context, provider: String, model: String, conversation: String, body: Any?, confirm: (String) -> Boolean): String {
+        val gen = generation
         val p = PROVIDERS.firstOrNull { it == provider } ?: throw Fail("Этот облачный сервис не поддерживается")
         val obj = body as? JSONObject ?: throw Fail("Тело запроса должно быть объектом")
         // Размер — до разбора схемы: огромное тело не должно проходить рекурсивную проверку.
@@ -162,10 +206,16 @@ object SecureAi {
                 "Разговор: «$preview»\n" +
                 "Разрешение действует только для этого разговора: 15 минут и не больше $CONSENT_MAX_USES запросов."
             if (!confirm(question)) throw Fail(CANCELLED)
-            synchronized(consents) { consents.add(Consent(p, model, conversation, now(), 1)) }
+            synchronized(wipeLock) {
+                if (generation != gen) throw Fail(WIPED)
+                synchronized(consents) { consents.add(Consent(p, model, conversation, now(), 1)) }
+            }
         }
-        val key = SecretStore.get(ctx, storeName(p)) ?: throw Fail("API-ключ не задан")
-        return post(p, model, key, bodyBytes)
+        val key = synchronized(wipeLock) {
+            if (generation != gen) throw Fail(WIPED)
+            SecretStore.get(ctx, storeName(p))
+        } ?: throw Fail("API-ключ не задан")
+        return post(p, model, key, bodyBytes, gen)
     }
 
     // ---------- строгая схема тела запроса (как validate_body в secure_ai.rs) ----------
@@ -284,9 +334,14 @@ object SecureAi {
         else -> throw Fail("Этот облачный сервис не поддерживается")
     }
 
-    private fun post(p: String, model: String, key: String, body: ByteArray): String {
+    private fun post(p: String, model: String, key: String, body: ByteArray, gen: Long): String {
         val c = URL(endpoint(p, model)).openConnection() as? HttpsURLConnection ?: throw Fail("Разрешены только https-адреса")
         try {
+            // Соединение видно «забору»: полное удаление его оборвёт.
+            synchronized(wipeLock) {
+                if (generation != gen) throw Fail(WIPED)
+                active.add(c)
+            }
             c.instanceFollowRedirects = false
             c.useCaches = false
             c.connectTimeout = 20_000
@@ -303,7 +358,15 @@ object SecureAi {
                 "google" -> c.setRequestProperty("x-goog-api-key", key)
                 else -> c.setRequestProperty("Authorization", "Bearer $key")
             }
-            c.outputStream.use { it.write(body) }
+            // Последняя проверка и отправка — одно целое: поколение меняется только под замком записи.
+            val r = dispatch.readLock()
+            r.lock()
+            try {
+                if (generation != gen) throw Fail(WIPED)
+                c.outputStream.use { it.write(body) }
+            } finally {
+                r.unlock()
+            }
             val code = c.responseCode
             if (c.contentLengthLong > MAX_RESPONSE) throw Fail(TOO_BIG_RESPONSE)
             val stream = if (code in 200..299) c.inputStream else c.errorStream
@@ -317,14 +380,17 @@ object SecureAi {
                     out.write(buf, 0, n)
                 }
             }
+            if (generation != gen) throw Fail(WIPED)
             val text = String(out.toByteArray(), Charsets.UTF_8)
             if (code !in 200..299) throw Fail("HTTP $code: ${text.take(500)}")
             return text
         } catch (e: Fail) {
             throw e
         } catch (e: IOException) {
+            if (generation != gen) throw Fail(WIPED)
             throw Fail("Нет связи с сервером, проверьте интернет (error sending request: ${e.javaClass.simpleName})")
         } finally {
+            synchronized(wipeLock) { active.remove(c) }
             c.disconnect()
         }
     }

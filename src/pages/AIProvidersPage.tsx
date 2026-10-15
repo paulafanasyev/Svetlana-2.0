@@ -4,6 +4,7 @@ import { aiGateway, type AIProvider } from '../services/AIGateway';
 import { SVETLANA_CORE_ORIGIN, SVETLANA_CORE_MODEL } from '../services/SvetlanaCore';
 import { isNativeApp } from '../services/security/NativeBridge';
 import { isAndroidApp, secureStoreName } from '../platform';
+import { onBack } from '../services/BackStack';
 import {
   Cpu, Server, Settings, Key, Zap, Cloud, HardDrive,
   TestTube, AlertCircle, CheckCircle2, X,
@@ -80,6 +81,9 @@ function ConfigModal({ provider, onSave, onClose }: {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const isCore = provider.id === 'svetlana';
+
+  // Системная кнопка «Назад» телефона = «Отмена».
+  useEffect(() => onBack(onClose), []);
 
   const handleTest = async () => {
     setTestStatus('testing');

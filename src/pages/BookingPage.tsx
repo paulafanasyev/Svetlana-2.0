@@ -6,7 +6,7 @@ import { bizStore, formatRub } from '../services/biz/BizStore';
 import { crmStore } from '../services/crm/CRMStore';
 
 const DAY = 86_400_000;
-const input = 'w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-indigo-500/50';
+const input = 'w-full min-w-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-indigo-500/50';
 const btn = 'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50';
 const btnPrimary = `${btn} bg-indigo-600 hover:bg-indigo-700 text-white`;
 const btnGhost = `${btn} bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10`;
@@ -90,7 +90,7 @@ export default function BookingPage() {
     <div className="space-y-4 text-white">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className={`${card} lg:col-span-2`}>
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-semibold flex items-center gap-2"><CalendarClock className="w-4 h-4 text-indigo-300" />{dayLabel(day + 12 * 3_600_000, now).replace(/^./, c => c.toUpperCase())}</h3>
             <div className="flex gap-1">
               <button className={btnGhost} onClick={() => setDay(startOfDay(day - DAY + 12 * 3_600_000))} aria-label="Предыдущий день"><ChevronLeft className="w-4 h-4" /></button>
@@ -101,16 +101,16 @@ export default function BookingPage() {
           {agenda.length ? agenda.map(a => (
             <div key={a.id} className={`rounded-lg p-3 border ${a.status === 'booked' ? 'bg-indigo-500/10 border-indigo-500/20' : 'bg-white/5 border-white/10 opacity-70'}`}>
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="font-medium">{timeOf(a.start)}–{timeOf(a.end)} · {a.clientName}</p>
-                  <p className="text-xs text-slate-400">{a.serviceName}{a.price ? ` · ${formatRub(a.price)}` : ''}{a.phone ? ` · ${a.phone}` : ''}{a.status !== 'booked' ? ` · ${BOOKING_STATUS_LABELS[a.status]}` : ''}</p>
+                <div className="min-w-0">
+                  <p className="font-medium break-words">{timeOf(a.start)}–{timeOf(a.end)} · {a.clientName}</p>
+                  <p className="text-xs text-slate-400 break-words">{a.serviceName}{a.price ? ` · ${formatRub(a.price)}` : ''}{a.phone ? ` · ${a.phone}` : ''}{a.status !== 'booked' ? ` · ${BOOKING_STATUS_LABELS[a.status]}` : ''}</p>
                 </div>
                 {a.status === 'booked' && (
                   <div className="flex flex-wrap gap-1">
-                    <button className={btnGhost} onClick={() => complete(a)} title="Пришёл и оплатил"><Check className="w-4 h-4 text-emerald-300" /></button>
-                    <button className={btnGhost} onClick={() => bookingStore.setStatus(a.id, 'noshow')} title="Не пришёл"><UserX className="w-4 h-4 text-amber-300" /></button>
-                    <button className={btnGhost} onClick={() => bookingStore.setStatus(a.id, 'cancelled')} title="Отменить"><X className="w-4 h-4 text-red-300" /></button>
-                    <button className={btnGhost} onClick={() => downloadIcs(a)} title="В календарь телефона"><Download className="w-4 h-4" /></button>
+                    <button className={btnGhost} onClick={() => complete(a)} title="Пришёл и оплатил" aria-label="Пришёл и оплатил"><Check className="w-4 h-4 text-emerald-300" /></button>
+                    <button className={btnGhost} onClick={() => bookingStore.setStatus(a.id, 'noshow')} title="Не пришёл" aria-label="Не пришёл"><UserX className="w-4 h-4 text-amber-300" /></button>
+                    <button className={btnGhost} onClick={() => bookingStore.setStatus(a.id, 'cancelled')} title="Отменить" aria-label="Отменить"><X className="w-4 h-4 text-red-300" /></button>
+                    <button className={btnGhost} onClick={() => downloadIcs(a)} title="В календарь телефона" aria-label="В календарь телефона"><Download className="w-4 h-4" /></button>
                   </div>
                 )}
               </div>
@@ -128,7 +128,7 @@ export default function BookingPage() {
           <input className={input} type="date" value={date} min={isoDate(now)} onChange={e => { setDate(e.target.value); setTime(''); }} />
           <div className="flex flex-wrap gap-1.5">
             {slots.length ? slots.map(t => (
-              <button type="button" key={t} onClick={() => setTime(timeOf(t))} className={`px-2.5 py-1 rounded-md text-xs ${time === timeOf(t) ? 'bg-indigo-600 text-white' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}>{timeOf(t)}</button>
+              <button type="button" key={t} onClick={() => setTime(timeOf(t))} className={`px-3 py-1.5 rounded-md text-xs ${time === timeOf(t) ? 'bg-indigo-600 text-white' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}>{timeOf(t)}</button>
             )) : <p className="text-xs text-slate-500">В этот день свободных окон нет.</p>}
           </div>
           <button className={btnPrimary} disabled={!client.trim() || !time || !svc}>Записать</button>
@@ -143,7 +143,7 @@ export default function BookingPage() {
         <h3 className="font-semibold flex items-center gap-2"><Bell className="w-4 h-4 text-amber-300" />Напоминания на завтра</h3>
         {reminders.length ? reminders.map(r => (
           <div key={r.appointment.id} className="rounded-lg bg-black/20 p-3 space-y-2">
-            <p className="text-sm">{r.text}</p>
+            <p className="text-sm break-words">{r.text}</p>
             <div className="flex flex-wrap gap-2">
               <button className={btnGhost} onClick={() => copy(r.text)}><Copy className="w-4 h-4" />Копировать</button>
               {phoneLinks(r.appointment.phone, r.text)}
@@ -181,15 +181,15 @@ function BookingSettings({ version }: { version: number }) {
       <div className={card}>
         <h3 className="font-semibold">Услуги</h3>
         {services.map(s => (
-          <div key={s.id} className="flex items-center justify-between text-sm">
-            <span>{s.name} · {s.durationMin} мин{s.price ? ` · ${formatRub(s.price)}` : ''}</span>
+          <div key={s.id} className="flex items-center justify-between gap-2 text-sm">
+            <span className="min-w-0 break-words">{s.name} · {s.durationMin} мин{s.price ? ` · ${formatRub(s.price)}` : ''}</span>
             <button className={btnGhost} onClick={() => bookingStore.deleteService(s.id)} aria-label="Удалить услугу"><Trash2 className="w-4 h-4" /></button>
           </div>
         ))}
         <form className="grid grid-cols-6 gap-2" onSubmit={addService}>
-          <input className={`${input} col-span-3`} placeholder="Услуга" value={name} onChange={e => setName(e.target.value)} required />
-          <input className={`${input} col-span-1`} type="number" min={5} step={5} title="Минут" value={duration} onChange={e => setDuration(e.target.value)} />
-          <input className={`${input} col-span-2`} type="number" min={0} placeholder="Цена, ₽" value={price} onChange={e => setPrice(e.target.value)} />
+          <input className={`${input} col-span-6 sm:col-span-3`} placeholder="Услуга" value={name} onChange={e => setName(e.target.value)} required />
+          <input className={`${input} col-span-3 sm:col-span-1`} type="number" min={5} step={5} title="Минут" aria-label="Минут" value={duration} onChange={e => setDuration(e.target.value)} />
+          <input className={`${input} col-span-3 sm:col-span-2`} type="number" min={0} placeholder="Цена, ₽" value={price} onChange={e => setPrice(e.target.value)} />
           <button className={`${btnPrimary} col-span-6 justify-center`}><Plus className="w-4 h-4" />Добавить услугу</button>
         </form>
       </div>
@@ -197,21 +197,26 @@ function BookingSettings({ version }: { version: number }) {
         <h3 className="font-semibold">Рабочие часы</h3>
         {schedule.days.map((d, i) => (
           <div key={WEEKDAY_LABELS[i]} className="flex items-center gap-2 text-sm">
-            <label className="flex items-center gap-2 w-14"><input type="checkbox" checked={d.enabled} onChange={e => setDayField(i, { enabled: e.target.checked })} />{WEEKDAY_LABELS[i]}</label>
-            <input className={input} type="time" value={d.start} disabled={!d.enabled} onChange={e => setDayField(i, { start: e.target.value })} />
-            <input className={input} type="time" value={d.end} disabled={!d.enabled} onChange={e => setDayField(i, { end: e.target.value })} />
+            <label className="flex items-center gap-2 w-14 shrink-0"><input type="checkbox" checked={d.enabled} onChange={e => setDayField(i, { enabled: e.target.checked })} />{WEEKDAY_LABELS[i]}</label>
+            <input className={input} type="time" value={d.start} disabled={!d.enabled} onChange={e => setDayField(i, { start: e.target.value })} aria-label={`${WEEKDAY_LABELS[i]}: начало`} />
+            <input className={input} type="time" value={d.end} disabled={!d.enabled} onChange={e => setDayField(i, { end: e.target.value })} aria-label={`${WEEKDAY_LABELS[i]}: конец`} />
           </div>
         ))}
         <div className="flex items-center gap-2 text-sm">
-          <span className="w-14">Обед</span>
-          <input className={input} type="time" value={schedule.breakStart} onChange={e => setSchedule(s => ({ ...s, breakStart: e.target.value }))} />
-          <input className={input} type="time" value={schedule.breakEnd} onChange={e => setSchedule(s => ({ ...s, breakEnd: e.target.value }))} />
+          <span className="w-14 shrink-0">Обед</span>
+          <input className={input} type="time" value={schedule.breakStart} onChange={e => setSchedule(s => ({ ...s, breakStart: e.target.value }))} aria-label="Обед: начало" />
+          <input className={input} type="time" value={schedule.breakEnd} onChange={e => setSchedule(s => ({ ...s, breakEnd: e.target.value }))} aria-label="Обед: конец" />
         </div>
-        <div className="flex items-center gap-2 text-sm">
-          <span className="whitespace-nowrap">Шаг, мин</span>
-          <input className={input} type="number" min={5} step={5} value={schedule.stepMin} onChange={e => setSchedule(s => ({ ...s, stepMin: Number(e.target.value) }))} />
-          <span className="whitespace-nowrap">Пауза</span>
-          <input className={input} type="number" min={0} step={5} value={schedule.bufferMin} onChange={e => setSchedule(s => ({ ...s, bufferMin: Number(e.target.value) }))} />
+        {/* На узком экране две колонки «подпись над полем», а не одна строка из четырёх элементов. */}
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <label className="space-y-1 min-w-0">
+            <span className="block text-slate-300">Шаг, мин</span>
+            <input className={input} type="number" min={5} step={5} value={schedule.stepMin} onChange={e => setSchedule(s => ({ ...s, stepMin: Number(e.target.value) }))} />
+          </label>
+          <label className="space-y-1 min-w-0">
+            <span className="block text-slate-300">Пауза, мин</span>
+            <input className={input} type="number" min={0} step={5} value={schedule.bufferMin} onChange={e => setSchedule(s => ({ ...s, bufferMin: Number(e.target.value) }))} />
+          </label>
         </div>
         <button className={btnPrimary} onClick={save} disabled={schedule.days.some(d => d.enabled && (!valid(d.start) || !valid(d.end)))}>Сохранить</button>
         <p className="text-xs text-slate-500">Сейчас: {schedule.days.filter(d => d.enabled).length} рабочих дней, {schedule.breakStart && schedule.breakEnd ? `обед ${schedule.breakStart}–${schedule.breakEnd}` : 'без обеда'}, сетка {schedule.stepMin} мин.</p>

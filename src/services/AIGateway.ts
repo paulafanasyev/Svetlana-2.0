@@ -13,7 +13,8 @@
 // Вызовы инструментов от модели проходят строгую проверку по схеме инструмента (security/ToolCallSchema).
 // «★ Светлана Сервер» (id 'svetlana') — единая Светлана на мир-самозанятых.рф в полном режиме (см. SvetlanaCore).
 // Запись ключа асинхронна (в Windows — после окна подтверждения): addProvider/updateProvider/removeProvider возвращают
-// промис, и проверку соединения нужно делать только после него.
+// промис, и проверку соединения нужно делать только после него. Если ключ не сохранён («Отмена»),
+// addProvider откатывается: новый провайдер убирается, прежние настройки и активный выбор возвращаются.
 import { getSecret, setSecret } from './security/SecretStore';
 import { safeJsonParse, stripControl, MAX_BYTES } from './security/SafeData';
 import { isNativeApp, nativeSetSecret, nativeHasSecret, nativeCloudChat, NATIVE_KEY_PLACEHOLDER } from './security/NativeBridge';
@@ -260,17 +261,30 @@ class AIGateway {
     return Promise.resolve(setSecret(name, p.apiKey ?? null)).then(() => undefined);
   }
 
-  /** Добавить провайдера. Дождитесь промиса перед проверкой соединения: ключ записывается асинхронно. */
+  /**
+   * Добавить провайдера. Дождитесь промиса перед проверкой соединения: ключ записывается асинхронно.
+   * Если ключ не сохранён — откат: новый провайдер удаляется, у существующего возвращаются прежние
+   * настройки (отметка ключа — по факту хранилища), активным снова становится прежний.
+   */
   addProvider(provider: AIProvider): Promise<void> {
     const p = sanitizeProvider(provider);
     if (!p) throw new Error('Некорректные настройки провайдера (адрес или идентификатор)');
+    const before = this.providers.get(p.id);
+    const prev = before ? { ...before } : undefined;
+    const prevActive = this.activeProvider;
     this.providers.set(p.id, p);
     if (p.enabled) {
       this.activeProvider = p.id;
     }
     const saved = this.storeKey(p);
     this.saveToStorage();
-    return saved;
+    return saved.catch((e: unknown) => {
+      if (prev) this.providers.set(p.id, { ...prev, apiKey: p.apiKey });
+      else this.providers.delete(p.id);
+      this.activeProvider = prevActive && this.providers.has(prevActive) ? prevActive : null;
+      this.saveToStorage();
+      throw e;
+    });
   }
 
   removeProvider(id: string): Promise<void> {

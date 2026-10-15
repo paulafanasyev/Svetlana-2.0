@@ -10,11 +10,14 @@ import {
 import { decodeStatement, parse1C, importStatement } from '../services/biz/BankStatement';
 import { crmStore } from '../services/crm/CRMStore';
 
-const input = 'w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-indigo-500/50';
-const btn = 'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50';
+const input = 'w-full min-w-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-indigo-500/50';
+const btn = 'inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50';
 const btnPrimary = `${btn} bg-indigo-600 hover:bg-indigo-700 text-white`;
 const btnGhost = `${btn} bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10`;
-const card = 'rounded-xl bg-white/5 border border-white/10 p-4 space-y-3';
+const card = 'rounded-xl bg-white/5 border border-white/10 p-4 space-y-3 min-w-0';
+/** Поле + кнопка: на телефоне друг под другом, на широком экране в одну строку. */
+const row = 'flex flex-col sm:flex-row gap-2';
+const rowBtn = 'w-full sm:w-auto shrink-0';
 
 function CheckCard() {
   const [inn, setInn] = useState('');
@@ -41,14 +44,14 @@ function CheckCard() {
   return (
     <div className={card}>
       <h3 className="font-semibold flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-emerald-300" />Проверка контрагента</h3>
-      <form onSubmit={run} className="flex gap-2">
+      <form onSubmit={run} className={row}>
         <input className={input} placeholder="ИНН компании, ИП или самозанятого" inputMode="numeric" value={inn} onChange={e => setInn(e.target.value)} />
-        <button className={btnPrimary} disabled={busy || inn.replace(/\D/g, '').length < 10}><Search className="w-4 h-4" />{busy ? 'Проверяю…' : 'Проверить'}</button>
+        <button className={`${btnPrimary} ${rowBtn}`} disabled={busy || inn.replace(/\D/g, '').length < 10}><Search className="w-4 h-4" />{busy ? 'Проверяю…' : 'Проверить'}</button>
       </form>
       {report && (
         <div className="space-y-2 text-sm">
           {report.party ? (
-            <div className="rounded-lg bg-black/20 p-3 space-y-1">
+            <div className="rounded-lg bg-black/20 p-3 space-y-1 break-words">
               <p className="font-semibold">{report.party.name}</p>
               <p className={report.party.status === 'ACTIVE' ? 'text-emerald-300' : 'text-red-300'}>{STATUS_LABELS[report.party.status]}</p>
               {report.party.ogrn && <p className="text-slate-300">ИНН {report.party.inn}{report.party.kpp ? `, КПП ${report.party.kpp}` : ''}, ОГРН {report.party.ogrn}</p>}
@@ -109,13 +112,13 @@ function MyDetailsCard() {
   return (
     <div className={card}>
       <h3 className="font-semibold flex items-center gap-2"><Building2 className="w-4 h-4 text-indigo-300" />Мои реквизиты автоматически</h3>
-      <div className="flex gap-2">
+      <div className={row}>
         <input className={input} placeholder="Мой ИНН" inputMode="numeric" value={inn} onChange={e => setInn(e.target.value)} />
-        <button className={btnGhost} onClick={fillByInn} disabled={busy}>Заполнить</button>
+        <button className={`${btnGhost} ${rowBtn}`} onClick={fillByInn} disabled={busy}>Заполнить</button>
       </div>
-      <div className="flex gap-2">
+      <div className={row}>
         <input className={input} placeholder="БИК моего банка" inputMode="numeric" value={bik} onChange={e => setBik(e.target.value)} />
-        <button className={btnGhost} onClick={fillBank} disabled={busy}>Банк по БИК</button>
+        <button className={`${btnGhost} ${rowBtn}`} onClick={fillBank} disabled={busy}>Банк по БИК</button>
       </div>
       <p className="text-xs text-slate-500">Расчётный счёт впишите во вкладке «Бизнес → Профиль» — его нет в открытых реестрах.</p>
       {msg && <p className="text-sm text-indigo-200">{msg}</p>}
@@ -144,7 +147,7 @@ function StatementCard() {
       <h3 className="font-semibold flex items-center gap-2"><Upload className="w-4 h-4 text-amber-300" />Банковская выписка</h3>
       <p className="text-sm text-slate-400">В интернет-банке: Выписка → Экспорт → «1С» (файл .txt). Поступления станут доходами, списания — расходами, оплаченные счета закроются сами. Повторная загрузка не дублирует записи.</p>
       <p className="text-xs text-amber-200">Переводы самому себе, займы и возвраты не являются доходом — удалите такие записи во вкладке «Деньги».</p>
-      <label className={`${btnPrimary} cursor-pointer w-fit`}><Upload className="w-4 h-4" />Загрузить выписку 1С
+      <label className={`${btnPrimary} cursor-pointer w-full sm:w-fit`}><Upload className="w-4 h-4" />Загрузить выписку 1С
         <input type="file" accept=".txt,text/plain" className="hidden" onChange={onFile} />
       </label>
       {msg && <p className="text-sm text-indigo-200">{msg}</p>}
@@ -171,9 +174,9 @@ function KeyCard() {
     <div className={card}>
       <h3 className="font-semibold flex items-center gap-2"><KeyRound className="w-4 h-4 text-slate-300" />Ключ DaData</h3>
       <p className="text-sm text-slate-400">Нужен для данных по ИНН и БИК. Бесплатно: зарегистрируйтесь на <a className="text-indigo-300 underline" href="https://dadata.ru/profile/#info" target="_blank" rel="noreferrer">dadata.ru</a> и скопируйте «API-ключ». Хранится зашифрованным только на этом устройстве.</p>
-      <div className="flex gap-2">
+      <div className={row}>
         <input className={input} type="password" placeholder="API-ключ" value={key} onChange={e => { setKey(e.target.value); setSaved(false); }} />
-        <button className={btnGhost} onClick={save}>{saved ? 'Сохранено' : 'Сохранить'}</button>
+        <button className={`${btnGhost} ${rowBtn}`} onClick={save}>{saved ? 'Сохранено' : 'Сохранить'}</button>
       </div>
       {err && <p className="text-sm text-red-300">{err}</p>}
     </div>

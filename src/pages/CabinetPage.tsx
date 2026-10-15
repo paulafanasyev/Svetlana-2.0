@@ -21,6 +21,8 @@ const CHECKS: [keyof Heartbeat['status'], string][] = [
 // На телефоне нет моста ПК ↔ телефон и голосового отпечатка (голосовые действия там всегда подтверждаются нажатием).
 const PHONE_SKIP = new Set<string>(['bridge_v2', 'paired_with', 'voice_enrolled']);
 
+const errText = (e: unknown): string => (typeof e === 'string' ? e : (e as { message?: string } | null)?.message) || 'отменено';
+
 export default function CabinetPage() {
   const android = isAndroidApp();
   const device = android ? 'Телефон' : 'Компьютер';
@@ -59,8 +61,17 @@ export default function CabinetPage() {
 
   const onWipe = async (e: MouseEvent) => {
     // Только настоящее нажатие человеком: голос, нейросеть или скрипт удалить данные не могут.
-    if (!userGesture(e.nativeEvent) || !window.confirm(`Удалить ВСЕ данные Светланы ${onDevice}: клиентов, финансы, записи, память, голос, ключи и привязки? Отменить нельзя.`)) return;
-    const n = await wipeAllLocalData();
+    if (busy || !userGesture(e.nativeEvent) || !window.confirm(`Удалить ВСЕ данные Светланы ${onDevice}: клиентов, финансы, записи, память, голос, ключи и привязки? Отменить нельзя.`)) return;
+    setBusy(true);
+    let n: number;
+    try {
+      n = await wipeAllLocalData();
+    } catch (err) {
+      // «Отмена» в окне системы: CRM, бизнес и прочие данные не тронуты.
+      setMsg(`Удаление остановлено: ${errText(err)}. Клиенты, финансы, записи и настройки остались ${onDevice}.`);
+      setBusy(false);
+      return;
+    }
     setMsg(`Удалено записей: ${n}. Приложение перезапустится.`);
     setTimeout(() => window.location.reload(), 800);
   };
@@ -73,7 +84,7 @@ export default function CabinetPage() {
           <>
             <p className="text-sm">{device} привязан {new Date(meta.linkedAt).toLocaleString('ru-RU')}. Последняя отправка: {meta.lastOk ? new Date(meta.lastOk).toLocaleString('ru-RU') : '—'}{meta.lastError ? ` (ошибка: ${meta.lastError})` : ''}.</p>
             <p className="text-xs text-slate-400">В кабинет уходят только версия, флаги защиты и названия моделей. Клиенты, деньги, голос и переписка остаются {onDevice}.</p>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button disabled={busy} onClick={onSync} className={`${btn} bg-indigo-600 text-white`}><RefreshCw className="w-4 h-4" />Обновить</button>
               <button onClick={onUnlink} className={`${btn} bg-white/5 border border-white/10`}><Unlink className="w-4 h-4" />Отвязать</button>
             </div>
@@ -86,7 +97,7 @@ export default function CabinetPage() {
             <button disabled={busy || !code.trim()} onClick={onLink} className={`${btn} bg-indigo-600 text-white disabled:opacity-50`}><Link2 className="w-4 h-4" />Привязать</button>
           </>
         )}
-        {msg && <p className="text-sm text-indigo-200">{msg}</p>}
+        {msg && <p className="text-sm text-indigo-200 break-words">{msg}</p>}
       </div>
 
       <div className={card}>
@@ -103,7 +114,7 @@ export default function CabinetPage() {
       <div className={`${card} border-red-500/30`}>
         <h3 className="font-semibold text-red-300">Удалить все данные</h3>
         <p className="text-sm text-slate-400">Стирает {android ? 'с этого телефона' : 'с этого компьютера'} всё: CRM, бизнес, записи, память, голос владельца, ключи ИИ и привязки. Ключ шифрования уничтожается.</p>
-        <button onClick={onWipe} className={`${btn} bg-red-600 text-white`}><Trash2 className="w-4 h-4" />Удалить всё</button>
+        <button disabled={busy} onClick={onWipe} className={`${btn} bg-red-600 text-white disabled:opacity-50`}><Trash2 className="w-4 h-4" />Удалить всё</button>
       </div>
     </div>
   );

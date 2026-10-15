@@ -57,6 +57,20 @@ object SecretStore {
             null
         }
     }
+
+    /**
+     * «Удалить всё»: стирает все зашифрованные записи и уничтожает сам ключ в Android Keystore:
+     * даже восстановленные старые записи расшифровать больше нечем. Возвращает число удалённых записей.
+     */
+    @Synchronized
+    fun clearAll(ctx: Context): Int {
+        val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val n = prefs.all.size
+        prefs.edit().clear().commit()
+        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        if (ks.containsAlias(ALIAS)) ks.deleteEntry(ALIAS)
+        return n
+    }
 }
 
 object Keys {

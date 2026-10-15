@@ -10,6 +10,7 @@ import {
   type ActivityType, type ContactStatus, type CRMContact, type CRMDeal,
 } from '../services/crm/CRMStore';
 import { importPhoneContacts } from '../services/crm/CRMTools';
+import { isAndroidApp } from '../platform';
 
 type Tab = 'contacts' | 'deals' | 'tasks' | 'summary' | 'data';
 const STATUSES: ContactStatus[] = ['lead', 'client', 'partner', 'other'];
@@ -20,6 +21,9 @@ const btn = 'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-
 const btnPrimary = `${btn} bg-indigo-600 hover:bg-indigo-700 text-white`;
 const btnGhost = `${btn} bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10`;
 const card = 'rounded-xl bg-white/5 border border-white/10';
+
+/** Текст карточки «Контакты с телефона» в приложении для Android: импорт идёт через компьютер с подключённым телефоном. */
+export const PHONE_IMPORT_ON_ANDROID = 'Импорт контактов с телефона работает в приложении для Windows, когда к нему подключён телефон. Здесь можно загрузить контакты из CSV-файла (ниже).';
 
 function useCRMVersion(): number {
   const [version, setVersion] = useState(0);
@@ -140,20 +144,20 @@ function ContactDetail({ contact, onEdit, onDeleted }: { contact: CRMContact; on
   return (
     <div className={`${card} p-4 space-y-4`}>
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-xl font-semibold">{contact.name}</h3>
+        <div className="min-w-0">
+          <h3 className="text-xl font-semibold break-words">{contact.name}</h3>
           <p className="text-sm text-slate-400">
             {[contact.position, contact.company].filter(Boolean).join(' · ') || 'Без компании'} · {STATUS_LABELS[contact.status]}
           </p>
         </div>
-        <div className="flex gap-2">
-          <button onClick={onEdit} className={btnGhost}><Pencil className="w-4 h-4" />Изменить</button>
+        <div className="flex gap-2 shrink-0">
+          <button onClick={onEdit} className={btnGhost} aria-label="Изменить"><Pencil className="w-4 h-4" /><span className="hidden sm:inline">Изменить</span></button>
           <button onClick={remove} className={`${btnGhost} text-red-300`} aria-label="Удалить"><Trash2 className="w-4 h-4" /></button>
         </div>
       </div>
       <div className="space-y-1 text-sm">
         {contact.phones.map(p => <a key={p} href={`tel:${p}`} className="flex items-center gap-2 text-indigo-300 hover:underline"><Phone className="w-4 h-4" />{p}</a>)}
-        {contact.emails.map(m => <a key={m} href={`mailto:${m}`} className="flex items-center gap-2 text-indigo-300 hover:underline"><Mail className="w-4 h-4" />{m}</a>)}
+        {contact.emails.map(m => <a key={m} href={`mailto:${m}`} className="flex items-center gap-2 text-indigo-300 hover:underline break-all"><Mail className="w-4 h-4 shrink-0" />{m}</a>)}
       </div>
       {contact.tags.length > 0 && (
         <div className="flex flex-wrap gap-1.5">{contact.tags.map(t => <span key={t} className="px-2 py-0.5 rounded-full text-xs bg-indigo-500/15 text-indigo-200">{t}</span>)}</div>
@@ -164,19 +168,19 @@ function ContactDetail({ contact, onEdit, onDeleted }: { contact: CRMContact; on
         <div>
           <h4 className="text-sm font-semibold text-slate-300 mb-2">Сделки</h4>
           <div className="space-y-1">
-            {deals.map(d => <div key={d.id} className="flex justify-between text-sm"><span>{d.title}</span><span className="text-slate-400">{STAGE_LABELS[d.stage]} · {money(d.amount, d.currency)}</span></div>)}
+            {deals.map(d => <div key={d.id} className="flex flex-wrap justify-between gap-x-3 text-sm"><span>{d.title}</span><span className="text-slate-400">{STAGE_LABELS[d.stage]} · {money(d.amount, d.currency)}</span></div>)}
           </div>
         </div>
       )}
 
       <div>
         <h4 className="text-sm font-semibold text-slate-300 mb-2">История</h4>
-        <form onSubmit={addLog} className="flex gap-2 mb-3">
-          <select className={`${input} w-36`} value={logType} onChange={e => setLogType(e.target.value as ActivityType)}>
+        <form onSubmit={addLog} className="flex flex-wrap sm:flex-nowrap gap-2 mb-3">
+          <select className={`${input} sm:w-36`} value={logType} onChange={e => setLogType(e.target.value as ActivityType)}>
             {LOG_TYPES.map(t => <option key={t} value={t}>{ACTIVITY_LABELS[t]}</option>)}
           </select>
-          <input className={input} placeholder="Что было?" value={logText} onChange={e => setLogText(e.target.value)} />
-          <button type="submit" className={btnPrimary} disabled={!logText.trim()}><Plus className="w-4 h-4" /></button>
+          <input className={`${input} flex-1 min-w-0`} placeholder="Что было?" value={logText} onChange={e => setLogText(e.target.value)} />
+          <button type="submit" className={btnPrimary} disabled={!logText.trim()} aria-label="Добавить"><Plus className="w-4 h-4" /></button>
         </form>
         <div className="space-y-2 max-h-64 overflow-y-auto">
           {activities.length === 0 && <p className="text-sm text-slate-500">Пока пусто</p>}
@@ -206,11 +210,11 @@ function ContactsTab() {
     <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
       <div className="lg:col-span-2 space-y-3">
         <div className="flex gap-2">
-          <div className="relative flex-1">
+          <div className="relative flex-1 min-w-0">
             <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
             <input className={`${input} pl-9`} placeholder="Поиск: имя, телефон, компания, тег" value={query} onChange={e => setQuery(e.target.value)} />
           </div>
-          <button className={btnPrimary} onClick={() => { setMode('new'); setSelectedId(null); }}><Plus className="w-4 h-4" />Контакт</button>
+          <button className={`${btnPrimary} shrink-0`} onClick={() => { setMode('new'); setSelectedId(null); }}><Plus className="w-4 h-4" />Контакт</button>
         </div>
         <select className={input} value={status} onChange={e => setStatus(e.target.value as ContactStatus | '')}>
           <option value="">Все статусы</option>
@@ -218,7 +222,7 @@ function ContactsTab() {
         </select>
         <p className="text-xs text-slate-500">Найдено: {contacts.length}{contacts.length > visible.length ? ` (показаны первые ${visible.length}, уточните поиск)` : ''}</p>
         <div className={`${card} divide-y divide-white/5 max-h-[60vh] overflow-y-auto`}>
-          {visible.length === 0 && <p className="p-4 text-sm text-slate-500">Контактов нет. Добавьте вручную или импортируйте с телефона на вкладке «Данные».</p>}
+          {visible.length === 0 && <p className="p-4 text-sm text-slate-500">Контактов нет. Добавьте вручную или импортируйте на вкладке «Данные».</p>}
           {visible.map(c => (
             <button key={c.id} onClick={() => { setSelectedId(c.id); setMode('view'); }}
               className={`w-full text-left px-4 py-2.5 hover:bg-white/5 ${selectedId === c.id ? 'bg-indigo-500/10' : ''}`}>
@@ -235,7 +239,7 @@ function ContactsTab() {
         {mode === 'new' && <ContactForm onDone={id => { setMode('view'); if (id) setSelectedId(id); }} />}
         {mode === 'edit' && selected && <ContactForm contact={selected} onDone={() => setMode('view')} />}
         {mode === 'view' && selected && <ContactDetail contact={selected} onEdit={() => setMode('edit')} onDeleted={() => setSelectedId(null)} />}
-        {mode === 'view' && !selected && <div className={`${card} p-8 text-center text-slate-500`}>Выберите контакт слева</div>}
+        {mode === 'view' && !selected && <div className={`${card} p-8 text-center text-slate-500`}>Выберите контакт в списке</div>}
       </div>
     </div>
   );
@@ -276,7 +280,7 @@ function DealsTab() {
           {contacts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         <input className={input} placeholder="Сумма, ₽" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} />
-        <button type="submit" className={btnPrimary} disabled={!title.trim()}><Plus className="w-4 h-4" />Сделка</button>
+        <button type="submit" className={`${btnPrimary} justify-center`} disabled={!title.trim()}><Plus className="w-4 h-4" />Сделка</button>
         {error && <p className="md:col-span-4 text-sm text-red-400">{error}</p>}
       </form>
       <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3">
@@ -284,7 +288,7 @@ function DealsTab() {
           const items = deals.filter(d => d.stage === stage);
           const total = items.reduce((s, d) => s + d.amount, 0);
           return (
-            <div key={stage} className={`${card} p-3 min-h-[200px]`}>
+            <div key={stage} className={`${card} p-3 md:min-h-[200px]`}>
               <div className="mb-3">
                 <h4 className={`text-sm font-semibold ${stage === 'won' ? 'text-emerald-300' : stage === 'lost' ? 'text-red-300' : ''}`}>{STAGE_LABELS[stage]}</h4>
                 <p className="text-xs text-slate-500">{items.length} · {money(total)}</p>
@@ -296,9 +300,9 @@ function DealsTab() {
                     <p className="text-xs text-slate-400">{contactName(d.contactId) ?? 'Без контакта'}</p>
                     <p className="text-xs text-slate-300 mt-1">{money(d.amount, d.currency)}</p>
                     <div className="flex justify-between mt-2">
-                      <button onClick={() => move(d, -1)} disabled={stage === DEAL_STAGES[0]} className="p-1 text-slate-400 hover:text-white disabled:opacity-30" aria-label="Назад"><ChevronLeft className="w-4 h-4" /></button>
-                      <button onClick={() => { if (window.confirm(`Удалить сделку «${d.title}»?`)) crmStore.deleteDeal(d.id); }} className="p-1 text-slate-500 hover:text-red-300" aria-label="Удалить"><Trash2 className="w-3.5 h-3.5" /></button>
-                      <button onClick={() => move(d, 1)} disabled={stage === DEAL_STAGES[DEAL_STAGES.length - 1]} className="p-1 text-slate-400 hover:text-white disabled:opacity-30" aria-label="Вперёд"><ChevronRight className="w-4 h-4" /></button>
+                      <button onClick={() => move(d, -1)} disabled={stage === DEAL_STAGES[0]} className="p-2 text-slate-400 hover:text-white disabled:opacity-30" aria-label="Назад"><ChevronLeft className="w-4 h-4" /></button>
+                      <button onClick={() => { if (window.confirm(`Удалить сделку «${d.title}»?`)) crmStore.deleteDeal(d.id); }} className="p-2 text-slate-500 hover:text-red-300" aria-label="Удалить"><Trash2 className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => move(d, 1)} disabled={stage === DEAL_STAGES[DEAL_STAGES.length - 1]} className="p-2 text-slate-400 hover:text-white disabled:opacity-30" aria-label="Вперёд"><ChevronRight className="w-4 h-4" /></button>
                     </div>
                   </div>
                 ))}
@@ -351,12 +355,12 @@ function TasksTab() {
           const who = t.contactId ? crmStore.getContact(t.contactId)?.name : undefined;
           return (
             <div key={t.id} className="flex items-center gap-3 px-4 py-2.5">
-              <input type="checkbox" checked={t.done} onChange={e => crmStore.setActivityDone(t.id, e.target.checked)} aria-label="Выполнено" />
+              <input type="checkbox" className="w-5 h-5 shrink-0" checked={t.done} onChange={e => crmStore.setActivityDone(t.id, e.target.checked)} aria-label="Выполнено" />
               <div className="flex-1 min-w-0">
-                <p className={`text-sm ${t.done ? 'line-through text-slate-500' : ''}`}>{t.text}</p>
+                <p className={`text-sm break-words ${t.done ? 'line-through text-slate-500' : ''}`}>{t.text}</p>
                 <p className={`text-xs ${overdue ? 'text-red-400' : 'text-slate-500'}`}>{[who, t.dueAt ? `до ${date(t.dueAt)}` : '', overdue ? 'просрочено' : ''].filter(Boolean).join(' · ')}</p>
               </div>
-              <button onClick={() => crmStore.deleteActivity(t.id)} className="p-1 text-slate-500 hover:text-red-300" aria-label="Удалить"><Trash2 className="w-4 h-4" /></button>
+              <button onClick={() => crmStore.deleteActivity(t.id)} className="p-2 text-slate-500 hover:text-red-300" aria-label="Удалить"><Trash2 className="w-4 h-4" /></button>
             </div>
           );
         })}
@@ -384,21 +388,22 @@ function SummaryTab() {
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {tiles.map(t => (
-          <div key={t.label} className={`${card} p-4`}>
+          <div key={t.label} className={`${card} p-4 min-w-0`}>
             <p className="text-xs text-slate-400">{t.label}</p>
-            <p className={`text-lg font-semibold mt-1 ${t.tone ?? ''}`}>{t.value}</p>
+            <p className={`text-base sm:text-lg font-semibold mt-1 break-words ${t.tone ?? ''}`}>{t.value}</p>
           </div>
         ))}
       </div>
-      <div className={`${card} p-4 space-y-2`}>
+      <div className={`${card} p-4 space-y-3 sm:space-y-2`}>
         <h4 className="text-sm font-semibold">Воронка</h4>
+        {/* На телефоне — две строки: подпись и сумма сверху, полоса снизу. */}
         {DEAL_STAGES.map(st => (
-          <div key={st} className="flex items-center gap-3 text-sm">
-            <span className="w-32 text-slate-400">{STAGE_LABELS[st]}</span>
-            <div className="flex-1 h-2.5 rounded-full bg-white/5 overflow-hidden">
+          <div key={st} className="grid grid-cols-2 sm:flex sm:items-center gap-x-3 gap-y-1 text-sm">
+            <span className="sm:w-32 sm:shrink-0 text-slate-400">{STAGE_LABELS[st]}</span>
+            <span className="sm:order-last sm:w-40 sm:shrink-0 text-right text-slate-300 text-xs sm:text-sm">{s.byStage[st].count} · {money(s.byStage[st].amount)}</span>
+            <div className="col-span-2 sm:flex-1 h-2.5 rounded-full bg-white/5 overflow-hidden">
               <div className={`h-full ${st === 'lost' ? 'bg-red-400/60' : st === 'won' ? 'bg-emerald-400/70' : 'bg-indigo-400/70'}`} style={{ width: `${(s.byStage[st].amount / maxStage) * 100}%` }} />
             </div>
-            <span className="w-40 text-right text-slate-300">{s.byStage[st].count} · {money(s.byStage[st].amount)}</span>
           </div>
         ))}
         <p className="text-xs text-slate-500 pt-2">Конверсия закрытых сделок: {closed ? Math.round((s.wonDeals / closed) * 100) : 0}%</p>
@@ -411,6 +416,7 @@ function SummaryTab() {
 
 function DataTab() {
   useCRMVersion();
+  const android = isAndroidApp();
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -436,8 +442,14 @@ function DataTab() {
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl">
       <div className={`${card} p-4 space-y-2`}>
         <h4 className="font-semibold flex items-center gap-2"><Smartphone className="w-4 h-4" />Контакты с телефона</h4>
-        <p className="text-sm text-slate-400">Нужен подключённый телефон (страница «Телефон»). Дубли по номеру объединяются.</p>
-        <button className={btnPrimary} onClick={fromPhone} disabled={busy}>{busy ? 'Импортирую…' : 'Импортировать с телефона'}</button>
+        {android ? (
+          <p data-testid="phone-import-android" className="text-sm text-slate-400">{PHONE_IMPORT_ON_ANDROID}</p>
+        ) : (
+          <>
+            <p className="text-sm text-slate-400">Нужен подключённый телефон (страница «Телефон»). Дубли по номеру объединяются.</p>
+            <button className={btnPrimary} onClick={fromPhone} disabled={busy}>{busy ? 'Импортирую…' : 'Импортировать с телефона'}</button>
+          </>
+        )}
       </div>
       <div className={`${card} p-4 space-y-2`}>
         <h4 className="font-semibold">CSV (Excel, Google Таблицы)</h4>
@@ -489,9 +501,9 @@ export default function CRMPage({ onClose }: { onClose?: () => void }) {
 
   return (
     <div className="space-y-5 text-white">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold flex items-center gap-2"><Users className="w-6 h-6 text-indigo-400" />CRM Светланы</h2>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-2"><Users className="w-6 h-6 text-indigo-400 shrink-0" />CRM Светланы</h2>
           <p className="text-sm text-slate-400">Данные хранятся только на этом устройстве. Светлана управляет CRM из чата.</p>
         </div>
         {onClose && <button onClick={onClose} className={btnGhost} aria-label="Закрыть CRM"><X className="w-4 h-4" />Закрыть</button>}
