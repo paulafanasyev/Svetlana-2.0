@@ -18,6 +18,7 @@ export function isSetupDone(): boolean {
 function markDone() {
   try { localStorage.setItem(DONE_KEY, '1'); } catch { /* нет хранилища */ }
 }
+/** Ошибки нативной части приходят строкой, остальные — Error. */
 export const errorText = (e: unknown): string => {
   const m = (e as { message?: unknown } | null)?.message;
   const s = typeof m === 'string' && m ? m : String(e ?? '');
@@ -31,10 +32,11 @@ export async function listOllamaModels(endpoint = OLLAMA, timeoutMs = 3000, f: t
   try {
     const r = await f(`${endpoint}/api/tags`, { signal: ctrl.signal });
     if (!r.ok) throw new Error(`Ollama ответила ${r.status}`);
-    const data = (await r.json()) as { models?: { name?: unknown }[] } | null;
-    const list = Array.isArray(data?.models) ? data!.models : [];
+    const data = (await r.json()) as { models?: unknown } | null;
+    const raw = data?.models;
+    const list: unknown[] = Array.isArray(raw) ? raw : [];
     return list
-      .map(m => String(m?.name ?? ''))
+      .map(m => String((m as { name?: unknown } | null)?.name ?? ''))
       .filter(n => /^[A-Za-z0-9._:/-]{1,100}$/.test(n))
       .slice(0, 50);
   } finally {
