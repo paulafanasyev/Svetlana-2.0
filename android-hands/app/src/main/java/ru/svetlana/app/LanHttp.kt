@@ -195,16 +195,17 @@ object LanHttp {
     private fun readChunked(inp: InputStream): ByteArray {
         val out = ByteArrayOutputStream()
         while (true) {
-            val size = line(inp).substringBefore(';').trim().toIntOrNull(16) ?: throw SecureAi.Fail(BAD_REPLY)
+            // Размер чанка — Long и не больше лимита: без переполнения и огромных буферов.
+            val size = line(inp).substringBefore(';').trim().toLongOrNull(16) ?: throw SecureAi.Fail(BAD_REPLY)
             if (size < 0) throw SecureAi.Fail(BAD_REPLY)
-            if (size == 0) {
+            if (size == 0L) {
                 // хвостовые заголовки до пустой строки
                 var n = 0
                 while (runCatching { line(inp) }.getOrDefault("").isNotEmpty() && ++n < MAX_HEADERS) { /* пропускаем */ }
                 break
             }
-            if (out.size() + size > MAX_RESPONSE) throw SecureAi.Fail(TOO_BIG)
-            out.write(readExact(inp, size))
+            if (size > MAX_RESPONSE || out.size().toLong() + size > MAX_RESPONSE) throw SecureAi.Fail(TOO_BIG)
+            out.write(readExact(inp, size.toInt()))
             line(inp)
         }
         return out.toByteArray()
