@@ -2,11 +2,13 @@
 // иначе — запись с микрофона и облачное распознавание (Whisper-совместимый API: Groq бесплатно, OpenAI).
 // В окне приложения на Windows (WebView2) встроенное распознавание обычно недоступно, поэтому при
 // ошибке «network»/«not-allowed» переключаемся на облако, если оно настроено. В приложении для Android слушает
-// распознавание речи самого телефона (режим «native»), ключ не нужен.
+// распознавание речи самого телефона (режим «native»), а с записанным голосом — запись с микрофона,
+// которую распознаёт GigaAM на самом телефоне или облако (listenRecorded): тогда голос проверяется как на компьютере.
 
 import { getSecret, setSecret } from '../security/SecretStore';
 import { isAndroidApp } from '../../platform';
 import { androidListen, androidStopListening } from '../AndroidBridge';
+import { localSttReady, localTranscribe } from './LocalStt';
 
 export interface CloudSttConfig { baseUrl: string; apiKey: string; model: string }
 
@@ -75,7 +77,7 @@ function recorderAvailable(): boolean {
   return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia && typeof (globalThis as any).MediaRecorder !== 'undefined';
 }
 
-export type SttMode = 'web' | 'cloud' | 'native' | 'none';
+export type SttMode = 'web' | 'cloud' | 'native' | 'local' | 'none';
 export function sttSupport(): { web: boolean; cloud: boolean; recorder: boolean; mode: SttMode } {
   const recorder = recorderAvailable();
   const cloud = recorder && !!getCloudStt();
@@ -104,6 +106,34 @@ export async function transcribe(audio: Blob, cfg: CloudSttConfig, fetchImpl: Fe
   return String(json?.text ?? '').trim();
 }
 
+/** PCM (-1..1) в WAV 16 бит моно: так облачное распознавание получает ровно тот звук, по которому проверен голос. */
+export function pcmToWav(pcm: Float32Array, sampleRate: number): Blob {
+  const n = pcm.length;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const str = (o: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  const rate = Math.round(sampleRate);
+  str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE');
+  str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) { const x = Math.max(-1, Math.min(1, pcm[i])); v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true); }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+export type PcmRecognizer = (pcm: Float32Array, sampleRate: number) => Promise<string>;
+
+/**
+ * Распознавание нашей же записи: на устройстве (GigaAM, звук никуда не уходит), иначе облако (Groq/OpenAI).
+ * null — ни модели, ни ключа.
+ */
+export function recordedRecognizer(): { mode: 'local' | 'cloud'; recognize: PcmRecognizer } | null {
+  if (localSttReady()) return { mode: 'local', recognize: localTranscribe };
+  const cfg = getCloudStt();
+  if (cfg) return { mode: 'cloud', recognize: (pcm, sr) => transcribe(pcmToWav(pcm, sr), cfg) };
+  return null;
+}
+
 export interface ListenOptions {
   continuous?: boolean;
   onPartial?: (text: string) => void;
@@ -122,6 +152,12 @@ const WEB_ERRORS: Record<string, string> = {
   aborted: '',
 };
 
+const NOT_HEARD = 'Не расслышала. Скажите ещё раз.';
+const micError = (e: unknown): string =>
+  /denied|allowed|permission/i.test(String((e as { message?: unknown; name?: unknown } | null)?.message ?? (e as { name?: unknown } | null)?.name ?? e))
+    ? 'Нет доступа к микрофону. Разрешите микрофон в настройках.'
+    : 'Микрофон недоступен.';
+
 /** Распознавание речи телефона (приложение для Android). Одна фраза за раз, телефон сам ждёт паузу. */
 function listenNative(opts: ListenOptions): Listener {
   let stopped = false;
@@ -129,7 +165,7 @@ function listenNative(opts: ListenOptions): Listener {
   void androidListen()
     .then(text => {
       if (text) opts.onFinal(text);
-      else if (!stopped) opts.onError?.('Не расслышала. Скажите ещё раз.');
+      else if (!stopped) opts.onError?.(NOT_HEARD);
     })
     .catch(e => {
       const m = typeof e === 'string' ? e : (e as { message?: unknown } | null)?.message;
@@ -196,10 +232,10 @@ function listenCloud(opts: ListenOptions, cfg: CloudSttConfig): Listener {
         cleanup();
         try {
           const blob = new Blob(chunks, { type: recorder.mimeType || type || 'audio/webm' });
-          if (blob.size < 2000) { opts.onError?.('Не расслышала. Скажите ещё раз.'); return; }
+          if (blob.size < 2000) { opts.onError?.(NOT_HEARD); return; }
           opts.onPartial?.('Распознаю…');
           const text = await transcribe(blob, cfg);
-          if (text) opts.onFinal(text); else opts.onError?.('Не расслышала. Скажите ещё раз.');
+          if (text) opts.onFinal(text); else opts.onError?.(NOT_HEARD);
         } catch (e: any) { opts.onError?.(e?.message || 'Не удалось распознать'); } finally { opts.onEnd?.(); }
       };
       recorder.start();
@@ -228,12 +264,168 @@ function listenCloud(opts: ListenOptions, cfg: CloudSttConfig): Listener {
       }
     } catch (e: any) {
       cleanup();
-      opts.onError?.(/denied|allowed|permission/i.test(String(e?.message ?? e?.name)) ? 'Нет доступа к микрофону. Разрешите микрофон в настройках.' : 'Микрофон недоступен.');
+      opts.onError?.(micError(e));
       opts.onEnd?.();
     }
   })();
 
   return { mode: 'cloud', stop: () => { stopped = true; finish(); } };
+}
+
+/** Пороги детектора речи для listenRecorded. */
+export const VAD = { threshold: 0.012, silenceMs: 900, maxPhraseMs: 12_000, noSpeechMs: 8_000, preRollMs: 300, minVoicedMs: 250 };
+const MAX_PENDING = 2;
+
+function concat(parts: Float32Array[], length: number): Float32Array {
+  const out = new Float32Array(length);
+  let pos = 0;
+  for (const p of parts) { out.set(p, pos); pos += p.length; }
+  return out;
+}
+
+/**
+ * Слушать записью: микрофон → фразы по паузам → распознавание на устройстве или в облаке. Так слушает
+ * телефон с записанным голосом: распознавание телефона занимает микрофон само и сверить голос не даёт.
+ * continuous — слушать, пока не остановят (режим «Светлана, …» без рук).
+ */
+export function listenRecorded(opts: ListenOptions, rec = recordedRecognizer()): Listener | null {
+  if (!rec) {
+    opts.onError?.('Для этого нужна модель распознавания на устройстве (Голос → настройки → «Скачать модель») или ключ Groq.');
+    return null;
+  }
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) { opts.onError?.('Микрофон недоступен в этом окне.'); return null; }
+  const continuous = !!opts.continuous;
+  let stopped = false;   // больше не слушаем
+  let ended = false;     // onEnd отдан
+  let pending = 0;       // фразы на распознавании
+  let stream: MediaStream | null = null;
+  let ctx: AudioContext | null = null;
+  let src: MediaStreamAudioSourceNode | null = null;
+  let proc: ScriptProcessorNode | null = null;
+  let sink: GainNode | null = null;
+  let seg: Float32Array[] | null = null;
+  let segLen = 0;
+  let voicedMs = 0;
+  let rate = 16000;
+
+  const release = () => {
+    if (proc) proc.onaudioprocess = null;
+    try { proc?.disconnect(); src?.disconnect(); sink?.disconnect(); } catch { /* уже отключено */ }
+    proc = null; src = null; sink = null;
+    stream?.getTracks().forEach(t => t.stop());
+    stream = null;
+    void ctx?.close().catch(() => undefined);
+    ctx = null;
+  };
+  const end = () => {
+    if (ended) return;
+    ended = true;
+    release();
+    opts.onEnd?.();
+  };
+  const maybeEnd = () => { if (stopped && pending === 0) end(); };
+
+  const recognize = (pcm: Float32Array, sr: number) => {
+    if (pending >= MAX_PENDING) return;
+    pending++;
+    opts.onPartial?.('Распознаю…');
+    rec.recognize(pcm, sr)
+      .then(t => {
+        const text = String(t ?? '').trim();
+        if (ended) return;
+        if (text) opts.onFinal(text);
+        else if (!continuous) opts.onError?.(NOT_HEARD);
+      }, e => {
+        if (ended) return;
+        const m = typeof e === 'string' ? e : (e as { message?: unknown } | null)?.message;
+        opts.onError?.(String(m || 'Не удалось распознать').slice(0, 300));
+      })
+      .finally(() => {
+        pending--;
+        if (!continuous) stopped = true;
+        else if (!stopped && !ended) opts.onPartial?.('Слушаю…');
+        maybeEnd();
+      });
+  };
+
+  /** Закончить текущую фразу: если в ней была речь — распознать. */
+  const flush = () => {
+    if (!seg) return;
+    const pcm = concat(seg, segLen);
+    const voiced = voicedMs;
+    seg = null; segLen = 0; voicedMs = 0;
+    if (voiced < VAD.minVoicedMs) return;
+    if (!continuous) { stopped = true; release(); }
+    recognize(pcm, rate);
+  };
+
+  (async () => {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      stream = s;
+      if (stopped) { end(); return; }
+      const AC = (globalThis as any).AudioContext || (globalThis as any).webkitAudioContext;
+      if (!AC) throw new Error('Браузер не умеет обрабатывать звук');
+      const c: AudioContext = new AC();
+      ctx = c;
+      void c.resume?.().catch(() => undefined);
+      rate = c.sampleRate;
+      src = c.createMediaStreamSource(s);
+      proc = c.createScriptProcessor(4096, 1, 1);
+      sink = c.createGain();
+      sink.gain.value = 0; // звук микрофона не идёт в динамик
+      const pre: Float32Array[] = [];
+      let preLen = 0;
+      const preMax = rate * VAD.preRollMs / 1000;
+      let silence = 0;
+      let heard = false;
+      const startedAt = Date.now();
+      proc.onaudioprocess = e => {
+        if (stopped || ended) return;
+        const chunk = new Float32Array(e.inputBuffer.getChannelData(0));
+        let sum = 0;
+        for (let i = 0; i < chunk.length; i++) sum += chunk[i] * chunk[i];
+        const loud = Math.sqrt(sum / Math.max(1, chunk.length)) > VAD.threshold;
+        const ms = chunk.length / rate * 1000;
+        if (!seg) {
+          if (loud) {
+            seg = [...pre, chunk]; segLen = preLen + chunk.length;
+            pre.length = 0; preLen = 0; silence = 0; voicedMs = ms; heard = true;
+            return;
+          }
+          pre.push(chunk); preLen += chunk.length;
+          while (pre.length > 1 && preLen - pre[0].length >= preMax) preLen -= pre.shift()!.length;
+          if (!continuous && !heard && Date.now() - startedAt > VAD.noSpeechMs) {
+            opts.onError?.(NOT_HEARD);
+            stopped = true;
+            maybeEnd();
+          }
+          return;
+        }
+        seg.push(chunk); segLen += chunk.length;
+        if (loud) { silence = 0; voicedMs += ms; } else silence += ms;
+        if (silence >= VAD.silenceMs || segLen / rate * 1000 >= VAD.maxPhraseMs) { silence = 0; flush(); maybeEnd(); }
+      };
+      src.connect(proc); proc.connect(sink); sink.connect(c.destination);
+      opts.onPartial?.('Слушаю…');
+    } catch (e) {
+      if (!ended) opts.onError?.(micError(e));
+      stopped = true;
+      end();
+    }
+  })();
+
+  return {
+    mode: rec.mode,
+    stop: () => {
+      if (stopped) { maybeEnd(); return; }
+      // Остановили посреди фразы (одна команда): распознаём сказанное, как в облачном режиме.
+      if (!continuous) flush(); else { seg = null; segLen = 0; voicedMs = 0; }
+      stopped = true;
+      release();
+      maybeEnd();
+    },
+  };
 }
 
 /** Начать слушать. В облачном и телефонном режиме запись останавливается сама после паузы. */
