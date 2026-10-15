@@ -1,6 +1,3 @@
-# Готовая замена для .github/workflows/build-windows.yml (см. ci/workflows/README.md).
-# Действия закреплены по SHA, Rust и Tauri CLI точных версий, тесты Rust идут перед сборкой,
-# и тесты, и установщик собираются строго по одному Cargo.lock (--locked).
 name: Build Windows Desktop Installer
 
 on:
@@ -18,8 +15,6 @@ on:
       - "package-lock.json"
       - "vite.config.*"
       - ".github/workflows/build-windows.yml"
-      - "ci/build-windows.yml"
-      - "ci/workflows/build-windows.yml"
 
 permissions:
   contents: read
@@ -48,7 +43,6 @@ jobs:
           node-version: 22
           cache: npm
 
-      # rustup уже есть на windows-latest: ставим точную версию без сторонних действий.
       - name: Install Rust ${{ env.RUST_VERSION }}
         shell: pwsh
         run: |
@@ -63,8 +57,6 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      # Cargo.lock из репозитория проверяется на совпадение с Cargo.toml. Если его ещё нет (один раз),
-      # он создаётся здесь, до тестов и сборки, и выкладывается артефактом для коммита.
       - name: Cargo.lock
         id: lock
         shell: pwsh
@@ -98,7 +90,6 @@ jobs:
       - name: Install Tauri CLI ${{ env.TAURI_CLI_VERSION }}
         run: cargo install tauri-cli --version "${{ env.TAURI_CLI_VERSION }}" --locked
 
-      # Аргументы после -- уходят в cargo build: установщик собирается по тому же Cargo.lock.
       - name: Build Tauri NSIS installer
         shell: pwsh
         working-directory: src-tauri
