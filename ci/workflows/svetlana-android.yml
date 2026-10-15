@@ -105,11 +105,15 @@ jobs:
           retention-days: 14
 
   # Публикация в тот же релиз app-v<версия>, что и Windows: на него ведёт «Скачать APK» на сайте.
+  # Версия из того же tauri.conf.json и общая очередь svetlana-release: один тег, без гонки.
   release:
     needs: build
     if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    concurrency:
+      group: svetlana-release-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -123,7 +127,7 @@ jobs:
       - name: Checksums
         id: v
         run: |
-          version=$(node -p "require('./package.json').version")
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
           (cd release-assets && sha256sum Svetlana-2.0-Android.apk > android-checksums.txt)
       - name: Publish to Releases

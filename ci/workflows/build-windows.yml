@@ -128,11 +128,15 @@ jobs:
 
   # Публикация в Releases (тег app-v<версия>, постоянное имя файла): на него ведёт «Скачать для Windows» на сайте.
   # Отдельная работа с правом записи: сама сборка и чужой код зависимостей с этим правом не запускаются.
+  # Общая очередь svetlana-release с Android: два релиза в один тег никогда не пишут одновременно.
   release:
     needs: build-windows
     if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    concurrency:
+      group: svetlana-release-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
