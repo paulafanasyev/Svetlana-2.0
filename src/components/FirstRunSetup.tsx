@@ -5,12 +5,14 @@
 //    убирается, чтобы не висел «выбранным» без ключа.
 // 2) Локально через Ollama (только компьютер): проверяем, запущена ли Ollama, и берём УЖЕ скачанную модель
 //    (имя по умолчанию svetlana:latest в открытом каталоге Ollama нет, поэтому не надеемся на него).
-import { useState } from 'react';
+// На телефоне системная кнопка «Назад» закрывает мастер так же, как крестик (BackStack).
+import { useEffect, useState } from 'react';
 import { Key, HardDrive, Loader2, CheckCircle2, AlertCircle, X, Sparkles } from 'lucide-react';
 import { aiGateway } from '../services/AIGateway';
 import { SVETLANA_CORE_ORIGIN, SVETLANA_CORE_MODEL } from '../services/SvetlanaCore';
 import { isNativeApp } from '../services/security/NativeBridge';
 import { isAndroidApp } from '../platform';
+import { onBack } from '../services/BackStack';
 
 const DONE_KEY = 'svetlana_setup_done_v1';
 const OLLAMA = 'http://127.0.0.1:11434';
@@ -102,6 +104,9 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
   const finish = () => { markSetupDone(); setTimeout(onReady, 700); };
   const skip = () => { markSetupDone(); onClose(); };
   const retryOnly = keySaved && !key.trim();
+
+  // Системная кнопка «Назад» телефона = крестик «Закрыть».
+  useEffect(() => onBack(skip), []);
 
   /** Сохранить ключ. При неудаче нового провайдера убираем (раньше настроенного не трогаем). */
   const saveKey = async (value: string): Promise<boolean> => {
