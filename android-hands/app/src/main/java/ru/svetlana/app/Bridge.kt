@@ -90,12 +90,8 @@ class Bridge(private val act: MainActivity) {
                 SecureAi.secretSet(act, args.optString("name"), value, act::confirm)
                 null
             }
-            "secret_wipe_all" -> bg(done) {
-                if (!act.confirm("Удалить с этого телефона все ключи ИИ и сам ключ шифрования? Отменить нельзя.")) {
-                    throw SecureAi.Fail(SecureAi.CANCELLED)
-                }
-                SecretStore.clearAll(act)
-            }
+            // Одно нативное подтверждение; идущие запросы в облако обрываются (SecureAi.wipeAll).
+            "secret_wipe_all" -> bg(done) { SecureAi.wipeAll(act, act::confirm) }
             "save_file" -> {
                 val mime = args.optString("mime").substringBefore(';').trim().lowercase()
                 val text = args.optString("text")

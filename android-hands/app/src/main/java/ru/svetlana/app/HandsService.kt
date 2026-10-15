@@ -15,7 +15,9 @@ import android.view.accessibility.AccessibilityNodeInfo
  * pkg — приложение, в котором разрешено действовать: проверяется и у элемента, и у активного окна
  * непосредственно перед нажатием, вводом текста и внутри самого жеста (прямо перед dispatchGesture).
  * Открытого «жеста без привязки» нет: все жесты через gestureIn(pkg, ...).
- * Нажимается только то, что подписано как в подтверждении: родительский элемент с ДРУГОЙ подписью не нажимается.
+ * Нажимается только то, что подписано как в подтверждении: родительский элемент нажимается, только если его
+ * подпись ТОЧНО совпадает с запрошенной (или у него нет своей подписи). Текст печатается только в поле
+ * из подтверждения: если поле названо, а его нет, ничего не печатаем.
  */
 class HandsService : AccessibilityService() {
 
@@ -119,11 +121,11 @@ class HandsService : AccessibilityService() {
         var depth = 0
         while (n != null && depth < 8) {
             if (n.isClickable && n.isEnabled && nodeIn(n, pkg)) {
-                // Родитель с собственной ДРУГОЙ подписью (например, «Оплатить» вокруг текста «Подробнее») не нажимаем:
-                // человек подтвердил другую кнопку.
+                // Родитель с собственной подписью нажимаем, только если она ТОЧНО как в подтверждении:
+                // «Подробнее — Оплатить» вокруг текста «Подробнее» — это другая кнопка.
                 if (depth > 0) {
                     val own = norm(label(n))
-                    if (own.isNotEmpty() && !own.contains(q)) return false
+                    if (own.isNotEmpty() && own != q) return false
                 }
                 if (!n.refresh() || !n.isVisibleToUser || !inApp(pkg)) return false
                 if (n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
@@ -166,11 +168,36 @@ class HandsService : AccessibilityService() {
         return if (down) gestureIn(pkg, x, bottom, x, top, 350) else gestureIn(pkg, x, top, x, bottom, 350)
     }
 
+    /** Поле ввода по подписи: подсказка, описание, связанная подпись (labeledBy) или текст. Точное совпадение важнее. */
+    private fun findEditable(field: String, pkg: String?): AccessibilityNodeInfo? {
+        val q = norm(field)
+        if (q.isEmpty()) return null
+        val labelled = nodes()
+            .filter { it.isEditable && it.isVisibleToUser && nodeIn(it, pkg) }
+            .map { n ->
+                val names = listOfNotNull(
+                    n.hintText?.toString(),
+                    n.contentDescription?.toString(),
+                    n.labeledBy?.let { label(it) },
+                    n.text?.toString(),
+                ).map { norm(it) }.filter { it.isNotEmpty() }
+                n to names
+            }
+        return labelled.firstOrNull { (_, names) -> names.any { it == q } }?.first
+            ?: labelled.firstOrNull { (_, names) -> names.any { it.contains(q) } }?.first
+    }
+
     fun type(text: String, field: String?, pkg: String? = null): Boolean {
         if (!inApp(pkg)) return false
-        val byLabel = field?.takeIf { it.isNotBlank() }?.let { f -> find(f, pkg) }?.takeIf { it.isEditable }
-        val focused = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable && nodeIn(it, pkg) }
-        val target = byLabel ?: focused ?: nodes().firstOrNull { it.isEditable && it.isVisibleToUser && nodeIn(it, pkg) } ?: return false
+        val f = field?.takeIf { it.isNotBlank() }
+        val target = if (f != null) {
+            // Поле названо в подтверждении: печатаем только в него, никакого «первого попавшегося».
+            findEditable(f, pkg) ?: return false
+        } else {
+            rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable && nodeIn(it, pkg) }
+                ?: nodes().firstOrNull { it.isEditable && it.isVisibleToUser && nodeIn(it, pkg) }
+                ?: return false
+        }
         target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
         if (!inApp(pkg) || !nodeIn(target, pkg)) return false
         val args = Bundle()
