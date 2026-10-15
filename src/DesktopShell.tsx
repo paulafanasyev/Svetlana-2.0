@@ -1,24 +1,27 @@
 // Главное окно Светланы: сразу чат, потом настройки ИИ и телефон. Схемы, планы, оркестратор задач и демо
 // разработки (старый Command Center, App.tsx) убраны в вкладку «Для разработчика» и помечены: это описание,
 // а не работающая функция. При первом запуске открывается мастер настройки (FirstRunSetup): без него чат
-// не знает, куда слать вопрос.
+// не знает, куда слать вопрос. На сайте есть ещё вкладка «Скачать» (приложения Android и Windows).
 import { useEffect, useState } from 'react';
-import { MessageCircle, Cpu, Smartphone, Wrench, Settings2, AlertTriangle, Mic } from 'lucide-react';
+import { MessageCircle, Cpu, Smartphone, Wrench, Settings2, AlertTriangle, Mic, Download } from 'lucide-react';
 import App from './App';
 import AvatarPage from './pages/AvatarPage';
 import AIProvidersPage from './pages/AIProvidersPage';
 import AndroidConnectionPage from './pages/AndroidConnectionPage';
+import DownloadPage from './pages/DownloadPage';
 import FirstRunSetup, { isSetupDone } from './components/FirstRunSetup';
 import { aiGateway } from './services/AIGateway';
+import { isNativeApp } from './services/security/NativeBridge';
 import { APP_VERSION } from './version';
 
-type Tab = 'chat' | 'providers' | 'phone' | 'dev';
+type Tab = 'chat' | 'providers' | 'phone' | 'download' | 'dev';
 
 // Только то, что реально работает. Оркестратор задач пока демо, он во вкладке «Для разработчика».
-const TABS: { id: Tab; label: string; icon: typeof MessageCircle }[] = [
+const TABS: { id: Tab; label: string; icon: typeof MessageCircle; webOnly?: boolean }[] = [
   { id: 'chat', label: 'Чат со Светланой', icon: MessageCircle },
   { id: 'providers', label: 'Модели ИИ', icon: Cpu },
   { id: 'phone', label: 'Телефон', icon: Smartphone },
+  { id: 'download', label: 'Скачать приложения', icon: Download, webOnly: true },
   { id: 'dev', label: 'Для разработчика', icon: Wrench },
 ];
 
@@ -31,6 +34,8 @@ const readVerified = (): string | null => {
 };
 
 export default function DesktopShell() {
+  const native = isNativeApp();
+  const tabs = TABS.filter(t => !t.webOnly || !native);
   const [tab, setTab] = useState<Tab>('chat');
   const [setupOpen, setSetupOpen] = useState(() => !isSetupDone());
   const [active, setActive] = useState(() => aiGateway.getActiveProvider());
@@ -59,7 +64,7 @@ export default function DesktopShell() {
         </div>
       </div>
       <nav className="flex flex-wrap gap-1">
-        {TABS.map(t => (
+        {tabs.map(t => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -129,17 +134,20 @@ export default function DesktopShell() {
         {tab === 'chat' && (
           <>
             {/* Честно про голос: встроенное распознавание браузера в WebView2 недоступно, локальная GigaAM проверяет только цифры. */}
-            <div data-testid="voice-note" className="mb-4 px-4 py-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-xs text-indigo-200 flex items-start gap-2">
-              <Mic className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>
-                Писать можно сразу. Для голосовых команд в Windows нужен ключ Groq или OpenAI: нажмите кнопку «Голос» внизу слева и вставьте ключ там. Встроенное распознавание браузера в Windows-приложении не работает, а локальная модель речи пока только проверяет голос цифрами.
-              </span>
-            </div>
+            {native && (
+              <div data-testid="voice-note" className="mb-4 px-4 py-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-xs text-indigo-200 flex items-start gap-2">
+                <Mic className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  Писать можно сразу. Для голосовых команд в Windows нужен ключ Groq или OpenAI: нажмите кнопку «Голос» внизу слева и вставьте ключ там. Встроенное распознавание браузера в Windows-приложении не работает, а локальная модель речи пока только проверяет голос цифрами.
+                </span>
+              </div>
+            )}
             <AvatarPage />
           </>
         )}
         {tab === 'providers' && <AIProvidersPage />}
         {tab === 'phone' && <AndroidConnectionPage />}
+        {tab === 'download' && <DownloadPage />}
       </main>
       {setup}
     </div>
