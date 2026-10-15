@@ -14,15 +14,27 @@ typealias Done = (Boolean, Any?) -> Unit
 /**
  * Голос телефона для общего интерфейса: распознавание (SpeechRecognizer, ru-RU) и синтез (TextToSpeech).
  * В Android WebView нет ни Web Speech, ни speechSynthesis, поэтому они идут через нативный мост.
- * Все методы вызываются в главном потоке.
+ * Все методы вызываются в главном потоке. Запрос на распознавание всегда завершается: по результату,
+ * по ошибке или по таймауту (20 с, а после «стоп» — 4 с).
  */
 class NativeVoice(private val act: MainActivity) : TextToSpeech.OnInitListener {
+    companion object {
+        private const val LISTEN_TIMEOUT_MS = 20_000L
+        private const val STOP_TIMEOUT_MS = 4_000L
+    }
+
     private var tts: TextToSpeech? = TextToSpeech(act.applicationContext, this)
     private var ttsReady = false
     private val speaking = HashMap<String, Done>()
     private var seq = 0
     private var recognizer: SpeechRecognizer? = null
     private var listenDone: Done? = null
+    private val listenTimeout = Runnable {
+        if (listenDone != null) {
+            recognizer?.cancel()
+            end(true, "")
+        }
+    }
 
     override fun onInit(status: Int) {
         act.main.post {
@@ -118,6 +130,7 @@ class NativeVoice(private val act: MainActivity) : TextToSpeech.OnInitListener {
                 .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
             try {
                 r.startListening(intent)
+                act.main.postDelayed(listenTimeout, LISTEN_TIMEOUT_MS)
             } catch (e: Exception) {
                 end(false, "Не удалось включить распознавание речи")
             }
@@ -125,6 +138,7 @@ class NativeVoice(private val act: MainActivity) : TextToSpeech.OnInitListener {
     }
 
     private fun end(ok: Boolean, value: Any?) {
+        act.main.removeCallbacks(listenTimeout)
         val d = listenDone
         listenDone = null
         recognizer?.destroy()
@@ -132,12 +146,16 @@ class NativeVoice(private val act: MainActivity) : TextToSpeech.OnInitListener {
         d?.invoke(ok, value)
     }
 
-    /** Дослушать и распознать уже сказанное (результат придёт в listen). */
+    /** Дослушать и распознать уже сказанное; если служба молчит — завершить через 4 с. */
     fun stopListening() {
+        if (listenDone == null) return
         recognizer?.stopListening()
+        act.main.removeCallbacks(listenTimeout)
+        act.main.postDelayed(listenTimeout, STOP_TIMEOUT_MS)
     }
 
     private fun cancelListening() {
+        act.main.removeCallbacks(listenTimeout)
         val d = listenDone
         listenDone = null
         recognizer?.cancel()

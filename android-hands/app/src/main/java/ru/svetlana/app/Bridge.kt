@@ -112,10 +112,12 @@ class Bridge(private val act: MainActivity) {
         if (!handsBusy.compareAndSet(false, true)) { done(false, "Руки уже выполняют команду"); return }
         val finish: Done = { ok, value -> handsBusy.set(false); done(ok, value) }
         bg(finish) {
-            val list = steps.mapIndexed { i, s -> "${i + 1}. ${s.title}" }.joinToString("\n")
-            val warn = if (Steps.risky(steps)) "\n\n⚠ Есть шаг, похожий на отправку, оплату или удаление. Проверьте внимательно." else ""
+            // Приложения ищем ДО подтверждения: в окне видно, какое именно откроется (название и пакет).
+            val resolved = Steps.resolveApps(act.applicationContext, steps)
+            val list = resolved.mapIndexed { i, s -> "${i + 1}. ${s.title}" }.joinToString("\n")
+            val warn = if (Steps.risky(resolved)) "\n\n⚠ Есть шаг, похожий на отправку, оплату или удаление. Проверьте внимательно." else ""
             if (!act.confirm("Выполнить на телефоне?\n\n$list$warn")) throw SecureAi.Fail(SecureAi.CANCELLED)
-            Steps.run(act.applicationContext, steps)
+            Steps.run(act.applicationContext, resolved)
         }
     }
 

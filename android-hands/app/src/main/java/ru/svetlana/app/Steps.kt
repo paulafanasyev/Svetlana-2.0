@@ -12,7 +12,9 @@ fun norm(s: String): String = s.lowercase()
 
 /** Один шаг «рук». Их предлагает Светлана (JSON в ответе) или быстрая команда («открой Telegram»). */
 sealed class Step(val title: String) {
-    class OpenApp(val name: String) : Step("Открыть «$name»")
+    /** target — уже найденное приложение: его название и пакет видны в окне подтверждения. */
+    class OpenApp(val name: String, val target: Apps.Target? = null) :
+        Step(if (target != null) "Открыть «${target.label}» (${target.pkg})" else "Открыть «$name»")
     class Tap(val target: String) : Step("Нажать «$target»")
     class Type(val text: String, val field: String?) : Step("Напечатать «${text.take(60)}»")
     class Scroll(val down: Boolean) : Step(if (down) "Пролистать вниз" else "Пролистать вверх")
@@ -61,6 +63,16 @@ object Steps {
         return out
     }
 
+    /** Найти приложения заранее, чтобы показать в окне подтверждения, ЧТО именно откроется. */
+    fun resolveApps(ctx: Context, steps: List<Step>): List<Step> = steps.map { s ->
+        if (s is Step.OpenApp && s.target == null) {
+            val t = Apps.resolve(ctx, s.name) ?: throw SecureAi.Fail("Не нашла приложение «${s.name}» на телефоне")
+            Step.OpenApp(s.name, t)
+        } else {
+            s
+        }
+    }
+
     /** Быстрые команды без сервера: работают сразу и даже без ключа. */
     fun quick(input: String): List<Step>? {
         var t = norm(input)
@@ -99,19 +111,38 @@ object Steps {
 
     fun needsHands(steps: List<Step>): Boolean = steps.any { it !is Step.OpenApp && it !is Step.Wait }
 
-    /** Выполняет шаги по порядку и останавливается на первой неудаче. Вызывать не из главного потока. */
+    private fun touchesScreen(s: Step) = s is Step.Tap || s is Step.Type || s is Step.Scroll || s is Step.ReadScreen
+
+    /**
+     * Выполняет шаги по порядку и останавливается на первой неудаче. Вызывать не из главного потока.
+     * Действия на экране привязаны к приложению: после «Открыть X» — к пакету X, иначе к тому, что было
+     * на экране при первом действии. Если перед действием на экране другое приложение — остановка.
+     */
     fun run(ctx: Context, steps: List<Step>): String {
         val log = StringBuilder()
+        var expected: String? = null
         for ((i, s) in steps.withIndex()) {
             val (ok, text) = try {
+                if (touchesScreen(s)) {
+                    val cur = HandsService.instance?.currentApp()
+                    if (expected == null) expected = cur
+                    if (cur == null || cur != expected) {
+                        throw IllegalStateException("на экране другое приложение (${cur ?: "неизвестно"}), а не ${expected ?: "нужное"}")
+                    }
+                }
                 runOne(ctx, s)
             } catch (e: Exception) {
-                false to "ошибка: ${e.message ?: e.javaClass.simpleName}"
+                false to (e.message ?: "ошибка: ${e.javaClass.simpleName}")
             }
             log.append(i + 1).append(". ").append(if (ok) "✅ " else "❌ ").append(text).append('\n')
             if (!ok) {
                 log.append("Остановилась, чтобы не нажать лишнего.")
                 break
+            }
+            when (s) {
+                is Step.OpenApp -> expected = s.target?.pkg
+                is Step.Global -> expected = null // «Назад», «Домой» и т.п. меняют экран сознательно
+                else -> {}
             }
             Thread.sleep(if (s is Step.OpenApp) 1800L else 700L)
         }
@@ -120,8 +151,8 @@ object Steps {
 
     private fun runOne(ctx: Context, s: Step): Pair<Boolean, String> {
         if (s is Step.OpenApp) {
-            val label = Apps.launch(ctx, s.name) ?: return false to "не нашла приложение «${s.name}»"
-            return true to "открыла «$label»"
+            val t = s.target ?: Apps.resolve(ctx, s.name) ?: return false to "не нашла приложение «${s.name}»"
+            return if (Apps.start(ctx, t)) true to "открыла «${t.label}»" else false to "не получилось открыть «${t.label}»"
         }
         if (s is Step.Wait) {
             Thread.sleep(s.ms)

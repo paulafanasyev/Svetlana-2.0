@@ -5,13 +5,22 @@ plugins {
 
 // Интерфейс приложения — тот же, что у сайта и Windows: собираем корень репозитория (npm run build)
 // и кладём dist в assets/web. WebView открывает его с https://appassets.androidplatform.net (WebViewAssetLoader).
+// Нужен Node.js 22+ (как для сайта). Работает и на Windows: npm запускается напрямую, без bash.
 val repoRoot: File = rootProject.projectDir.parentFile
 val webOut = layout.buildDirectory.dir("generated/web")
+val npm = if (System.getProperty("os.name").lowercase().contains("windows")) "npm.cmd" else "npm"
+
+val npmCi by tasks.registering(Exec::class) {
+    description = "Ставит зависимости общего интерфейса (npm ci)"
+    workingDir = repoRoot
+    commandLine(npm, "ci", "--no-audit", "--no-fund")
+}
 
 val buildWeb by tasks.registering(Exec::class) {
     description = "Собирает общий интерфейс Светланы (как для сайта и Windows)"
+    dependsOn(npmCi)
     workingDir = repoRoot
-    commandLine("bash", "-c", "npm ci --no-audit --no-fund && npm run build")
+    commandLine(npm, "run", "build")
     inputs.dir(File(repoRoot, "src"))
     inputs.dir(File(repoRoot, "public"))
     inputs.files(
@@ -28,6 +37,14 @@ val copyWeb by tasks.registering(Sync::class) {
     dependsOn(buildWeb)
     from(File(repoRoot, "dist"))
     into(layout.buildDirectory.dir("generated/web/web"))
+    doLast {
+        // Без интерфейса приложение откроется пустым — лучше уронить сборку.
+        val index = webOut.get().file("web/index.html").asFile
+        check(index.isFile && index.length() > 100) { "Нет собранного интерфейса: $index" }
+        val scripts = webOut.get().dir("web/assets").asFile.listFiles { f -> f.name.endsWith(".js") }?.size ?: 0
+        check(scripts > 0) { "В сборке интерфейса нет скриптов" }
+        println("Интерфейс Светланы в APK: index.html + $scripts js")
+    }
 }
 
 android {
