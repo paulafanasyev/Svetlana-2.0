@@ -67,8 +67,8 @@ export default function CabinetPage() {
     try {
       n = await wipeAllLocalData();
     } catch (err) {
-      // «Отмена» в окне телефона: ничего не удалено.
-      setMsg(`Ничего не удалено: ${errText(err)}.`);
+      // «Отмена» в окне системы: CRM, бизнес и прочие данные не тронуты.
+      setMsg(`Удаление остановлено: ${errText(err)}. Клиенты, финансы, записи и настройки остались ${onDevice}.`);
       setBusy(false);
       return;
     }
@@ -84,7 +84,7 @@ export default function CabinetPage() {
           <>
             <p className="text-sm">{device} привязан {new Date(meta.linkedAt).toLocaleString('ru-RU')}. Последняя отправка: {meta.lastOk ? new Date(meta.lastOk).toLocaleString('ru-RU') : '—'}{meta.lastError ? ` (ошибка: ${meta.lastError})` : ''}.</p>
             <p className="text-xs text-slate-400">В кабинет уходят только версия, флаги защиты и названия моделей. Клиенты, деньги, голос и переписка остаются {onDevice}.</p>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button disabled={busy} onClick={onSync} className={`${btn} bg-indigo-600 text-white`}><RefreshCw className="w-4 h-4" />Обновить</button>
               <button onClick={onUnlink} className={`${btn} bg-white/5 border border-white/10`}><Unlink className="w-4 h-4" />Отвязать</button>
             </div>
@@ -97,7 +97,7 @@ export default function CabinetPage() {
             <button disabled={busy || !code.trim()} onClick={onLink} className={`${btn} bg-indigo-600 text-white disabled:opacity-50`}><Link2 className="w-4 h-4" />Привязать</button>
           </>
         )}
-        {msg && <p className="text-sm text-indigo-200">{msg}</p>}
+        {msg && <p className="text-sm text-indigo-200 break-words">{msg}</p>}
       </div>
 
       <div className={card}>
