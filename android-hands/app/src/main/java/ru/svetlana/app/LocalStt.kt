@@ -35,7 +35,8 @@ import kotlin.math.sin
  *
  * Модель скачивается только после нативного подтверждения, только по https и только с Hugging Face
  * (каждое перенаправление проверяется), сверяется по SHA-256 после загрузки и перед каждой загрузкой
- * в память; файл лежит в закрытой папке приложения. Размер, длина звука и частота запросов ограничены.
+ * в память; файл лежит в закрытой папке приложения (писать туда может только само приложение).
+ * Размер, длина звука и частота запросов ограничены.
  */
 object LocalStt {
     private const val MODEL_URL = "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_ctc.int8.onnx"
@@ -181,9 +182,10 @@ object LocalStt {
         if (!f.delete()) throw SecureAi.Fail("Не удалось удалить модель")
     }
 
-    /** PCM 16 бит (little-endian, base64) в отсчёты -1..1. */
+    /** PCM 16 бит (little-endian, base64) в отсчёты -1..1. Запись нечётной длины — ошибка, а не обрезка. */
     fun decodePcm16(b64: String): FloatArray {
         val bytes = try { Base64.decode(b64, Base64.NO_WRAP) } catch (e: IllegalArgumentException) { throw SecureAi.Fail("Некорректная запись") }
+        if (bytes.size % 2 != 0) throw SecureAi.Fail("Некорректная запись")
         val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
         val out = FloatArray(bytes.size / 2)
         for (i in out.indices) out[i] = bb.getShort(i * 2) / 32768f
