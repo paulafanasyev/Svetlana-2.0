@@ -99,8 +99,9 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
       {/* Emotion Controls */}
       {interactive && showControls && (
         <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
+          initial={still ? false : { opacity: 0, y: 10 }}
+          animate={still ? { opacity: 1 } : { opacity: 1, y: 0 }}
+          transition={still ? { duration: 0 } : undefined}
           className="absolute -bottom-16 left-1/2 -translate-x-1/2 flex gap-2 p-2 rounded-xl bg-sv-darker/95 border border-sv-border backdrop-blur-xl"
         >
           {(['neutral', 'happy', 'sad', 'laughing', 'crying', 'surprised'] as Emotion[]).map(emotion => (
