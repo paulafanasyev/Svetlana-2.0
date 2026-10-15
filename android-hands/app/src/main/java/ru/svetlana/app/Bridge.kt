@@ -10,9 +10,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Нативный мост для общего интерфейса. Страница видит те же команды, что в Windows (Tauri invoke):
  * secret_set, secret_has, ai_new_conversation, ai_cloud_chat, local_stt_* (GigaAM на устройстве), плюс то,
  * чего в WebView нет самого по себе: голос (voice_*, tts_*), руки (hands_*), файлы (save_file), печать
- * (print_html), буфер обмена (clipboard_set), контакты телефона (contacts_list), домашняя сеть по http
- * (lan_http: Ollama/LM Studio на компьютере и Svetlana-home) и полное удаление ключей (secret_wipe_all).
- * Любая другая команда отклоняется.
+ * (print_html), буфер обмена (clipboard_set, только сразу после касания экрана), контакты телефона
+ * (contacts_list), домашняя сеть по http (lan_http: Ollama/LM Studio на компьютере и Svetlana-home) и полное
+ * удаление ключей (secret_wipe_all). Любая другая команда отклоняется.
  *
  * Сообщения принимаются только из главного окна своего адреса (проверка в MainActivity), размер — до
  * разбора JSON. Ключи, облако, руки, контакты, скачивание модели и первая отправка данных на новое
@@ -117,10 +117,14 @@ class Bridge(private val act: MainActivity) {
                 if (html.isEmpty() || html.length > MAX_SAVE_CHARS) done(false, "Нечего печатать или документ слишком большой")
                 else act.printHtml(html, Steps.safe(args.optString("title"), 80), done)
             }
+            // Как в браузере: писать в буфер можно только сразу после настоящего касания (скрипт сам по себе не может).
             "clipboard_set" -> {
                 val text = args.optString("text")
-                if (text.length > MAX_CLIP_CHARS) done(false, "Текст слишком большой")
-                else { act.copyText(text); done(true, null) }
+                when {
+                    text.length > MAX_CLIP_CHARS -> done(false, "Текст слишком большой")
+                    !act.touchedRecently() -> done(false, "Копировать можно только по нажатию")
+                    else -> { act.copyText(text); done(true, null) }
+                }
             }
             // Контакты этого телефона в CRM: разрешение Android «Контакты» + нативное подтверждение.
             "contacts_list" -> act.withPermission(Manifest.permission.READ_CONTACTS) { granted ->
