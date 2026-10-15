@@ -10,6 +10,7 @@
 //!   может нажать его сам), только по https и только с серверов Hugging Face;
 //! - файл проверяется по SHA-256 после загрузки и ещё раз при каждой загрузке в память; проверяются
 //!   и исполняются одни и те же байты (из памяти), подменить файл между проверкой и загрузкой нельзя;
+//!   повреждённый или подменённый файл удаляется, и модель снова считается не установленной;
 //! - размер, длина звука и частота запросов ограничены.
 
 use sha2::{Digest, Sha256};
@@ -27,6 +28,7 @@ const MODEL_SHA256: &str = "ceb61454e2e1a2dec5872cbac1de0fe0a4271d1148f6b26b5bda
 const MODEL_FILE: &str = "gigaam-v3-ctc.int8.onnx";
 const MODEL_SIZE_MB: u32 = 225;
 const MAX_MODEL_BYTES: u64 = 400 * 1024 * 1024;
+const UNEXPECTED: &str = "Неожиданный ответ модели";
 
 const SAMPLE_RATE: usize = 16_000;
 const N_FFT: usize = 320; // окно 20 мс
@@ -260,7 +262,9 @@ pub async fn local_stt_transcribe(app: AppHandle, pcm: Vec<f32>, sample_rate: u3
 fn load_engine(path: &Path) -> Result<Engine, String> {
     let bytes = std::fs::read(path).map_err(|_| "Модель распознавания не установлена".to_string())?;
     if hex(&Sha256::digest(&bytes)) != MODEL_SHA256 {
-        return Err("Файл модели повреждён или подменён. Удалите его и скачайте заново.".into());
+        // Повреждённый файл убираем, иначе статус вечно показывает «установлена», а скачать заново нельзя.
+        let _ = std::fs::remove_file(path);
+        return Err("Файл модели был повреждён и удалён. Скачайте модель заново.".into());
     }
     let session = ort::session::Session::builder()
         .map_err(|e| e.to_string())?
@@ -290,14 +294,16 @@ fn transcribe_blocking(path: &Path, pcm: &[f32], sample_rate: usize) -> Result<S
         .session
         .run(ort::inputs!["features" => input, "feature_lengths" => lens])
         .map_err(|e| e.to_string())?;
-    let (shape, data) = outputs["log_probs"].try_extract_tensor::<f32>().map_err(|e| e.to_string())?;
+    // Без индексации outputs[...]: она паникует, если в ответе модели нет такого выхода.
+    let log_probs = outputs.get("log_probs").ok_or_else(|| UNEXPECTED.to_string())?;
+    let (shape, data) = log_probs.try_extract_tensor::<f32>().map_err(|e| e.to_string())?;
     let dims: Vec<i64> = shape.iter().copied().collect();
     if dims.len() != 3 || dims[0] != 1 || dims[2] != CLASSES as i64 || dims[1] < 0 {
-        return Err("Неожиданный ответ модели".into());
+        return Err(UNEXPECTED.into());
     }
     let steps = dims[1] as usize;
     if data.len() < steps * CLASSES {
-        return Err("Неожиданный ответ модели".into());
+        return Err(UNEXPECTED.into());
     }
     Ok(ctc_decode(data, steps))
 }
@@ -500,6 +506,18 @@ mod tests {
         for m in 0..N_MELS {
             assert!((0..N_BINS).any(|k| fb[k * N_MELS + m] > 0.0));
         }
+    }
+
+    #[test]
+    fn corrupt_model_is_removed_on_load() {
+        let dir = std::env::temp_dir().join(format!("svetlana-stt-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(MODEL_FILE);
+        std::fs::write(&path, b"not a model").unwrap();
+        let err = load_engine(&path).err().unwrap();
+        assert!(err.contains("удалён"));
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
