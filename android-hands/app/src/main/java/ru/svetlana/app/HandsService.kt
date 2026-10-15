@@ -13,7 +13,8 @@ import android.view.accessibility.AccessibilityNodeInfo
  * Руки Светланы: чтение экрана и действия в других приложениях через спец. возможности Android.
  * Сервис ничего не делает сам: только выполняет шаги, которые подтвердил человек (Steps.run).
  * pkg — приложение, в котором разрешено действовать: проверяется и у элемента, и у активного окна
- * непосредственно перед нажатием, жестом или вводом текста (если поверх всплыло чужое — отказ).
+ * непосредственно перед нажатием, вводом текста и внутри самого жеста (прямо перед dispatchGesture).
+ * Открытого «жеста без привязки» нет: все жесты через gestureIn(pkg, ...).
  */
 class HandsService : AccessibilityService() {
 
@@ -123,24 +124,26 @@ class HandsService : AccessibilityService() {
             n = n.parent
             depth++
         }
-        // Жест по координатам — только если сверху всё ещё то же приложение.
-        if (!inApp(pkg)) return false
-        return tapNode(node)
+        return tapNode(node, pkg)
     }
 
-    private fun tapNode(n: AccessibilityNodeInfo): Boolean {
+    /** Нажатие по координатам элемента: элемент должен ещё существовать, быть виден и принадлежать pkg. */
+    private fun tapNode(n: AccessibilityNodeInfo, pkg: String?): Boolean {
+        if (!n.refresh() || !n.isVisibleToUser || !nodeIn(n, pkg)) return false
         val r = Rect()
         n.getBoundsInScreen(r)
         if (r.isEmpty) return false
-        return gesture(r.exactCenterX(), r.exactCenterY(), r.exactCenterX(), r.exactCenterY(), 60)
+        return gestureIn(pkg, r.exactCenterX(), r.exactCenterY(), r.exactCenterX(), r.exactCenterY(), 60)
     }
 
-    fun gesture(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long): Boolean {
+    /** Жест только в нужном приложении: проверка активного окна — последнее перед dispatchGesture. */
+    private fun gestureIn(pkg: String?, x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long): Boolean {
         val path = Path()
         path.moveTo(x1, y1)
         if (x1 != x2 || y1 != y2) path.lineTo(x2, y2)
-        val stroke = GestureDescription.StrokeDescription(path, 0, durationMs)
-        return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+        val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, durationMs)).build()
+        if (pkg == null || !inApp(pkg)) return false
+        return dispatchGesture(g, null, null)
     }
 
     fun scroll(down: Boolean, pkg: String? = null): Boolean {
@@ -148,12 +151,11 @@ class HandsService : AccessibilityService() {
         val action = if (down) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
         val target = nodes().firstOrNull { it.isScrollable && it.isVisibleToUser && nodeIn(it, pkg) }
         if (target != null && inApp(pkg) && target.performAction(action)) return true
-        if (!inApp(pkg)) return false
         val m = resources.displayMetrics
         val x = m.widthPixels / 2f
         val top = m.heightPixels * 0.3f
         val bottom = m.heightPixels * 0.75f
-        return if (down) gesture(x, bottom, x, top, 350) else gesture(x, top, x, bottom, 350)
+        return if (down) gestureIn(pkg, x, bottom, x, top, 350) else gestureIn(pkg, x, top, x, bottom, 350)
     }
 
     fun type(text: String, field: String?, pkg: String? = null): Boolean {
@@ -162,7 +164,7 @@ class HandsService : AccessibilityService() {
         val focused = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable && nodeIn(it, pkg) }
         val target = byLabel ?: focused ?: nodes().firstOrNull { it.isEditable && it.isVisibleToUser && nodeIn(it, pkg) } ?: return false
         target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-        if (!inApp(pkg)) return false
+        if (!inApp(pkg) || !nodeIn(target, pkg)) return false
         val args = Bundle()
         args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         return target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)

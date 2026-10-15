@@ -26,6 +26,7 @@ sealed class Step(val title: String) {
 object Steps {
     private val JSON_BLOCK = Regex("```(?:json)?\\s*(\\{[\\s\\S]*?\\})\\s*```")
     private val RISKY = listOf("отправ", "оплат", "заплат", "купить", "купи", "удал", "позвон", "вызов", "перевест", "перевод", "подтверд", "опублик", "send", "pay", "buy", "delete", "call")
+    const val NEED_OPEN_APP = "после «Назад», «Домой» или уведомлений сначала нужно открыть приложение («открой …»), чтобы не нажать в случайном"
 
     fun back() = Step.Global(AccessibilityService.GLOBAL_ACTION_BACK, "Назад")
     fun home() = Step.Global(AccessibilityService.GLOBAL_ACTION_HOME, "На главный экран")
@@ -117,14 +118,18 @@ object Steps {
     /**
      * Выполняет шаги по порядку и останавливается на первой неудаче. Вызывать не из главного потока.
      * Действия на экране привязаны к приложению: после «Открыть X» — к пакету X, иначе к тому, что было
-     * на экране при первом действии. Пакет проверяется и здесь, и в HandsService прямо перед каждым нажатием.
+     * на экране при первом действии. «Назад», «Домой» и т.п. привязку НЕ сбрасывают: если после них
+     * сверху другое приложение — остановка; а если привязки ещё не было, дальше нужен «Открыть …».
+     * Пакет проверяется и здесь, и в HandsService прямо перед каждым нажатием.
      */
     fun run(ctx: Context, steps: List<Step>): String {
         val log = StringBuilder()
         var expected: String? = null
+        var unbound = false
         for ((i, s) in steps.withIndex()) {
             val (ok, text) = try {
                 if (touchesScreen(s)) {
+                    if (expected == null && unbound) throw IllegalStateException(NEED_OPEN_APP)
                     val cur = HandsService.instance?.currentApp()
                     if (expected == null) expected = cur
                     if (cur == null || cur != expected) {
@@ -141,8 +146,8 @@ object Steps {
                 break
             }
             when (s) {
-                is Step.OpenApp -> expected = s.target?.pkg
-                is Step.Global -> expected = null // «Назад», «Домой» и т.п. меняют экран сознательно
+                is Step.OpenApp -> { expected = s.target?.pkg; unbound = expected == null }
+                is Step.Global -> if (expected == null) unbound = true
                 else -> {}
             }
             Thread.sleep(if (s is Step.OpenApp) 1800L else 700L)
