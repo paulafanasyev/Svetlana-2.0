@@ -84,6 +84,14 @@ android {
         jvmTarget = "17"
     }
 
+    // Модульные тесты идут на обычной JVM: заглушки Android возвращают значения по умолчанию,
+    // а настоящий org.json подключён отдельно (см. dependencies).
+    testOptions {
+        unitTests {
+            isReturnDefaultValues = true
+        }
+    }
+
     lint {
         abortOnError = false
         checkReleaseBuilds = false
@@ -92,8 +100,14 @@ android {
 
 tasks.named("preBuild") { dependsOn(copyWeb) }
 
+// Отладочный APK собирается только если прошли модульные тесты (проверки ключей и запросов ИИ).
+tasks.matching { it.name == "assembleDebug" }.configureEach { dependsOn("testDebugUnitTest") }
+
 dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
     // Распознавание речи на телефоне (GigaAM-v3, как в Windows-версии).
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
