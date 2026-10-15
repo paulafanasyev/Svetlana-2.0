@@ -23,6 +23,9 @@ export function keyStoredText(): string {
   return isNativeApp() ? `Ключ хранится в ${secureStoreName()}.` : 'Ключ хранится в зашифрованном хранилище браузера.';
 }
 
+/** Подсказка к адресу локальной модели на телефоне: компьютер в домашней сети. */
+export const PHONE_LOCAL_HINT = 'На телефоне укажите адрес компьютера в домашней Wi‑Fi сети, например http://192.168.1.10:11434 (IP видно в Windows: «Параметры → Сеть»). На компьютере Ollama должна слушать сеть: setx OLLAMA_HOST 0.0.0.0 и перезапустить Ollama. При первом запросе телефон спросит разрешение.';
+
 // ==================== PRESET PROVIDERS ====================
 const PRESET_PROVIDERS: Omit<AIProvider, 'enabled' | 'apiKey'>[] = [
   // Offline Local Engines
@@ -81,6 +84,7 @@ function ConfigModal({ provider, onSave, onClose }: {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const isCore = provider.id === 'svetlana';
+  const phoneLocal = isAndroidApp() && provider.type === 'offline';
 
   // Системная кнопка «Назад» телефона = «Отмена».
   useEffect(() => onBack(onClose), []);
@@ -147,7 +151,7 @@ function ConfigModal({ provider, onSave, onClose }: {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h3 className="text-lg font-semibold">{provider.name}</h3>
-            <p className="text-xs text-slate-400">{provider.type === 'offline' ? 'Офлайн / Локальный движок' : isCore ? 'Единая Светлана на своём сервере (мир-самозанятых.рф)' : 'Внешний облачный ИИ'}</p>
+            <p className="text-xs text-slate-400">{provider.type === 'offline' ? (phoneLocal ? 'Локальная модель на вашем компьютере (домашняя сеть)' : 'Офлайн / Локальный движок') : isCore ? 'Единая Светлана на своём сервере (мир-самозанятых.рф)' : 'Внешний облачный ИИ'}</p>
           </div>
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400" aria-label="Закрыть">
             <X className="w-5 h-5" />
@@ -176,7 +180,7 @@ function ConfigModal({ provider, onSave, onClose }: {
           )}
 
           <div>
-            <label className="text-sm text-slate-300 mb-1 block">Адрес эндпоинта (URL)</label>
+            <label className="text-sm text-slate-300 mb-1 block">{phoneLocal ? 'Адрес компьютера с моделью' : 'Адрес эндпоинта (URL)'}</label>
             <div className="relative">
               <Server className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
               <input
@@ -184,9 +188,12 @@ function ConfigModal({ provider, onSave, onClose }: {
                 value={endpoint}
                 onChange={e => { setEndpoint(e.target.value); setSaved(false); }}
                 readOnly={isCore}
+                inputMode={phoneLocal ? 'url' : undefined}
+                placeholder={phoneLocal ? 'http://192.168.1.10:11434' : undefined}
                 className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm font-mono focus:outline-none focus:border-indigo-500"
               />
             </div>
+            {phoneLocal && <p data-testid="phone-local-hint" className="text-xs text-slate-400 mt-1.5">{PHONE_LOCAL_HINT}</p>}
           </div>
 
           <div>
@@ -257,7 +264,7 @@ function ConfigModal({ provider, onSave, onClose }: {
 
 // ==================== MAIN PAGE ====================
 export default function AIProvidersPage() {
-  // Локальные модели (Ollama и др.) работают на компьютере; в приложении для Android их не показываем.
+  // На телефоне локальные модели тоже есть: они работают на компьютере в домашней сети.
   const android = isAndroidApp();
   const [activeTab, setActiveTab] = useState<'offline' | 'online'>(android ? 'online' : 'offline');
   const [providers, setProviders] = useState<AIProvider[]>(aiGateway.getAllProviders());
@@ -272,7 +279,7 @@ export default function AIProvidersPage() {
   }, []);
 
   const activeProvider = aiGateway.getActiveProvider();
-  const tab = android ? 'online' : activeTab;
+  const tab = activeTab;
 
   const handleCopy = (command: string) => {
     void navigator.clipboard?.writeText(command).catch(() => undefined);
@@ -310,21 +317,14 @@ export default function AIProvidersPage() {
           </h2>
           <p className="text-sm text-slate-400 mt-1">
             {android
-              ? 'На телефоне Светлана отвечает через свой сервер или облачные ИИ. Локальные модели (Ollama и др.) работают только на компьютере.'
+              ? 'На телефоне Светлана отвечает через свой сервер, облачные ИИ или локальную модель на вашем компьютере в домашней сети (Ollama, LM Studio).'
               : 'Переключайтесь между локальными офлайн-моделями на вашем ПК и мощными облачными ИИ.'}
           </p>
         </div>
       </div>
 
-      {android && activeProvider?.type === 'offline' && (
-        <div data-testid="offline-on-phone" className="rounded-xl p-4 border border-yellow-500/30 bg-yellow-500/10 text-sm text-yellow-200 flex items-start gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>Сейчас выбрана локальная модель компьютера — на телефоне она не работает. Подключите «★ Светлана Сервер» или облачный ИИ ниже.</span>
-        </div>
-      )}
-
       {/* Active Provider Card */}
-      {activeProvider && !(android && activeProvider.type === 'offline') && (
+      {activeProvider && (
         <div className="glass-card rounded-2xl p-5 border border-emerald-500/30 bg-emerald-950/20 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-4 min-w-0">
             <div className="w-12 h-12 shrink-0 rounded-xl bg-emerald-500/20 flex items-center justify-center">
@@ -335,7 +335,7 @@ export default function AIProvidersPage() {
                 <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                   Активный ИИ
                 </span>
-                <span className="text-xs text-slate-400">{activeProvider.type === 'offline' ? 'Локальный (без интернета)' : 'Облачный API'}</span>
+                <span className="text-xs text-slate-400">{activeProvider.type === 'offline' ? (android ? 'Локальный (компьютер в домашней сети)' : 'Локальный (без интернета)') : 'Облачный API'}</span>
               </div>
               <h3 className="text-lg font-bold text-white mt-0.5">{activeProvider.name}</h3>
               <p className="text-xs font-mono text-slate-300 break-all">Модель: {activeProvider.model} • {activeProvider.endpoint}</p>
@@ -352,19 +352,17 @@ export default function AIProvidersPage() {
 
       {/* Tabs */}
       <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-2">
-        {!android && (
-          <button
-            onClick={() => setActiveTab('offline')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-              tab === 'offline'
-                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-lg shadow-cyan-500/10'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <HardDrive className="w-4 h-4" />
-            Локальные модели (Офлайн)
-          </button>
-        )}
+        <button
+          onClick={() => setActiveTab('offline')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+            tab === 'offline'
+              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-lg shadow-cyan-500/10'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800'
+          }`}
+        >
+          <HardDrive className="w-4 h-4" />
+          {android ? 'Локальные модели (на компьютере)' : 'Локальные модели (Офлайн)'}
+        </button>
         <button
           onClick={() => setActiveTab('online')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
@@ -378,16 +376,22 @@ export default function AIProvidersPage() {
         </button>
       </div>
 
-      {/* Tab 1: Offline Models Catalog (только компьютер) */}
+      {/* Tab 1: Offline Models Catalog */}
       {tab === 'offline' && (
         <div className="space-y-6">
+          {android && (
+            <div data-testid="phone-local-note" className="rounded-xl p-4 border border-cyan-500/30 bg-cyan-950/20 text-sm text-cyan-100 flex items-start gap-2">
+              <HardDrive className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{PHONE_LOCAL_HINT}</span>
+            </div>
+          )}
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <h3 className="text-base font-semibold flex items-center gap-2 text-cyan-300">
                 <Download className="w-4 h-4" />
                 Каталог локальных моделей для компьютера
               </h3>
-              <span className="text-xs text-slate-400">Работают через Ollama / LM Studio без отправки данных в сеть</span>
+              <span className="text-xs text-slate-400">Работают через Ollama / LM Studio без отправки данных в интернет</span>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -431,10 +435,13 @@ export default function AIProvidersPage() {
                     <button
                       onClick={() => {
                         const ollamaProvider = providers.find(p => p.id === 'ollama');
-                        if (ollamaProvider) {
+                        if (ollamaProvider && !(android && /127\.0\.0\.1|localhost/.test(ollamaProvider.endpoint))) {
                           void aiGateway.updateProvider('ollama', { model: m.id, enabled: true }).catch(e => console.error(e));
                           aiGateway.setActiveProvider('ollama');
                           setProviders(aiGateway.getAllProviders());
+                        } else if (ollamaProvider) {
+                          // Телефон: сначала нужен адрес компьютера.
+                          setConfiguringProvider({ ...ollamaProvider, model: m.id });
                         } else {
                           handleAddPreset('ollama');
                         }
@@ -460,7 +467,7 @@ export default function AIProvidersPage() {
                 return (
                   <div
                     key={p.id}
-                    className={`glass-card rounded-xl p-4 border flex items-center justify-between ${
+                    className={`glass-card rounded-xl p-4 border flex items-center justify-between gap-2 ${
                       isSelected
                         ? 'border-emerald-500/40 bg-emerald-950/10'
                         : 'border-slate-800 bg-slate-900/40'
@@ -476,7 +483,7 @@ export default function AIProvidersPage() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
                       {configured && (
                         <button
                           onClick={() => handleSelectActive(p.id)}
