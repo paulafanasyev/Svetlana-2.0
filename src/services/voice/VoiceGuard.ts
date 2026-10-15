@@ -2,8 +2,8 @@
 // пишем звук с микрофона и сверяем каждую фразу с отпечатком голоса (VoicePrint).
 // Защита от записи: перед первой командой Светлана просит сказать 3 случайные цифры (Liveness),
 // цифры и голос проверяются по одному и тому же звуку. Без записанного голоса управление выключено.
-// В Android фразы слушает запись (listenRecorded: GigaAM на телефоне или облако): распознавание телефона
-// занимает микрофон само, и сверить по нему голос нельзя.
+// В Android фразы слушает запись (listenRecorded: GigaAM на телефоне или облако), и голос сверяется по
+// тому же звуку, из которого распознан текст (вторая запись не открывается).
 import { listen, listenRecorded, recordedRecognizer, getCloudStt, transcribe, pcmToWav, type ListenOptions, type Listener } from './SpeechEngine';
 import { computeVoicePrint, loadTemplate, verifyPrint, type VerifyResult, type VoicePrint, type VoiceTemplate } from './VoicePrint';
 import { speakText, stopSpeaking } from './Tts';
@@ -94,6 +94,11 @@ export interface VerifiedListenOptions extends ListenOptions {
 /** Зависимости вынесены, чтобы логику проверки можно было прогнать в тестах без микрофона. */
 export interface GuardDeps {
   listen(opts: ListenOptions): Listener | null;
+  /**
+   * listen() сам отдаёт звук распознанной фразы (onAudio) — тогда голос проверяется по нему, а отдельная
+   * запись для фразы не открывается (Android: listenRecorded).
+   */
+  listenGivesAudio?(): boolean;
   startCapture(): Promise<PcmCapture>;
   speak(text: string, onEnd: () => void): void;
   stopSpeaking(): void;
@@ -121,6 +126,9 @@ export interface GuardDeps {
 export const CHALLENGE_TIMEOUT_MS = 20_000;
 const ANSWER_DELAY_MS = 350; // пауза после озвучки цифр, чтобы микрофон не поймал хвост своей речи
 export const ANSWER_RECORD_MS = 4500; // окно записи ответа для распознавания на устройстве или в облаке
+
+/** Запись из готового звука фразы (того самого, из которого распознан текст). */
+const fixedCapture = (a: { pcm: Float32Array; sampleRate: number }): PcmCapture => ({ take: () => a, stop: () => undefined });
 
 export function createVoiceGuard(d: GuardDeps) {
   return function listenVerified(opts: VerifiedListenOptions, onVerify?: (r: VerifyResult) => void): Listener | null {
@@ -180,14 +188,25 @@ export function createVoiceGuard(d: GuardDeps) {
     const startMain = (): boolean => {
       const gen = ++mainGen;
       let ended = false; // распознавание уже закончилось: запоздавшую запись сразу закрываем
-      const capP: Promise<PcmCapture | null> = d.startCapture()
-        .then(c => { if (closed || ended || gen !== mainGen) { c.stop(); return null; } cap = c; return c; })
-        .catch(() => null);
+      const ownAudio = d.listenGivesAudio?.() === true;
+      let heard: { pcm: Float32Array; sampleRate: number } | null = null;
+      const capP: Promise<PcmCapture | null> = ownAudio
+        ? Promise.resolve(null)
+        : d.startCapture()
+          .then(c => { if (closed || ended || gen !== mainGen) { c.stop(); return null; } cap = c; return c; })
+          .catch(() => null);
       const l = d.listen({
         continuous: opts.continuous,
         onPartial: t => { if (gen === mainGen && !challenge) opts.onPartial?.(t); },
         onError: m => { if (gen === mainGen && !challenge) opts.onError?.(m); },
-        onFinal: text => { if (gen === mainGen) onPhrase(text, capP); },
+        onAudio: (pcm, sampleRate) => { if (gen === mainGen) heard = { pcm, sampleRate }; },
+        onFinal: text => {
+          if (gen !== mainGen) return;
+          const a = heard;
+          heard = null;
+          // Если распознавание отдало свой звук — голос проверяется именно по нему.
+          onPhrase(text, a ? Promise.resolve(fixedCapture(a)) : capP);
+        },
         onEnd: () => {
           ended = true;
           if (gen !== mainGen) return;
@@ -327,10 +346,11 @@ export function endVoiceTrust(): void { sharedTrust.end(); }
  * Как listen(), но onFinal вызывается только если фразу сказал владелец, а при первой команде
  * ещё и произнёс случайные цифры. Чужой голос, тишина (подставленный текст), не те цифры или
  * отсутствие доступа к звуку: фраза отбрасывается. В режиме «без рук» чужие фразы игнорируются молча.
- * В Android фразы слушает запись (listenRecorded), а не распознавание телефона.
+ * В Android фразы слушает запись (listenRecorded), а не распознавание телефона, и голос сверяется по её звуку.
  */
 export const listenVerified = createVoiceGuard({
   listen: o => (isAndroidApp() ? listenRecorded(o) : listen(o)),
+  listenGivesAudio: () => isAndroidApp(),
   startCapture,
   speak: (text, onEnd) => speakText(text, { force: true, onEnd }),
   stopSpeaking,
