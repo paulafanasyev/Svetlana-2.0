@@ -69,8 +69,11 @@ jobs:
         if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main')
         env:
           KEYSTORE_B64: ${{ secrets.SVETLANA_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.SVETLANA_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SVETLANA_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SVETLANA_KEY_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE_B64" ]; then
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
             umask 077
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "SVETLANA_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
@@ -80,6 +83,7 @@ jobs:
           fi
       - name: Signed release APK
         if: steps.sign.outputs.signed == 'true'
+        working-directory: android-hands
         env:
           SVETLANA_KEYSTORE_PASSWORD: ${{ secrets.SVETLANA_KEYSTORE_PASSWORD }}
           SVETLANA_KEY_ALIAS: ${{ secrets.SVETLANA_KEY_ALIAS }}
@@ -87,6 +91,7 @@ jobs:
         run: gradle assembleRelease --no-daemon
       - name: Pick APK for Releases
         if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main')
+        working-directory: android-hands
         run: |
           mkdir -p ../release-apk
           if [ "${{ steps.sign.outputs.signed }}" = "true" ]; then
