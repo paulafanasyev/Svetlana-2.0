@@ -16,7 +16,9 @@ describe('Windows shell round 4', () => {
 
   it('does not show the demo orchestrator as a main tab', () => {
     const shell = read('src/DesktopShell.tsx');
-    const tabs = shell.slice(shell.indexOf('export const TABS'), shell.indexOf('];'));
+    const start = shell.indexOf('const TABS');
+    const tabs = shell.slice(start, shell.indexOf('];', start));
+    expect(start).toBeGreaterThan(-1);
     expect(tabs).not.toContain('orchestrator');
     expect(tabs).toContain("'chat'");
     expect(shell).toContain('voice-note');
