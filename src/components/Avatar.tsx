@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { motion } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
 import { SVETLANA_IDENTITY, getAvatarStateOverlay, getAvatarStateFromEmotion } from '../services/AvatarIdentity';
 import { Mic, MicOff } from 'lucide-react';
 import { listen, sttSupport, recordedRecognizer, type Listener, type ListenOptions } from '../services/voice/SpeechEngine';
@@ -29,6 +29,10 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
   const isTalking = talking;
   const isListening = listening;
   const [showControls, setShowControls] = useState(false);
+  // В системе включено «Уменьшить движение»: индикаторы стоят на месте, без пульсации.
+  const still = useReducedMotion() ?? false;
+  const overlay = getAvatarStateOverlay(getAvatarStateFromEmotion(currentEmotion));
+  const pulse = !still && overlay.animation === 'pulse';
 
   useEffect(() => {
     if (externalEmotion) setCurrentEmotion(externalEmotion);
@@ -63,9 +67,9 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
         <motion.img
           src={MASTER_AVATAR}
           alt="Svetlana"
-          className={`w-full h-full object-cover transition-all duration-300 ${getAvatarStateOverlay(getAvatarStateFromEmotion(currentEmotion)).overlay || ''}`}
-          animate={getAvatarStateOverlay(getAvatarStateFromEmotion(currentEmotion)).animation === 'pulse' ? { scale: [1, 1.02, 1] } : {}}
-          transition={getAvatarStateOverlay(getAvatarStateFromEmotion(currentEmotion)).animation === 'pulse' ? { duration: 2, repeat: Infinity } : {}}
+          className={`w-full h-full object-cover transition-all duration-300 ${overlay.overlay || ''}`}
+          animate={pulse ? { scale: [1, 1.02, 1] } : {}}
+          transition={pulse ? { duration: 2, repeat: Infinity } : {}}
         />
 
         {/* Talking overlay animation */}
@@ -73,8 +77,8 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
           <motion.div
             data-testid="avatar-talking"
             className="absolute bottom-0 left-0 right-0 h-1/3 bg-gradient-to-t from-indigo-500/20 to-transparent"
-            animate={{ opacity: [0.3, 0.6, 0.3] }}
-            transition={{ duration: 0.5, repeat: Infinity }}
+            animate={still ? { opacity: 0.5 } : { opacity: [0.3, 0.6, 0.3] }}
+            transition={still ? { duration: 0 } : { duration: 0.5, repeat: Infinity }}
           />
         )}
 
@@ -83,8 +87,8 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
           <motion.div
             data-testid="avatar-listening"
             className="absolute inset-0 rounded-full border-4 border-cyan-400"
-            animate={{ scale: [1, 1.1, 1], opacity: [0.5, 1, 0.5] }}
-            transition={{ duration: 1.5, repeat: Infinity }}
+            animate={still ? { opacity: 1 } : { scale: [1, 1.1, 1], opacity: [0.5, 1, 0.5] }}
+            transition={still ? { duration: 0 } : { duration: 1.5, repeat: Infinity }}
           />
         )}
 
@@ -157,6 +161,7 @@ export function VoiceControl({ onCommand, onListeningChange }: { onCommand?: (co
   const tokenRef = useRef<object | null>(null);
   const onCommandRef = useRef(onCommand);
   const onListeningRef = useRef(onListeningChange);
+  const still = useReducedMotion() ?? false;
   const support = sttSupport();
   const android = isAndroidApp();
   // Телефон с записанным голосом и распознаванием записи слушает как компьютер (в том числе «без рук»).
@@ -236,7 +241,7 @@ export function VoiceControl({ onCommand, onListeningChange }: { onCommand?: (co
           <Mic className="w-8 h-8 text-indigo-400" />
         )}
 
-        {isListening && (
+        {isListening && !still && (
           <motion.div
             className="absolute inset-0 rounded-full border-2 border-red-400"
             animate={{ scale: [1, 1.3, 1], opacity: [0.5, 0, 0.5] }}

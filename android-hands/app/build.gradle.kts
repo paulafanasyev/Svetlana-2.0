@@ -10,6 +10,10 @@ val repoRoot: File = rootProject.projectDir.parentFile
 val webOut = layout.buildDirectory.dir("generated/web")
 val npm = if (System.getProperty("os.name").lowercase().contains("windows")) "npm.cmd" else "npm"
 
+// Подпись релиза: только из переменных окружения (в CI — секреты репозитория), ключ никогда не лежит в git.
+// Без них собирается как раньше (отладочный APK).
+val releaseKeystore: String? = System.getenv("SVETLANA_KEYSTORE")?.takeIf { it.isNotBlank() && File(it).isFile }
+
 val npmCi by tasks.registering(Exec::class) {
     description = "Ставит зависимости общего интерфейса (npm ci)"
     workingDir = repoRoot
@@ -63,6 +67,17 @@ android {
         }
     }
 
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv("SVETLANA_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("SVETLANA_KEY_ALIAS")
+                keyPassword = System.getenv("SVETLANA_KEY_PASSWORD")
+            }
+        }
+    }
+
     sourceSets {
         getByName("main") {
             assets.srcDir(webOut.get().asFile)
@@ -72,6 +87,7 @@ android {
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false
+            if (releaseKeystore != null) signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -101,7 +117,7 @@ android {
 tasks.named("preBuild") { dependsOn(copyWeb) }
 
 // Отладочный APK собирается только если прошли модульные тесты (проверки ключей и запросов ИИ).
-tasks.matching { it.name == "assembleDebug" }.configureEach { dependsOn("testDebugUnitTest") }
+tasks.matching { it.name == "assembleDebug" || it.name == "assembleRelease" }.configureEach { dependsOn("testDebugUnitTest") }
 
 dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
