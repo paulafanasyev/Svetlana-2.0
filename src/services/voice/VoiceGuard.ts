@@ -2,11 +2,16 @@
 // пишем звук с микрофона и сверяем каждую фразу с отпечатком голоса (VoicePrint).
 // Защита от записи: перед первой командой Светлана просит сказать 3 случайные цифры (Liveness),
 // цифры и голос проверяются по одному и тому же звуку. Без записанного голоса управление выключено.
-import { listen, getCloudStt, transcribe, type ListenOptions, type Listener } from './SpeechEngine';
+// В Android фразы слушает запись (listenRecorded: GigaAM на телефоне или облако), и голос сверяется по
+// тому же звуку, из которого распознан текст (вторая запись не открывается).
+import { listen, listenRecorded, recordedRecognizer, getCloudStt, transcribe, pcmToWav, type ListenOptions, type Listener } from './SpeechEngine';
 import { computeVoicePrint, loadTemplate, verifyPrint, type VerifyResult, type VoicePrint, type VoiceTemplate } from './VoicePrint';
 import { speakText, stopSpeaking } from './Tts';
 import { generateChallenge, matchesChallenge, templateId, VoiceLockout, VoiceTrust, type Challenge } from './Liveness';
 import { localSttReady, localTranscribe } from './LocalStt';
+import { isAndroidApp } from '../../platform';
+
+export { pcmToWav };
 
 export interface PcmCapture { take(seconds: number): { pcm: Float32Array; sampleRate: number }; stop(): void }
 
@@ -17,6 +22,7 @@ export async function startCapture(): Promise<PcmCapture> {
   const Ctx = (globalThis as any).AudioContext || (globalThis as any).webkitAudioContext;
   if (!Ctx) { stream.getTracks().forEach(t => t.stop()); throw new Error('Браузер не умеет обрабатывать звук'); }
   const ctx: AudioContext = new Ctx();
+  void ctx.resume?.().catch(() => undefined);
   const src = ctx.createMediaStreamSource(stream);
   const proc = ctx.createScriptProcessor(4096, 1, 1);
   const max = ctx.sampleRate * 10;
@@ -63,22 +69,13 @@ export async function recordPrint(seconds = 4): Promise<VoicePrint | null> {
 
 export function voiceEnrolled(): boolean { return !!loadTemplate(); }
 
-/** PCM (-1..1) в WAV 16 бит моно: так облачное распознавание получает ровно тот звук, по которому проверен голос. */
-export function pcmToWav(pcm: Float32Array, sampleRate: number): Blob {
-  const n = pcm.length;
-  const buf = new ArrayBuffer(44 + n * 2);
-  const v = new DataView(buf);
-  const str = (o: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
-  const rate = Math.round(sampleRate);
-  str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE');
-  str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-  str(36, 'data'); v.setUint32(40, n * 2, true);
-  for (let i = 0; i < n; i++) { const x = Math.max(-1, Math.min(1, pcm[i])); v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true); }
-  return new Blob([buf], { type: 'audio/wav' });
-}
+/**
+ * Можно ли на этом устройстве слушать с проверкой голоса из записи: голос записан и есть распознавание записи
+ * (GigaAM на устройстве или облако). На телефоне без этого слушает распознавание телефона с подтверждением кнопкой.
+ */
+export function verifiedVoiceReady(): boolean { return voiceEnrolled() && recordedRecognizer() !== null; }
 
-export const NO_SAME_AUDIO_STT = 'Для проверки цифрами нужна модель распознавания на компьютере (Голос → настройки → «Скачать модель») или облачное распознавание. Команда не выполнена.';
+export const NO_SAME_AUDIO_STT = 'Для проверки цифрами нужна модель распознавания на устройстве (Голос → настройки → «Скачать модель») или облачное распознавание. Команда не выполнена.';
 
 export const NOT_ENROLLED = 'Голосовые команды выполняются только по вашему голосу. Запишите голос: кнопка «Голос» → настройки (шестерёнка) → «Записать мой голос».';
 
@@ -97,6 +94,11 @@ export interface VerifiedListenOptions extends ListenOptions {
 /** Зависимости вынесены, чтобы логику проверки можно было прогнать в тестах без микрофона. */
 export interface GuardDeps {
   listen(opts: ListenOptions): Listener | null;
+  /**
+   * listen() сам отдаёт звук распознанной фразы (onAudio) — тогда голос проверяется по нему, а отдельная
+   * запись для фразы не открывается (Android: listenRecorded).
+   */
+  listenGivesAudio?(): boolean;
   startCapture(): Promise<PcmCapture>;
   speak(text: string, onEnd: () => void): void;
   stopSpeaking(): void;
@@ -111,8 +113,8 @@ export interface GuardDeps {
    */
   cloudTranscribe(): ((wav: Blob) => Promise<string>) | null;
   /**
-   * Распознавание на самом компьютере (GigaAM-v3 в приложении для Windows), null, если модель не установлена.
-   * Приоритетнее облака: та же запись, но звук никуда не уходит.
+   * Распознавание на самом устройстве (GigaAM-v3 в приложениях для Windows и Android), null, если модель
+   * не установлена. Приоритетнее облака: та же запись, но звук никуда не уходит.
    */
   localTranscribe(): ((pcm: Float32Array, sampleRate: number) => Promise<string>) | null;
   trust: VoiceTrust;
@@ -123,7 +125,10 @@ export interface GuardDeps {
 
 export const CHALLENGE_TIMEOUT_MS = 20_000;
 const ANSWER_DELAY_MS = 350; // пауза после озвучки цифр, чтобы микрофон не поймал хвост своей речи
-export const ANSWER_RECORD_MS = 4500; // окно записи ответа для распознавания на компьютере или в облаке
+export const ANSWER_RECORD_MS = 4500; // окно записи ответа для распознавания на устройстве или в облаке
+
+/** Запись из готового звука фразы (того самого, из которого распознан текст). */
+const fixedCapture = (a: { pcm: Float32Array; sampleRate: number }): PcmCapture => ({ take: () => a, stop: () => undefined });
 
 export function createVoiceGuard(d: GuardDeps) {
   return function listenVerified(opts: VerifiedListenOptions, onVerify?: (r: VerifyResult) => void): Listener | null {
@@ -183,14 +188,25 @@ export function createVoiceGuard(d: GuardDeps) {
     const startMain = (): boolean => {
       const gen = ++mainGen;
       let ended = false; // распознавание уже закончилось: запоздавшую запись сразу закрываем
-      const capP: Promise<PcmCapture | null> = d.startCapture()
-        .then(c => { if (closed || ended || gen !== mainGen) { c.stop(); return null; } cap = c; return c; })
-        .catch(() => null);
+      const ownAudio = d.listenGivesAudio?.() === true;
+      let heard: { pcm: Float32Array; sampleRate: number } | null = null;
+      const capP: Promise<PcmCapture | null> = ownAudio
+        ? Promise.resolve(null)
+        : d.startCapture()
+          .then(c => { if (closed || ended || gen !== mainGen) { c.stop(); return null; } cap = c; return c; })
+          .catch(() => null);
       const l = d.listen({
         continuous: opts.continuous,
         onPartial: t => { if (gen === mainGen && !challenge) opts.onPartial?.(t); },
         onError: m => { if (gen === mainGen && !challenge) opts.onError?.(m); },
-        onFinal: text => { if (gen === mainGen) onPhrase(text, capP); },
+        onAudio: (pcm, sampleRate) => { if (gen === mainGen) heard = { pcm, sampleRate }; },
+        onFinal: text => {
+          if (gen !== mainGen) return;
+          const a = heard;
+          heard = null;
+          // Если распознавание отдало свой звук — голос проверяется именно по нему.
+          onPhrase(text, a ? Promise.resolve(fixedCapture(a)) : capP);
+        },
         onEnd: () => {
           ended = true;
           if (gen !== mainGen) return;
@@ -236,9 +252,9 @@ export function createVoiceGuard(d: GuardDeps) {
       try { generated = d.generate(); } catch { generated = null; }
       if (!generated) { opts.onError?.('Проверка цифрами недоступна на этом устройстве. Команда не выполнена.'); settle(); return; }
       const ch: Challenge = generated;
-      // Цифры распознаются только из той же записи, по которой проверяется голос: на компьютере (GigaAM)
+      // Цифры распознаются только из той же записи, по которой проверяется голос: на устройстве (GigaAM)
       // или в облаке. Встроенное распознавание браузера слушает микрофон отдельно, поэтому для проверки
-      // не годится: без локальной модели и без облака команда не выполняется (как на Android, fail closed).
+      // не годится: без локальной модели и без облака команда не выполняется (fail closed).
       const local = d.localTranscribe();
       const cloud = local ? null : d.cloudTranscribe();
       const recognize = local ?? (cloud ? (pcm: Float32Array, sr: number) => cloud(pcmToWav(pcm, sr)) : null);
@@ -330,9 +346,11 @@ export function endVoiceTrust(): void { sharedTrust.end(); }
  * Как listen(), но onFinal вызывается только если фразу сказал владелец, а при первой команде
  * ещё и произнёс случайные цифры. Чужой голос, тишина (подставленный текст), не те цифры или
  * отсутствие доступа к звуку: фраза отбрасывается. В режиме «без рук» чужие фразы игнорируются молча.
+ * В Android фразы слушает запись (listenRecorded), а не распознавание телефона, и голос сверяется по её звуку.
  */
 export const listenVerified = createVoiceGuard({
-  listen,
+  listen: o => (isAndroidApp() ? listenRecorded(o) : listen(o)),
+  listenGivesAudio: () => isAndroidApp(),
   startCapture,
   speak: (text, onEnd) => speakText(text, { force: true, onEnd }),
   stopSpeaking,

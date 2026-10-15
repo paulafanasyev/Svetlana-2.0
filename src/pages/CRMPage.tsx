@@ -22,8 +22,8 @@ const btnPrimary = `${btn} bg-indigo-600 hover:bg-indigo-700 text-white`;
 const btnGhost = `${btn} bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10`;
 const card = 'rounded-xl bg-white/5 border border-white/10';
 
-/** Текст карточки «Контакты с телефона» в приложении для Android: импорт идёт через компьютер с подключённым телефоном. */
-export const PHONE_IMPORT_ON_ANDROID = 'Импорт контактов с телефона работает в приложении для Windows, когда к нему подключён телефон. Здесь можно загрузить контакты из CSV-файла (ниже).';
+/** Текст карточки «Контакты с телефона» в приложении для Android: контакты берутся с этого же телефона. */
+export const PHONE_IMPORT_ON_ANDROID = 'Контакты этого телефона (имена и номера). Телефон спросит разрешение «Контакты» и подтверждение. Дубли по номеру объединяются.';
 
 function useCRMVersion(): number {
   const [version, setVersion] = useState(0);
@@ -426,7 +426,7 @@ function DataTab() {
       const r = await importPhoneContacts();
       setMessage(`Готово: добавлено ${r.added}, обновлено ${r.merged}, без изменений ${r.skipped} из ${r.total}.`);
     } catch (err: any) {
-      setMessage(err?.message || 'Импорт не удался');
+      setMessage(err?.message || (typeof err === 'string' ? err : 'Импорт не удался'));
     } finally { setBusy(false); }
   };
 
@@ -442,14 +442,10 @@ function DataTab() {
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl">
       <div className={`${card} p-4 space-y-2`}>
         <h4 className="font-semibold flex items-center gap-2"><Smartphone className="w-4 h-4" />Контакты с телефона</h4>
-        {android ? (
-          <p data-testid="phone-import-android" className="text-sm text-slate-400">{PHONE_IMPORT_ON_ANDROID}</p>
-        ) : (
-          <>
-            <p className="text-sm text-slate-400">Нужен подключённый телефон (страница «Телефон»). Дубли по номеру объединяются.</p>
-            <button className={btnPrimary} onClick={fromPhone} disabled={busy}>{busy ? 'Импортирую…' : 'Импортировать с телефона'}</button>
-          </>
-        )}
+        <p data-testid={android ? 'phone-import-android' : undefined} className="text-sm text-slate-400">
+          {android ? PHONE_IMPORT_ON_ANDROID : 'Нужен подключённый телефон (страница «Телефон»). Дубли по номеру объединяются.'}
+        </p>
+        <button className={btnPrimary} onClick={fromPhone} disabled={busy}>{busy ? 'Импортирую…' : android ? 'Импортировать контакты телефона' : 'Импортировать с телефона'}</button>
       </div>
       <div className={`${card} p-4 space-y-2`}>
         <h4 className="font-semibold">CSV (Excel, Google Таблицы)</h4>

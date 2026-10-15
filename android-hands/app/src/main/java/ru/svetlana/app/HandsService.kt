@@ -5,6 +5,7 @@ import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Path
 import android.graphics.Rect
+import android.os.Build
 import android.os.Bundle
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -16,8 +17,8 @@ import android.view.accessibility.AccessibilityNodeInfo
  * непосредственно перед нажатием, вводом текста и внутри самого жеста (прямо перед dispatchGesture).
  * Открытого «жеста без привязки» нет: все жесты через gestureIn(pkg, ...).
  * Нажимается только то, что подписано как в подтверждении: родительский элемент нажимается, только если его
- * подпись ТОЧНО совпадает с запрошенной (или у него нет своей подписи). Текст печатается только в поле
- * из подтверждения: если поле названо, а его нет, ничего не печатаем.
+ * подпись ТОЧНО совпадает с запрошенной (или у него нет своей подписи). Текст печатается и стирается
+ * только в поле из подтверждения: если поле названо, а его нет, ничего не делаем.
  */
 class HandsService : AccessibilityService() {
 
@@ -134,16 +135,39 @@ class HandsService : AccessibilityService() {
             n = n.parent
             depth++
         }
-        return tapNode(node, pkg)
+        return tapNode(node, pkg, 60)
+    }
+
+    /** Долгое нажатие: те же правила точной подписи, что и у обычного. */
+    fun longPress(query: String, pkg: String? = null): Boolean {
+        if (!inApp(pkg)) return false
+        val q = norm(query)
+        val node = find(query, pkg) ?: return false
+        var n: AccessibilityNodeInfo? = node
+        var depth = 0
+        while (n != null && depth < 8) {
+            if (n.isLongClickable && n.isEnabled && nodeIn(n, pkg)) {
+                if (depth > 0) {
+                    val own = norm(label(n))
+                    if (own.isNotEmpty() && own != q) return false
+                }
+                if (!n.refresh() || !n.isVisibleToUser || !inApp(pkg)) return false
+                if (n.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) return true
+                break
+            }
+            n = n.parent
+            depth++
+        }
+        return tapNode(node, pkg, 900)
     }
 
     /** Нажатие по координатам элемента: элемент должен ещё существовать, быть виден и принадлежать pkg. */
-    private fun tapNode(n: AccessibilityNodeInfo, pkg: String?): Boolean {
+    private fun tapNode(n: AccessibilityNodeInfo, pkg: String?, durationMs: Long): Boolean {
         if (!n.refresh() || !n.isVisibleToUser || !nodeIn(n, pkg)) return false
         val r = Rect()
         n.getBoundsInScreen(r)
         if (r.isEmpty) return false
-        return gestureIn(pkg, r.exactCenterX(), r.exactCenterY(), r.exactCenterX(), r.exactCenterY(), 60)
+        return gestureIn(pkg, r.exactCenterX(), r.exactCenterY(), r.exactCenterX(), r.exactCenterY(), durationMs)
     }
 
     /** Жест только в нужном приложении: проверка активного окна — последнее перед dispatchGesture. */
@@ -168,6 +192,22 @@ class HandsService : AccessibilityService() {
         return if (down) gestureIn(pkg, x, bottom, x, top, 350) else gestureIn(pkg, x, top, x, bottom, 350)
     }
 
+    /** Смахнуть пальцем в сторону dir (left, right, up, down) по середине экрана. */
+    fun swipe(dir: String, pkg: String? = null): Boolean {
+        if (!inApp(pkg)) return false
+        val m = resources.displayMetrics
+        val w = m.widthPixels.toFloat()
+        val h = m.heightPixels.toFloat()
+        val cx = w * 0.5f
+        val cy = h * 0.5f
+        return when (dir) {
+            "left" -> gestureIn(pkg, w * 0.85f, cy, w * 0.15f, cy, 300)
+            "right" -> gestureIn(pkg, w * 0.15f, cy, w * 0.85f, cy, 300)
+            "up" -> gestureIn(pkg, cx, h * 0.75f, cx, h * 0.3f, 300)
+            else -> gestureIn(pkg, cx, h * 0.3f, cx, h * 0.75f, 300)
+        }
+    }
+
     /** Поле ввода по подписи: подсказка, описание, связанная подпись (labeledBy) или текст. Точное совпадение важнее. */
     private fun findEditable(field: String, pkg: String?): AccessibilityNodeInfo? {
         val q = norm(field)
@@ -187,6 +227,19 @@ class HandsService : AccessibilityService() {
             ?: labelled.firstOrNull { (_, names) -> names.any { it.contains(q) } }?.first
     }
 
+    /** Поле в фокусе или первое видимое поле ввода в pkg. */
+    private fun focusedEditable(pkg: String?): AccessibilityNodeInfo? =
+        rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable && nodeIn(it, pkg) }
+            ?: nodes().firstOrNull { it.isEditable && it.isVisibleToUser && nodeIn(it, pkg) }
+
+    private fun setText(target: AccessibilityNodeInfo, text: String, pkg: String?): Boolean {
+        target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        if (!inApp(pkg) || !nodeIn(target, pkg)) return false
+        val args = Bundle()
+        args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        return target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }
+
     fun type(text: String, field: String?, pkg: String? = null): Boolean {
         if (!inApp(pkg)) return false
         val f = field?.takeIf { it.isNotBlank() }
@@ -194,15 +247,29 @@ class HandsService : AccessibilityService() {
             // Поле названо в подтверждении: печатаем только в него, никакого «первого попавшегося».
             findEditable(f, pkg) ?: return false
         } else {
-            rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable && nodeIn(it, pkg) }
-                ?: nodes().firstOrNull { it.isEditable && it.isVisibleToUser && nodeIn(it, pkg) }
-                ?: return false
+            focusedEditable(pkg) ?: return false
         }
-        target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-        if (!inApp(pkg) || !nodeIn(target, pkg)) return false
-        val args = Bundle()
-        args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
-        return target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        return setText(target, text, pkg)
+    }
+
+    /** Стереть текст в поле (те же правила выбора поля, что у type). */
+    fun clear(field: String?, pkg: String? = null): Boolean {
+        if (!inApp(pkg)) return false
+        val f = field?.takeIf { it.isNotBlank() }
+        val target = if (f != null) {
+            findEditable(f, pkg) ?: return false
+        } else {
+            focusedEditable(pkg) ?: return false
+        }
+        return setText(target, "", pkg)
+    }
+
+    /** «Ввод» в поле в фокусе (Android 11+). Без поля в фокусе ничего не делаем. */
+    fun enter(pkg: String? = null): Boolean {
+        if (Build.VERSION.SDK_INT < 30 || !inApp(pkg)) return false
+        val f = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable && nodeIn(it, pkg) } ?: return false
+        if (!f.refresh() || !inApp(pkg)) return false
+        return f.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
     }
 
     fun global(action: Int): Boolean = performGlobalAction(action)

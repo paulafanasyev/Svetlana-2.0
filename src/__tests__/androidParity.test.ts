@@ -46,11 +46,12 @@ describe('platform', () => {
     expect(appPlatform()).toBe('web');
   });
 
-  it('hides the Windows-only speech model on Android', () => {
+  it('offers the on-device speech model in both apps, not on the site', () => {
+    expect(localSttAvailable()).toBe(false);
     g.__TAURI_INTERNALS__ = { invoke: async () => null };
     expect(localSttAvailable()).toBe(true);
     asAndroid();
-    expect(localSttAvailable()).toBe(false);
+    expect(localSttAvailable()).toBe(true);
   });
 
   it('says where the key is stored on each platform', () => {
@@ -175,9 +176,11 @@ describe('windows and android native parts stay identical', () => {
     expect(read('android-hands/app/build.gradle.kts')).not.toContain('"bash"');
   });
 
-  it('the android tab exists only in the app, dev tab is hidden there', () => {
+  it('the android app has every tab of the site and Windows, plus «Руки»', () => {
     const shell = read('src/DesktopShell.tsx');
     expect(shell).toMatch(/id: 'hands'[^\n]*androidOnly: true/);
-    expect(shell).toMatch(/id: 'dev'[^\n]*notOnAndroid: true/);
+    expect(shell).not.toMatch(/notOnAndroid/);
+    expect(shell).toMatch(/id: 'download'[^\n]*notOnWindows: true/);
+    for (const id of ['chat', 'providers', 'phone', 'dev']) expect(shell).toMatch(new RegExp(`id: '${id}'`));
   });
 });

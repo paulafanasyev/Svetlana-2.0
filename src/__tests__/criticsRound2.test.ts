@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { onBack, handleBack, backDepth } from '../services/BackStack';
 import { wipeAllLocalData } from '../services/security/WipeAll';
-import { crmSystemPrompt, importPhoneContacts, PHONE_IMPORT_NOT_ON_ANDROID } from '../services/crm/CRMTools';
+import { crmSystemPrompt, importPhoneContacts } from '../services/crm/CRMTools';
 
 const read = (p: string) => readFileSync(resolve(p), 'utf8');
 const g = globalThis as any;
@@ -82,15 +82,25 @@ describe('android hands are exact', () => {
   });
 });
 
-describe('phone contacts import is a Windows feature', () => {
-  it('is not offered to the AI on Android and explains the CSV way', async () => {
+// Импорт контактов есть везде: на компьютере — с подключённого телефона, в Android — с этого же телефона.
+describe('phone contacts import works on Android too', () => {
+  it('is offered to the AI everywhere and reads this phone on Android', async () => {
     expect(crmSystemPrompt(undefined, false)).toContain('crm_import_phone_contacts');
-    asAndroid(vi.fn(async () => null));
-    expect(crmSystemPrompt(undefined, false)).not.toContain('crm_import_phone_contacts');
-    await expect(importPhoneContacts()).rejects.toThrow(PHONE_IMPORT_NOT_ON_ANDROID);
+    const invoke = vi.fn(async (cmd: string) => (cmd === 'contacts_list'
+      ? { contacts: [{ id: '7', name: 'Мама', phones: ['+79990000000'] }, { id: '8', name: '' }] }
+      : null));
+    asAndroid(invoke);
+    expect(crmSystemPrompt(undefined, false)).toContain('crm_import_phone_contacts');
+    const importContacts = vi.fn((list: unknown[]) => ({ added: list.length, merged: 0, skipped: 0, total: list.length }));
+    const r = await importPhoneContacts({ importContacts } as any);
+    expect(invoke).toHaveBeenCalledWith('contacts_list');
+    expect(importContacts).toHaveBeenCalledWith([{ name: 'Мама', phones: ['+79990000000'], phoneContactId: '7' }], 'phone');
+    expect(r).toMatchObject({ added: 1, pages: 1 });
   });
 
-  it('the chat has no phone-import quick button on Android', () => {
-    expect(read('src/pages/AvatarPage.tsx')).toMatch(/android \? QUICK_PHONE : QUICK_DESKTOP/);
+  it('the chat shows the same quick buttons on every platform', () => {
+    const page = read('src/pages/AvatarPage.tsx');
+    expect(page).toContain('QUICK_COMMANDS');
+    expect(page).not.toMatch(/QUICK_PHONE|QUICK_DESKTOP/);
   });
 });

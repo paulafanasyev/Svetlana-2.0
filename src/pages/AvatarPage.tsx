@@ -29,17 +29,13 @@ const greeting = (): Message => ({ role: 'svetlana', content: 'Привет! Я 
 
 const AVATAR_SRC = `${import.meta.env.BASE_URL}images/avatar/svetlana-master.jpg`;
 
-/** На телефоне локальная модель компьютера (127.0.0.1) недоступна. */
-export const OFFLINE_ON_PHONE = 'На телефоне локальные модели компьютера не работают: нажми «Настройка» и подключи «★ Светлана Сервер» или облачный ИИ. CRM-команды работают и без него.';
-
-/** Быстрые команды чата. На телефоне нет переноса контактов с телефона через Svetlana Home (это функция ПК). */
-export const QUICK_DESKTOP = ['Привет!', 'Занеси контакты с телефона в CRM', 'Сводка CRM', 'Расскажи шутку', 'Кто ты?'];
-export const QUICK_PHONE = ['Привет!', 'Сводка CRM', 'Расскажи шутку', 'Кто ты?'];
+/** Быстрые команды чата — одни и те же на сайте, в Windows и в Android (в Android контакты берутся с этого телефона). */
+export const QUICK_COMMANDS = ['Привет!', 'Занеси контакты с телефона в CRM', 'Сводка CRM', 'Расскажи шутку', 'Кто ты?'];
 
 /** Что написать в настройках голоса на каждой платформе. */
 export function voiceLabels(platform: 'windows' | 'android' | 'web', voices: number) {
   if (platform === 'android') {
-    return { stt: 'Распознавание самого телефона (ключ не нужен)', tts: 'Синтез речи телефона', ok: true, status: 'Телефон озвучивает ответы' };
+    return { stt: 'Распознавание телефона, а с проверкой голоса — GigaAM на телефоне или облачное (кнопка «Голос» → настройки)', tts: 'Синтез речи телефона', ok: true, status: 'Телефон озвучивает ответы' };
   }
   const stt = platform === 'windows' ? 'Облачное распознавание (Groq или OpenAI, кнопка «Голос» → настройки)' : 'Распознавание браузера (Web Speech) или облачное';
   const tts = platform === 'windows' ? 'Голоса Windows' : 'Голоса браузера';
@@ -89,7 +85,7 @@ function cleanEmotionTag(text: string): string {
 export default function AvatarPage() {
   const platform = appPlatform();
   const android = platform === 'android';
-  const quick = android ? QUICK_PHONE : QUICK_DESKTOP;
+  const quick = QUICK_COMMANDS;
   const [emotion, setEmotion] = useState<Emotion>('neutral');
   const [messages, setMessages] = useState<Message[]>(() => [greeting()]);
   const [input, setInput] = useState('');
@@ -99,8 +95,7 @@ export default function AvatarPage() {
   const [activeProvider, setActiveProvider] = useState(aiGateway.getActiveProvider());
   const { speak, stop, isSpeaking, voices } = useSpeech();
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  // На телефоне локальная модель компьютера считается «не выбрано».
-  const usable = activeProvider && !(android && activeProvider.type === 'offline') ? activeProvider : null;
+  const usable = activeProvider ?? null;
   const labels = voiceLabels(platform, voices.length);
 
   // Каждый открытый чат — новый разговор для нативной части: разрешение на облако не переносится между чатами.
@@ -168,11 +163,8 @@ export default function AvatarPage() {
 
       const provider = aiGateway.getActiveProvider();
       if (!provider) {
-        throw new Error(android
-          ? 'ИИ не выбран: нажми «Настройка» вверху или открой «Модели ИИ». CRM-команды («Сводка CRM») работают и без него.'
-          : 'ИИ не выбран: нажми «Настройка» вверху или открой «Модели ИИ». CRM-команды («Сводка CRM», «Занеси контакты с телефона в CRM») работают и без него.');
+        throw new Error('ИИ не выбран: нажми «Настройка» вверху или открой «Модели ИИ». CRM-команды («Сводка CRM», «Занеси контакты с телефона в CRM») работают и без него.');
       }
-      if (android && provider.type === 'offline') throw new Error(OFFLINE_ON_PHONE);
 
       // История для модели: результаты инструментов — только как данные, блоки действий обезврежены.
       // По голосу модель не получает данных CRM и бизнеса — ни текущих, ни из прошлых реплик.

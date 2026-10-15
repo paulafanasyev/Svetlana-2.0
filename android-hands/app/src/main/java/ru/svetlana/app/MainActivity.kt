@@ -5,6 +5,9 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -12,7 +15,11 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.print.PrintAttributes
+import android.print.PrintManager
 import android.provider.Settings
+import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.webkit.PermissionRequest
@@ -28,6 +35,7 @@ import android.widget.FrameLayout
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import java.io.ByteArrayInputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -39,6 +47,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * WebView закрыт: без доступа к файлам и content://, без смешанного контента, с Safe Browsing, без отладки;
  * чужие адреса открываются во внешнем браузере (только https, mailto, tel, sms), микрофон — только своей странице.
  * Файлы (экспорт CRM, документы, .ics) сохраняются через системное окно «Сохранить как»: место выбирает человек.
+ * Печать и PDF — системное окно печати (документ рисуется в отдельном WebView без JavaScript и без сети).
+ * Буфер обмена — только сразу после настоящего касания экрана (не через чужое окно поверх), одно касание — одно копирование.
  * Системная кнопка «Назад» сначала закрывает открытое окно страницы (CRM, мастер настройки), и только потом выходит.
  */
 class MainActivity : Activity() {
@@ -48,13 +58,21 @@ class MainActivity : Activity() {
         private const val REQ_AUDIO = 41
         private const val REQ_FILE = 42
         private const val REQ_SAVE = 43
+        private const val REQ_CONTACTS = 44
         private const val CONFIRM_TIMEOUT_MIN = 3L
+        /** Сколько после касания считается «по нажатию» (как user activation в браузере). */
+        private const val ACTIVATION_MS = 5_000L
         /** Спросить страницу: есть ли что закрыть по «Назад» (src/services/BackStack.ts). */
         private const val BACK_JS = "(function(){try{var f=window.__svetlanaBack;return typeof f==='function'&&f()===true;}catch(e){return false;}})()"
         private const val OUTDATED = "<html><body style='font-family:sans-serif;padding:24px;background:#0b1020;color:#fff'>" +
             "<h2>Обновите Android System WebView</h2>" +
             "<p>Светлане нужен свежий компонент WebView (или Chrome). Обновите его в Google Play и откройте приложение снова.</p>" +
             "</body></html>"
+        /** Разрешения, которые страница может попросить (через команды моста), и их коды запроса. */
+        private val PERM_CODES = mapOf(
+            Manifest.permission.RECORD_AUDIO to REQ_AUDIO,
+            Manifest.permission.READ_CONTACTS to REQ_CONTACTS,
+        )
     }
 
     private class PendingSave(val text: String, val done: Done)
@@ -64,10 +82,13 @@ class MainActivity : Activity() {
     private var bridge: Bridge? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var pendingSave: PendingSave? = null
-    private val audioWaiters = ArrayList<(Boolean) -> Unit>()
+    private var printView: WebView? = null
+    private val permWaiters = HashMap<String, ArrayList<(Boolean) -> Unit>>()
     private val confirmLock = Any()
     /** Открытое окно подтверждения (только главный поток). */
     private var confirmDialog: AlertDialog? = null
+    /** Когда человек последний раз настоящим касанием отпустил палец на экране приложения. */
+    @Volatile private var lastTouchAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -171,6 +192,25 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Запоминаем настоящие касания (не сквозь чужое окно поверх): только после них можно писать в буфер. */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_UP && (ev.flags and MotionEvent.FLAG_WINDOW_IS_OBSCURED) == 0) {
+            lastTouchAt = SystemClock.uptimeMillis()
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /**
+     * Человек только что коснулся экрана (как user activation в браузере). Касание расходуется:
+     * одно нажатие — одно копирование. Вызывать в главном потоке.
+     */
+    fun touchedRecently(): Boolean {
+        val t = lastTouchAt
+        val ok = t > 0 && SystemClock.uptimeMillis() - t in 0..ACTIVATION_MS
+        if (ok) lastTouchAt = 0L
+        return ok
+    }
+
     private fun openExternal(u: Uri) {
         try {
             startActivity(Intent(Intent.ACTION_VIEW, u).addCategory(Intent.CATEGORY_BROWSABLE))
@@ -213,32 +253,83 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Микрофон: спросить разрешение Android, если его ещё нет. Вызывать в главном потоке. */
-    fun withAudio(cb: (Boolean) -> Unit) {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+    /**
+     * Печать или PDF: документ рисуется в отдельном WebView без JavaScript, файлов и сети, потом
+     * открывается системное окно печати (там же «Сохранить как PDF»). Вызывать в главном потоке.
+     */
+    fun printHtml(html: String, title: String, done: Done) {
+        if (isFinishing || isDestroyed) { done(false, "Приложение закрыто"); return }
+        printView?.destroy()
+        val v = WebView(this)
+        printView = v
+        val ps = v.settings
+        ps.javaScriptEnabled = false
+        ps.allowFileAccess = false
+        ps.allowContentAccess = false
+        ps.blockNetworkLoads = true
+        ps.setGeolocationEnabled(false)
+        var started = false
+        v.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
+
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                val scheme = request.url.scheme
+                return if (scheme == "data" || scheme == "about") null
+                else WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+            }
+
+            override fun onPageFinished(view: WebView, url: String?) {
+                if (started || printView !== view) return
+                started = true
+                try {
+                    val pm = getSystemService(Context.PRINT_SERVICE) as PrintManager
+                    val job = title.ifBlank { "Светлана" }
+                    pm.print(job, view.createPrintDocumentAdapter(job), PrintAttributes.Builder().build())
+                    done(true, true)
+                } catch (e: Exception) {
+                    done(false, "Не удалось открыть печать")
+                }
+            }
+        }
+        v.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+    }
+
+    /** Скопировать текст в буфер обмена телефона. */
+    fun copyText(text: String) {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("Светлана", text))
+    }
+
+    /** Разрешение Android (микрофон, контакты): спросить, если его ещё нет. Вызывать в главном потоке. */
+    fun withPermission(permission: String, cb: (Boolean) -> Unit) {
+        if (checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED) {
             cb(true)
             return
         }
-        if (isFinishing || isDestroyed) {
+        val code = PERM_CODES[permission]
+        if (code == null || isFinishing || isDestroyed) {
             cb(false)
             return
         }
-        audioWaiters.add(cb)
-        if (audioWaiters.size == 1) requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_AUDIO)
+        val list = permWaiters.getOrPut(permission) { ArrayList() }
+        list.add(cb)
+        if (list.size == 1) requestPermissions(arrayOf(permission), code)
     }
 
-    /** Всем, кто ждёт микрофон, ответить сразу: ни один запрос не висит бесконечно. */
-    private fun drainAudioWaiters(ok: Boolean) {
-        val waiting = audioWaiters.toList()
-        audioWaiters.clear()
+    /** Микрофон: спросить разрешение Android, если его ещё нет. Вызывать в главном потоке. */
+    fun withAudio(cb: (Boolean) -> Unit) = withPermission(Manifest.permission.RECORD_AUDIO, cb)
+
+    /** Всем, кто ждёт разрешение, ответить сразу: ни один запрос не висит бесконечно. */
+    private fun drainWaiters(permission: String, ok: Boolean) {
+        val waiting = permWaiters.remove(permission)?.toList() ?: return
         waiting.forEach { runCatching { it(ok) } }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != REQ_AUDIO) return
+        val permission = PERM_CODES.entries.firstOrNull { it.value == requestCode }?.key ?: return
         val ok = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
-        drainAudioWaiters(ok)
+        drainWaiters(permission, ok)
     }
 
     @Deprecated("Deprecated in Java")
@@ -337,9 +428,11 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         confirmDialog?.dismiss()
         confirmDialog = null
-        drainAudioWaiters(false)
+        PERM_CODES.keys.forEach { drainWaiters(it, false) }
         pendingSave?.done?.invoke(false, "Приложение закрыто")
         pendingSave = null
+        printView?.destroy()
+        printView = null
         bridge?.close()
         bridge = null
         fileCallback?.onReceiveValue(null)

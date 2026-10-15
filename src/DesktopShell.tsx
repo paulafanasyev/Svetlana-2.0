@@ -1,7 +1,7 @@
 // Главное окно Светланы: сразу чат, потом настройки ИИ и телефон. Один и тот же интерфейс на сайте,
-// в приложении для Windows и в приложении для Android. Разница только в том, что есть у платформы:
-// на сайте вкладка «Скачать», в Android вкладка «Руки» (действия на телефоне) вместо «Телефон» (подключение к ПК)
-// и без вкладки «Для разработчика» (схемы и демо для большого экрана).
+// в приложении для Windows и в приложении для Android, с теми же вкладками: «Телефон» (связь с
+// Svetlana-home), «Скачать» (на сайте и в Android — обновить приложение), «Для разработчика».
+// В Android есть ещё «Руки»: действия на самом телефоне через спец. возможности.
 // Схемы, планы, оркестратор задач и демо разработки (старый Command Center, App.tsx) убраны во вкладку
 // «Для разработчика» и помечены: это описание, а не работающая функция. При первом запуске открывается
 // мастер настройки (FirstRunSetup): без него чат не знает, куда слать вопрос.
@@ -14,7 +14,7 @@ import AndroidConnectionPage from './pages/AndroidConnectionPage';
 import AndroidHandsPage from './pages/AndroidHandsPage';
 import DownloadPage from './pages/DownloadPage';
 import FirstRunSetup, { isSetupDone } from './components/FirstRunSetup';
-import { aiGateway, type AIProvider } from './services/AIGateway';
+import { aiGateway } from './services/AIGateway';
 import { isNativeApp } from './services/security/NativeBridge';
 import { isAndroidApp } from './platform';
 import { APP_VERSION } from './version';
@@ -22,14 +22,14 @@ import { APP_VERSION } from './version';
 type Tab = 'chat' | 'providers' | 'phone' | 'hands' | 'download' | 'dev';
 
 // Только то, что реально работает. Оркестратор задач пока демо, он во вкладке «Для разработчика».
-// short — надпись на узком экране (телефон).
-const TABS: { id: Tab; label: string; short: string; icon: typeof MessageCircle; webOnly?: boolean; androidOnly?: boolean; notOnAndroid?: boolean }[] = [
+// short — надпись на узком экране (телефон). notOnWindows — нет только в Windows-приложении (там своё обновление).
+const TABS: { id: Tab; label: string; short: string; icon: typeof MessageCircle; notOnWindows?: boolean; androidOnly?: boolean }[] = [
   { id: 'chat', label: 'Чат со Светланой', short: 'Чат', icon: MessageCircle },
   { id: 'providers', label: 'Модели ИИ', short: 'ИИ', icon: Cpu },
   { id: 'hands', label: 'Руки', short: 'Руки', icon: Hand, androidOnly: true },
-  { id: 'phone', label: 'Телефон', short: 'Телефон', icon: Smartphone, notOnAndroid: true },
-  { id: 'download', label: 'Скачать приложения', short: 'Скачать', icon: Download, webOnly: true },
-  { id: 'dev', label: 'Для разработчика', short: 'Разработка', icon: Wrench, notOnAndroid: true },
+  { id: 'phone', label: 'Телефон', short: 'Телефон', icon: Smartphone },
+  { id: 'download', label: 'Скачать приложения', short: 'Скачать', icon: Download, notOnWindows: true },
+  { id: 'dev', label: 'Для разработчика', short: 'Разработка', icon: Wrench },
 ];
 
 const AVATAR = `${import.meta.env.BASE_URL}images/avatar/svetlana-master.jpg`;
@@ -40,44 +40,26 @@ const readVerified = (): string | null => {
   try { return localStorage.getItem(VERIFIED_KEY); } catch { return null; }
 };
 
-/** На телефоне локальные модели компьютера (Ollama и др., 127.0.0.1) недоступны: такой ИИ считаем невыбранным. */
-export function usableProvider(p: AIProvider | null | undefined, android: boolean): AIProvider | null {
-  if (!p) return null;
-  return android && p.type === 'offline' ? null : p;
-}
-
-/**
- * Телефон: если активна локальная модель компьютера, а «★ Светлана Сервер» включена и с ключом, переключаемся на неё.
- * Проверяется на каждом тике: ключ могли добавить уже после запуска.
- */
-export function switchOffOffline(android: boolean): boolean {
-  if (!android || aiGateway.getActiveProvider()?.type !== 'offline') return false;
-  const sv = aiGateway.getProvider('svetlana');
-  if (!sv || !sv.enabled || !sv.apiKey) return false;
-  aiGateway.setActiveProvider('svetlana');
-  return true;
-}
-
 export default function DesktopShell() {
   const native = isNativeApp();
   const android = isAndroidApp();
-  const tabs = TABS.filter(t => (!t.webOnly || !native) && (!t.androidOnly || android) && (!t.notOnAndroid || !android));
+  const windows = native && !android;
+  const tabs = TABS.filter(t => (!t.notOnWindows || !windows) && (!t.androidOnly || android));
   const [tab, setTab] = useState<Tab>('chat');
   const [setupOpen, setSetupOpen] = useState(() => !isSetupDone());
-  const [active, setActive] = useState(() => usableProvider(aiGateway.getActiveProvider(), android));
+  const [active, setActive] = useState(() => aiGateway.getActiveProvider() ?? null);
   // ИИ «выбран» ещё не значит «работает»: по умолчанию выбрана Ollama, даже если её нет.
   const [verifiedId, setVerifiedId] = useState<string | null>(readVerified);
 
   useEffect(() => {
     const tick = () => {
-      switchOffOffline(android);
-      setActive(usableProvider(aiGateway.getActiveProvider(), android));
+      setActive(aiGateway.getActiveProvider() ?? null);
       setVerifiedId(readVerified());
     };
     tick();
     const t = setInterval(tick, 1500);
     return () => clearInterval(t);
-  }, [android]);
+  }, []);
 
   const verified = !!active && verifiedId === active.id;
   const pill = !active
@@ -136,7 +118,7 @@ export default function DesktopShell() {
       onClose={() => setSetupOpen(false)}
       onReady={() => {
         // onReady вызывается только после успешной проверки связи в мастере.
-        const ok = usableProvider(aiGateway.getActiveProvider(), android);
+        const ok = aiGateway.getActiveProvider() ?? null;
         try { if (ok) localStorage.setItem(VERIFIED_KEY, ok.id); } catch { /* noop */ }
         setSetupOpen(false); setTab('chat'); setActive(ok); setVerifiedId(ok?.id ?? null);
       }}
@@ -153,7 +135,7 @@ export default function DesktopShell() {
           Здесь схемы, план и демо разработки (в том числе оркестратор задач). Статусы и «демо-задачи» на этих страницах описывают замысел и не проверяют ваше устройство. Работающий чат на вкладке «Чат со Светланой».
         </div>
         {/* Отступ снизу: там плавающие кнопки CRM / Бизнес / Голос (CRMLauncher). */}
-        <div className="pb-28">
+        <div className="pb-28 overflow-x-auto">
           <App />
         </div>
         {setup}
@@ -170,7 +152,7 @@ export default function DesktopShell() {
           <>
             {/* Честно про голос в Windows: встроенное распознавание браузера в WebView2 недоступно, локальная GigaAM проверяет только цифры.
                 В Android слушает распознавание самого телефона, ключ не нужен, поэтому там подсказки нет. */}
-            {native && !android && (
+            {windows && (
               <div data-testid="voice-note" className="mb-4 px-4 py-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-xs text-indigo-200 flex items-start gap-2">
                 <Mic className="w-4 h-4 shrink-0 mt-0.5" />
                 <span>

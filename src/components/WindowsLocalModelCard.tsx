@@ -1,22 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { isAndroidApp } from '../platform';
+import { aiGateway } from '../services/AIGateway';
 
-// Локальная модель через Ollama живёт на компьютере: в приложении для Android карточку не показываем.
+// Локальная модель через Ollama. На компьютере — 127.0.0.1, в приложении для Android — адрес компьютера
+// в домашней сети из настроек «★ Светлана Локальная» (запрос делает телефон, см. AndroidFiles).
 const OllamaCard: React.FC = () => {
+  const android = isAndroidApp();
+  const endpoint = aiGateway.getProvider('ollama')?.endpoint || 'http://127.0.0.1:11434';
   const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'running' | 'not_running'>('checking');
   const [models, setModels] = useState<string[]>([]);
 
   useEffect(() => {
     checkOllama();
-  }, []);
+  }, [endpoint]);
 
   const checkOllama = async () => {
     try {
-      const res = await fetch('http://127.0.0.1:11434/api/tags');
+      const res = await fetch(`${endpoint}/api/tags`);
       if (res.ok) {
         const data = await res.json();
         setOllamaStatus('running');
-        setModels(data.models?.map((m: any) => m.name) || []);
+        setModels(data.models?.map((m: any) => String(m?.name ?? '')).filter(Boolean).slice(0, 50) || []);
       } else {
         setOllamaStatus('not_running');
       }
@@ -27,9 +31,9 @@ const OllamaCard: React.FC = () => {
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-white my-4">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
         <h3 className="text-lg font-bold flex items-center gap-2">
-          <span className="text-amber-400">★</span> Обученная Светлана 2.0 (Windows Local AI)
+          <span className="text-amber-400">★</span> Обученная Светлана 2.0 ({android ? 'на вашем компьютере' : 'Windows Local AI'})
         </h3>
         <span
           className={`px-2.5 py-1 text-xs rounded-full font-semibold ${
@@ -43,11 +47,13 @@ const OllamaCard: React.FC = () => {
       </div>
 
       <p className="text-sm text-slate-300 mb-4">
-        Для работы обученной версии на Windows в один клик:
+        {android
+          ? `Телефон берёт ответы у Ollama на компьютере в той же Wi‑Fi сети (${endpoint}). На компьютере запустите модель и разрешите доступ из сети:`
+          : 'Для работы обученной версии на Windows в один клик:'}
       </p>
 
-      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono text-xs text-slate-200 mb-4 select-all">
-        <code>ollama run svetlana:latest || ollama run gemma:2b</code>
+      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono text-xs text-slate-200 mb-4 select-all break-all">
+        <code>{android ? 'setx OLLAMA_HOST 0.0.0.0 && ollama run svetlana:latest' : 'ollama run svetlana:latest || ollama run gemma:2b'}</code>
       </div>
 
       {ollamaStatus === 'running' && models.length > 0 && (
@@ -58,11 +64,13 @@ const OllamaCard: React.FC = () => {
 
       {ollamaStatus === 'not_running' && (
         <div className="text-xs text-amber-300/80 mt-2">
-          Запустите Ollama или скачайте установщик с официального сайта ollama.com, чтобы Светлана отвечала локально без облачных ключей.
+          {android
+            ? 'Укажите адрес компьютера в «Модели ИИ» → «Локальные модели» → «★ Светлана Локальная» (например, http://192.168.1.10:11434). Телефон и компьютер должны быть в одной сети.'
+            : 'Запустите Ollama или скачайте установщик с официального сайта ollama.com, чтобы Светлана отвечала локально без облачных ключей.'}
         </div>
       )}
     </div>
   );
 };
 
-export const WindowsLocalModelCard: React.FC = () => (isAndroidApp() ? null : <OllamaCard />);
+export const WindowsLocalModelCard: React.FC = () => <OllamaCard />;

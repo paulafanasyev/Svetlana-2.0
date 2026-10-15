@@ -5,11 +5,12 @@
 // попадают в JavaScript: запрос в облако делает нативная часть (security/NativeBridge, src-tauri/src/secure_ai.rs).
 // В приложении для Android то же самое делает SecureAi.kt (Android Keystore). В обоих приложениях облако —
 // ТОЛЬКО через нативную часть (сторонний прокси не используется): окно подтверждения не обойти.
-// На телефоне локальные модели компьютера (127.0.0.1) не вызываются вообще.
-// Адреса проверяются: локальные модели — только 127.0.0.1/localhost, облачные — только официальные адреса,
-// прокси — только свой сервер. Подменённый адрес не получит ни ключ, ни переписку.
+// Локальные модели (Ollama, LM Studio и др.): на компьютере и сайте — только 127.0.0.1/localhost; в приложении
+// для Android — ещё и компьютер в домашней сети (10.x, 172.16–31.x, 192.168.x): запрос делает телефон
+// (команда lan_http, первая отправка на новый адрес — после нативного подтверждения, см. AndroidFiles).
+// Облачные — только официальные адреса, прокси — только свой сервер. Подменённый адрес не получит ни ключ, ни переписку.
 // Локальная модель при ошибке НИКОГДА не переключается на облако сама: переписка не покидает
-// компьютер без явного выбора облачного провайдера пользователем (см. fallbackCandidates).
+// домашнюю сеть без явного выбора облачного провайдера пользователем (см. fallbackCandidates).
 // Вызовы инструментов от модели проходят строгую проверку по схеме инструмента (security/ToolCallSchema).
 // «★ Светлана Сервер» (id 'svetlana') — единая Светлана на мир-самозанятых.рф в полном режиме (см. SvetlanaCore).
 // Запись ключа асинхронна (в Windows — после окна подтверждения): addProvider/updateProvider/removeProvider возвращают
@@ -58,9 +59,6 @@ export interface StructuredToolCall {
   timestamp: number;
 }
 
-/** На телефоне локальные модели компьютера не вызываются: переписка не уходит на 127.0.0.1 телефона. */
-export const OFFLINE_NOT_ON_ANDROID = 'На телефоне локальные модели компьютера не работают: нажмите «Настройка» и подключите «★ Светлана Сервер» или облачный ИИ.';
-
 const DEFAULT_OFFLINE_PROVIDERS: AIProvider[] = [
   {
     id: 'ollama',
@@ -87,11 +85,20 @@ const OFFICIAL_ENDPOINTS: Record<string, string[]> = {
   svetlana: [SVETLANA_CORE_ORIGIN],
 };
 const LOCAL_RE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?(\/[A-Za-z0-9._~-]+)*$/;
+/** Телефон: ещё и компьютер в домашней сети (только IP, без имён). */
+const LAN_RE = /^http:\/\/(localhost|127(\.\d{1,3}){3}|10(\.\d{1,3}){3}|192\.168(\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2})(:\d{1,5})?(\/[A-Za-z0-9._~-]+)*$/;
+
+/** Все части IP-адреса не больше 255. */
+const octetsOk = (e: string) => (/^http:\/\/(\d+)\.(\d+)\.(\d+)\.(\d+)/.exec(e)?.slice(1) ?? []).every(n => Number(n) <= 255);
 
 /** Проверка адреса провайдера. Возвращает нормализованный адрес или бросает ошибку. */
 export function validateEndpoint(p: Pick<AIProvider, 'id' | 'type' | 'endpoint'>): string {
   const e = String(p.endpoint ?? '').trim().replace(/\/+$/, '');
   if (p.type === 'offline') {
+    if (isAndroidApp()) {
+      if (!LAN_RE.test(e) || !octetsOk(e)) throw new Error('Локальная модель: адрес компьютера в домашней сети, например http://192.168.1.10:11434 (или http://127.0.0.1:порт, если модель запущена на самом телефоне)');
+      return e;
+    }
     if (!LOCAL_RE.test(e)) throw new Error('Локальная модель должна работать на этом компьютере: адрес http://127.0.0.1:порт или http://localhost:порт');
     return e;
   }
@@ -159,7 +166,7 @@ class AIGateway {
     for (const p of DEFAULT_OFFLINE_PROVIDERS) {
       this.providers.set(p.id, { ...p });
     }
-    // На телефоне локальная модель компьютера по умолчанию не выбирается.
+    // На телефоне локальная модель по умолчанию не выбирается: сначала нужен адрес компьютера.
     this.activeProvider = isAndroidApp() ? null : 'ollama';
   }
 
@@ -220,17 +227,6 @@ class AIGateway {
       }
       if (!p.apiKey) { const k = await getSecret(secretName(p.id)); if (k) p.apiKey = k; }
     }
-    if (isAndroidApp()) this.dropOfflineOnAndroid();
-  }
-
-  /** Телефон: если активна локальная модель компьютера — берём первый включённый облачный с ключом, иначе «не выбран». */
-  private dropOfflineOnAndroid() {
-    const cur = this.getActiveProvider();
-    if (cur && cur.type !== 'offline') return;
-    const order = ['svetlana', ...FALLBACK_ORDER];
-    const online = [...this.providers.values()].filter(p => p.type === 'online' && p.enabled && !!p.apiKey);
-    online.sort((a, b) => (order.indexOf(a.id) + 100) % 100 - (order.indexOf(b.id) + 100) % 100);
-    this.activeProvider = online[0]?.id ?? null;
   }
 
   private saveToStorage() {
@@ -366,8 +362,6 @@ class AIGateway {
   }
 
   private async callProvider(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    // Телефон: локальные модели компьютера не вызываем вообще (до любого fetch).
-    if (provider.type === 'offline' && isAndroidApp()) throw new Error(OFFLINE_NOT_ON_ANDROID);
     // Повторная проверка адреса перед каждым запросом: объект провайдера мог быть изменён в обход updateProvider.
     validateEndpoint(provider);
     // Единая Светлана: всегда напрямую на свой сервер (без стороннего прокси), в приложениях — через нативную часть.
@@ -487,8 +481,11 @@ class AIGateway {
           },
         }),
       });
-    } catch {
-      throw new Error(`Ollama не запущена на ${provider.endpoint}. Установите её (ollama.com/download) или выберите другой ИИ в «Настройке».`);
+    } catch (e: any) {
+      const why = typeof e?.message === 'string' && /Отменено пользователем/.test(e.message) ? ' В окне телефона нажата «Отмена».' : '';
+      throw new Error(isAndroidApp()
+        ? `Ollama не отвечает на ${provider.endpoint}.${why} Проверьте: Ollama запущена на компьютере с OLLAMA_HOST=0.0.0.0, телефон и компьютер в одной Wi‑Fi сети, адрес в «Модели ИИ» верный.`
+        : `Ollama не запущена на ${provider.endpoint}. Установите её (ollama.com/download) или выберите другой ИИ в «Настройке».`);
     }
 
     if (!response.ok) {

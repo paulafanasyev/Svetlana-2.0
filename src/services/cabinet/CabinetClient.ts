@@ -3,8 +3,8 @@
 // Токен хранится только зашифрованным (SecretStore). Раз в 10 минут отправляется «пульс»:
 // версия, флаги защиты и список установленных локальных моделей. Клиенты, финансы, голос,
 // переписка и ключи в кабинет НЕ передаются никогда: тело запроса собирается по белому списку.
-// Одинаково в Windows и Android. Телефон привязывается как platform 'android' и не ищет модели на 127.0.0.1
-// (локальные модели бывают только на компьютере).
+// Одинаково в Windows и Android. Телефон привязывается как platform 'android'; локальные модели он берёт у Ollama
+// по адресу из настроек (компьютер в домашней сети), компьютер — у 127.0.0.1.
 import { getSecret, setSecret, deleteSecret, secretStorageMode } from '../security/SecretStore';
 import { loadTemplate } from '../voice/VoicePrint';
 import { APP_VERSION as CURRENT_VERSION } from '../../version';
@@ -24,6 +24,8 @@ const MAX_REPLY = 64 * 1024;
 export const HEARTBEAT_MS = 10 * 60_000;
 /** Версия приложения — одна на всё приложение (src/version.ts). */
 export const APP_VERSION = CURRENT_VERSION;
+const DEFAULT_OLLAMA = 'http://127.0.0.1:11434';
+const OLLAMA_RE = /^http:\/\/(?:localhost|127(?:\.\d{1,3}){3}|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?::\d{1,5})?$/;
 
 /** Как устройство представляется кабинету. */
 export function devicePlatform(): 'windows' | 'android' {
@@ -116,9 +118,20 @@ export async function unlinkLocal(storage: KV | null = kv()): Promise<void> {
   saveMeta(null, storage);
 }
 
-async function ollamaModels(f: FetchLike): Promise<DeviceModel[]> {
+/** Адрес Ollama из настроек «★ Светлана Локальная» (только домашняя сеть или это устройство). */
+export function ollamaEndpoint(s: KV | null = kv()): string {
   try {
-    const { status, body } = await call(f, 'http://127.0.0.1:11434/api/tags', { method: 'GET' });
+    const raw = s?.getItem('svetlana_ai_providers');
+    const list = raw && raw.length < 200_000 ? JSON.parse(raw) : null;
+    const p = Array.isArray(list) ? list.find((x: any) => x?.id === 'ollama') : null;
+    const e = typeof p?.endpoint === 'string' ? p.endpoint.trim().replace(/\/+$/, '') : '';
+    return OLLAMA_RE.test(e) ? e : DEFAULT_OLLAMA;
+  } catch { return DEFAULT_OLLAMA; }
+}
+
+async function ollamaModels(f: FetchLike, endpoint: string): Promise<DeviceModel[]> {
+  try {
+    const { status, body } = await call(f, `${endpoint}/api/tags`, { method: 'GET' });
     if (status !== 200 || !Array.isArray(body?.models)) return [];
     const out = new Map<string, DeviceModel>();
     for (const m of body.models.slice(0, 200)) {
@@ -130,22 +143,21 @@ async function ollamaModels(f: FetchLike): Promise<DeviceModel[]> {
   } catch { return []; }
 }
 
-/** Собрать пульс по белому списку полей. Ничего личного сюда не попадает. */
+/** Собрать пульс по белому списку полей. Ничего личного сюда не попадает. Одинаково на компьютере и телефоне. */
 export async function collectHeartbeat(opts: { fetchImpl?: FetchLike | null; storage?: KV | null } = {}): Promise<Heartbeat> {
   const s = opts.storage === undefined ? kv() : opts.storage;
-  const phone = isAndroidApp();
-  // Телефон: нет моста ПК ↔ телефон и локальных моделей, 127.0.0.1 не опрашивается.
-  const paired = phone ? false : !!(await getSecret('bridge.code'));
+  // Защищённый мост v2 к Svetlana-home есть и в Windows, и в Android (страница «Телефон»).
+  const paired = !!(await getSecret('bridge.code'));
   return {
     app_version: APP_VERSION,
     status: {
-      bridge_v2: !phone,
+      bridge_v2: true,
       voice_enrolled: !!loadTemplate(s as any),
       secrets_encrypted: (await secretStorageMode()) === 'encrypted',
       confirm_gate: true,
       paired_with: paired ? 'android' : null,
     },
-    models: phone || opts.fetchImpl === null ? [] : await ollamaModels(opts.fetchImpl ?? defaultFetch()),
+    models: opts.fetchImpl === null ? [] : await ollamaModels(opts.fetchImpl ?? defaultFetch(), ollamaEndpoint(s)),
   };
 }
 

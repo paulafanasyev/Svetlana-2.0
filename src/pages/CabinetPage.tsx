@@ -1,5 +1,6 @@
 // Личный кабинет: привязка устройства (компьютера или телефона) к сайту «Мир Самозанятых», состояние защиты
-// и кнопка полного удаления данных с этого устройства. Одинаковая на сайте, в Windows и в Android.
+// и кнопка полного удаления данных с этого устройства. Одинаковая на сайте, в Windows и в Android:
+// те же пять проверок защиты и список локальных моделей (на телефоне — с компьютера в домашней сети).
 import { useEffect, useState, type MouseEvent } from 'react';
 import { Link2, Unlink, ShieldCheck, ShieldAlert, Trash2, RefreshCw } from 'lucide-react';
 import { linkDevice, unlinkLocal, loadMeta, sendHeartbeat, collectHeartbeat, normalizeLinkCode, type CabinetMeta, type Heartbeat } from '../services/cabinet/CabinetClient';
@@ -16,10 +17,8 @@ const CHECKS: [keyof Heartbeat['status'], string][] = [
   ['bridge_v2', 'Защищённый мост ПК ↔ телефон'],
   ['voice_enrolled', 'Голос владельца записан'],
   ['confirm_gate', 'Подтверждение опасных действий'],
-  ['paired_with', 'Телефон подключён'],
+  ['paired_with', 'Подключён Svetlana-home'],
 ];
-// На телефоне нет моста ПК ↔ телефон и голосового отпечатка (голосовые действия там всегда подтверждаются нажатием).
-const PHONE_SKIP = new Set<string>(['bridge_v2', 'paired_with', 'voice_enrolled']);
 
 const errText = (e: unknown): string => (typeof e === 'string' ? e : (e as { message?: string } | null)?.message) || 'отменено';
 
@@ -27,7 +26,6 @@ export default function CabinetPage() {
   const android = isAndroidApp();
   const device = android ? 'Телефон' : 'Компьютер';
   const onDevice = android ? 'на этом телефоне' : 'на этом компьютере';
-  const checks = android ? CHECKS.filter(([k]) => !PHONE_SKIP.has(k)) : CHECKS;
   const [meta, setMeta] = useState<CabinetMeta | null>(loadMeta());
   const [hb, setHb] = useState<Heartbeat | null>(null);
   const [code, setCode] = useState('');
@@ -103,12 +101,12 @@ export default function CabinetPage() {
       <div className={card}>
         <h3 className="font-semibold">Защита {android ? 'этого телефона' : 'этого компьютера'}</h3>
         <ul className="space-y-1 text-sm">
-          {checks.map(([k, label]) => {
+          {CHECKS.map(([k, label]) => {
             const on = hb ? !!hb.status[k] : false;
             return <li key={k} className="flex items-center gap-2">{on ? <ShieldCheck className="w-4 h-4 text-emerald-400" /> : <ShieldAlert className="w-4 h-4 text-yellow-400" />}{label}</li>;
           })}
         </ul>
-        {hb && !android && <p className="text-xs text-slate-400">Локальные модели: {hb.models.length ? hb.models.map(m => m.id).join(', ') : 'не найдены (установите Ollama и модель qwen3:4b)'}</p>}
+        {hb && <p className="text-xs text-slate-400">Локальные модели: {hb.models.length ? hb.models.map(m => m.id).join(', ') : (android ? 'не найдены (укажите адрес Ollama на компьютере в «Модели ИИ» → «Локальные модели»)' : 'не найдены (установите Ollama и модель qwen3:4b)')}</p>}
       </div>
 
       <div className={`${card} border-red-500/30`}>

@@ -1,5 +1,6 @@
 package ru.svetlana.app
 
+import android.Manifest
 import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -7,19 +8,23 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Нативный мост для общего интерфейса. Страница видит те же команды, что в Windows (Tauri invoke):
- * secret_set, secret_has, ai_new_conversation, ai_cloud_chat — плюс то, что есть только в телефоне:
- * голос (voice_*, tts_*), руки (hands_*), сохранение файлов (save_file) и полное удаление ключей
- * (secret_wipe_all). Любая другая команда отклоняется.
+ * secret_set, secret_has, ai_new_conversation, ai_cloud_chat, local_stt_* (GigaAM на устройстве), плюс то,
+ * чего в WebView нет самого по себе: голос (voice_*, tts_*), руки (hands_*), файлы (save_file), печать
+ * (print_html), буфер обмена (clipboard_set, только сразу после касания экрана), контакты телефона
+ * (contacts_list), домашняя сеть по http (lan_http: Ollama/LM Studio на компьютере и Svetlana-home) и полное
+ * удаление ключей (secret_wipe_all). Любая другая команда отклоняется.
  *
  * Сообщения принимаются только из главного окна своего адреса (проверка в MainActivity), размер — до
- * разбора JSON. Ключи, облако и руки всегда спрашивают пользователя в нативном окне; файл
- * сохраняется только туда, куда человек сам выбрал в системном окне.
+ * разбора JSON. Ключи, облако, руки, контакты, скачивание модели и первая отправка данных на новое
+ * устройство домашней сети всегда спрашивают человека в нативном окне; файл сохраняется только туда,
+ * куда человек сам выбрал в системном окне.
  */
 class Bridge(private val act: MainActivity) {
     companion object {
         private val ID_RE = Regex("^\\{\"id\":(\\d{1,9}),")
         private const val MAX_MESSAGE = 3 * 1024 * 1024
         private const val MAX_SAVE_CHARS = 2_500_000
+        private const val MAX_CLIP_CHARS = 100_000
         private val SAVE_MIMES = setOf("text/csv", "application/json", "text/html", "text/calendar", "text/plain")
 
         /** Имя файла без путей, управляющих и служебных символов. */
@@ -64,7 +69,7 @@ class Bridge(private val act: MainActivity) {
 """
     }
 
-    private val pool = Executors.newFixedThreadPool(3)
+    private val pool = Executors.newFixedThreadPool(4)
     private val voice = NativeVoice(act)
     private val handsBusy = AtomicBoolean(false)
 
@@ -91,7 +96,12 @@ class Bridge(private val act: MainActivity) {
                 null
             }
             // Одно нативное подтверждение; идущие запросы в облако обрываются (SecureAi.wipeAll).
-            "secret_wipe_all" -> bg(done) { SecureAi.wipeAll(act, act::confirm) }
+            // Вместе с ключами забываются разрешённые устройства домашней сети.
+            "secret_wipe_all" -> bg(done) {
+                val n = SecureAi.wipeAll(act, act::confirm)
+                LanHttp.forgetAll(act)
+                n
+            }
             "save_file" -> {
                 val mime = args.optString("mime").substringBefore(';').trim().lowercase()
                 val text = args.optString("text")
@@ -100,6 +110,53 @@ class Bridge(private val act: MainActivity) {
                     text.length > MAX_SAVE_CHARS -> done(false, "Файл слишком большой")
                     else -> act.saveFile(safeFileName(args.optString("name")), mime, text, done)
                 }
+            }
+            // Печать и PDF: системное окно печати Android (там же «Сохранить как PDF»).
+            "print_html" -> {
+                val html = args.optString("html")
+                if (html.isEmpty() || html.length > MAX_SAVE_CHARS) done(false, "Нечего печатать или документ слишком большой")
+                else act.printHtml(html, Steps.safe(args.optString("title"), 80), done)
+            }
+            // Как в браузере: писать в буфер можно только сразу после настоящего касания (скрипт сам по себе не может).
+            "clipboard_set" -> {
+                val text = args.optString("text")
+                when {
+                    text.length > MAX_CLIP_CHARS -> done(false, "Текст слишком большой")
+                    !act.touchedRecently() -> done(false, "Копировать можно только по нажатию")
+                    else -> { act.copyText(text); done(true, null) }
+                }
+            }
+            // Контакты этого телефона в CRM: разрешение Android «Контакты» + нативное подтверждение.
+            "contacts_list" -> act.withPermission(Manifest.permission.READ_CONTACTS) { granted ->
+                if (!granted) {
+                    done(false, "Нет доступа к контактам: разрешите «Контакты» для Светланы в настройках телефона")
+                } else {
+                    bg(done) {
+                        if (!act.confirm("Перенести контакты этого телефона (имена и номера) в CRM Светланы?\n\nОни останутся только на этом телефоне.")) {
+                            throw SecureAi.Fail(SecureAi.CANCELLED)
+                        }
+                        Contacts.list(act)
+                    }
+                }
+            }
+            "lan_http" -> bg(done) {
+                LanHttp.request(act, args.optString("url"), args.optString("method", "GET"), args.optString("body"), act::confirm)
+            }
+            "local_stt_status" -> bg(done) { LocalStt.status(act) }
+            // Загрузка долгая: в своём потоке, чтобы не занимать общий пул (статус опрашивается страницей).
+            "local_stt_install" -> Thread {
+                try {
+                    LocalStt.install(act, act::confirm)
+                    done(true, null)
+                } catch (e: SecureAi.Fail) {
+                    done(false, e.message)
+                } catch (e: Exception) {
+                    done(false, e.message ?: e.javaClass.simpleName)
+                }
+            }.start()
+            "local_stt_remove" -> bg(done) { LocalStt.remove(act, act::confirm); null }
+            "local_stt_transcribe" -> bg(done) {
+                LocalStt.transcribe(act, LocalStt.decodePcm16(args.optString("pcm16")), args.optInt("sampleRate"))
             }
             "ai_new_conversation" -> bg(done) { SecureAi.newConversation() }
             "ai_cloud_chat" -> bg(done) {

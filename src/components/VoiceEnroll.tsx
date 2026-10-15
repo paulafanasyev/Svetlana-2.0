@@ -1,10 +1,11 @@
 // Запись голоса владельца: 3 фразы по 4 секунды. Только после этого включаются голосовые команды.
-// В приложении для Windows здесь же ставится модель распознавания речи на компьютере (для проверки цифрами).
+// В приложениях для Windows и Android здесь же ставится модель распознавания речи на устройстве (GigaAM-v3).
 import { useEffect, useState } from 'react';
 import { Mic, Trash2, Download, Cpu } from 'lucide-react';
 import { recordPrint } from '../services/voice/VoiceGuard';
 import { buildTemplate, saveTemplate, loadTemplate, deleteTemplate, verifyPrint, MIN_ENROLL_SAMPLES, type VoicePrint } from '../services/voice/VoicePrint';
 import { localSttAvailable, localSttInstall, localSttRemove, localSttStatus, type LocalSttStatus } from '../services/voice/LocalStt';
+import { isAndroidApp } from '../platform';
 
 const PHRASES = [
   'Светлана, запиши доход пять тысяч рублей от Петрова за консультацию.',
@@ -58,17 +59,18 @@ export default function VoiceEnroll() {
         </div>
       )}
       {msg && <p className="text-xs text-indigo-200">{msg}</p>}
-      <p className="text-[11px] text-slate-500">Хранится только признак голоса (не запись), только на этом устройстве. Перед первой командой Светлана просит сказать 3 случайные цифры: так запись вашего голоса с телефона не сработает.</p>
+      <p className="text-[11px] text-slate-500">Хранится только признак голоса (не запись), только на этом устройстве. Перед первой командой Светлана просит сказать 3 случайные цифры: так запись вашего голоса не сработает.</p>
       {localSttAvailable() && <LocalSttCard />}
     </div>
   );
 }
 
-/** Модель распознавания речи на компьютере: цифры проверки распознаются локально, запись никуда не уходит. */
+/** Модель распознавания речи на устройстве: цифры проверки (а на телефоне и команды) распознаются локально. */
 function LocalSttCard() {
   const [status, setStatus] = useState<LocalSttStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const android = isAndroidApp();
 
   useEffect(() => {
     let alive = true;
@@ -87,8 +89,13 @@ function LocalSttCard() {
   const pct = status.total > 0 ? Math.min(100, Math.round((status.downloaded / status.total) * 100)) : 0;
   return (
     <div className="rounded-lg bg-white/5 border border-white/10 p-2 space-y-1.5">
-      <p className="text-xs font-medium flex items-center gap-1.5"><Cpu className="w-3.5 h-3.5" />Распознавание на компьютере (GigaAM-v3) {status.installed ? <span className="text-emerald-300">установлено</span> : <span className="text-slate-400">не установлено</span>}</p>
-      <p className="text-[11px] text-slate-400">Цифры для проверки голоса распознаются прямо здесь, из той же записи, по которой сверяется голос. Запись никуда не отправляется. Размер около {status.sizeMb} МБ.</p>
+      <p className="text-xs font-medium flex items-center gap-1.5"><Cpu className="w-3.5 h-3.5" />Распознавание на {android ? 'телефоне' : 'компьютере'} (GigaAM-v3) {status.installed ? <span className="text-emerald-300">установлено</span> : <span className="text-slate-400">не установлено</span>}</p>
+      <p className="text-[11px] text-slate-400">
+        {android
+          ? 'Команды и цифры проверки распознаются прямо на телефоне, из той же записи, по которой сверяется голос. Запись никуда не отправляется, ключ не нужен. Лучше скачивать по Wi‑Fi.'
+          : 'Цифры для проверки голоса распознаются прямо здесь, из той же записи, по которой сверяется голос. Запись никуда не отправляется.'}
+        {' '}Размер около {status.sizeMb} МБ.
+      </p>
       {status.downloading && (
         <div className="space-y-1">
           <div className="h-1.5 rounded bg-white/10 overflow-hidden"><div className="h-full bg-indigo-500" style={{ width: `${pct}%` }} /></div>

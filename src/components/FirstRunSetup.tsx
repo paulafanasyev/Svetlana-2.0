@@ -3,8 +3,10 @@
 //    → пробный запрос. Ключ сохраняется один раз: если пробный запрос не прошёл, «Повторить проверку» не
 //    спрашивает ключ заново. Если сохранить ключ не удалось («Отмена» в окне подтверждения), новый провайдер
 //    убирается, чтобы не висел «выбранным» без ключа.
-// 2) Локально через Ollama (только компьютер): проверяем, запущена ли Ollama, и берём УЖЕ скачанную модель
+// 2) Локально через Ollama: проверяем, запущена ли Ollama, и берём УЖЕ скачанную модель
 //    (имя по умолчанию svetlana:latest в открытом каталоге Ollama нет, поэтому не надеемся на него).
+//    На компьютере Ollama на этом же ПК (127.0.0.1). На телефоне Ollama работает на компьютере в той же
+//    Wi-Fi сети: вводим адрес ПК (например 192.168.1.10), запросы идут через нативный lan_http.
 // На телефоне системная кнопка «Назад» закрывает мастер так же, как крестик (BackStack).
 import { useEffect, useState } from 'react';
 import { Key, HardDrive, Loader2, CheckCircle2, AlertCircle, X, Sparkles } from 'lucide-react';
@@ -47,7 +49,30 @@ export function explainKeySaveError(raw: string): string {
   return `Ключ не сохранён: ${raw}`;
 }
 
-/** Модели, уже скачанные в Ollama на этом компьютере. Бросает ошибку, если Ollama не отвечает. */
+/**
+ * Адрес Ollama из того, что ввёл человек: «192.168.1.10», «192.168.1.10:11434» или «http://192.168.1.10:11434».
+ * Только http и IP-адрес из домашней сети (или 127.0.0.1 / localhost). Иначе null.
+ */
+export function normalizeOllamaEndpoint(raw: string): string | null {
+  let s = String(raw ?? '').trim().replace(/\/+$/, '');
+  if (!s) return null;
+  if (!/^https?:\/\//i.test(s)) s = `http://${s}`;
+  let u: URL;
+  try { u = new URL(s); } catch { return null; }
+  if (u.protocol !== 'http:' || u.username || u.password || (u.pathname && u.pathname !== '/') || u.search || u.hash) return null;
+  const host = u.hostname;
+  const ip = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (host !== 'localhost') {
+    if (!ip) return null;
+    const o = ip.slice(1).map(Number);
+    if (o.some(n => n > 255)) return null;
+    const lan = o[0] === 127 || o[0] === 10 || (o[0] === 192 && o[1] === 168) || (o[0] === 172 && o[1] >= 16 && o[1] <= 31);
+    if (!lan) return null;
+  }
+  return `http://${host}:${u.port || '11434'}`;
+}
+
+/** Модели, уже скачанные в Ollama. Бросает ошибку, если Ollama не отвечает. */
 export async function listOllamaModels(endpoint = OLLAMA, timeoutMs = 3000, f: typeof fetch = fetch): Promise<string[]> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -83,6 +108,12 @@ export function keyStorageHint(platform: 'windows' | 'android' | 'web'): string 
   return ' Ключ хранится в зашифрованном хранилище браузера.';
 }
 
+/** Почему Ollama не нашлась: на телефоне Ollama стоит на компьютере в той же Wi-Fi сети. */
+export function ollamaNotFoundText(android: boolean, endpoint: string): string {
+  if (android) return `Ollama по адресу ${endpoint} не отвечает. На компьютере: установи Ollama (ollama.com/download), выполни ollama pull qwen2.5:7b, запусти Ollama с переменной OLLAMA_HOST=0.0.0.0 и разреши её в брандмауэре Windows. Телефон и компьютер должны быть в одной Wi-Fi сети. Потом нажми «Найти Ollama» ещё раз.`;
+  return 'Ollama на этом ПК не отвечает. Установи её с сайта ollama.com/download, запусти, выполни ollama pull qwen2.5:7b и нажми «Найти Ollama» ещё раз.';
+}
+
 type Status = 'idle' | 'busy' | 'ok' | 'error';
 
 export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
@@ -100,6 +131,9 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
   const [olError, setOlError] = useState('');
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState('');
+  // На телефоне — адрес компьютера с Ollama в домашней сети. На ПК и сайте — этот же компьютер.
+  const savedEndpoint = aiGateway.getProvider('ollama')?.endpoint ?? '';
+  const [olAddr, setOlAddr] = useState(android ? (savedEndpoint.includes('127.0.0.1') ? '' : savedEndpoint) : OLLAMA);
 
   const finish = () => { markSetupDone(); setTimeout(onReady, 700); };
   const skip = () => { markSetupDone(); onClose(); };
@@ -146,35 +180,52 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
     }
   };
 
+  /** Адрес Ollama или null (с понятной ошибкой). */
+  const endpointOrError = (): string | null => {
+    const ep = normalizeOllamaEndpoint(olAddr);
+    if (!ep) {
+      setOl('error');
+      setOlError(android
+        ? 'Впиши адрес компьютера с Ollama в домашней сети, например 192.168.1.10 (на ПК: ipconfig → «IPv4-адрес»).'
+        : 'Адрес Ollama должен быть вида http://127.0.0.1:11434.');
+      return null;
+    }
+    return ep;
+  };
+
   const findOllama = async () => {
     setOl('busy');
     setOlError('');
+    const ep = endpointOrError();
+    if (!ep) return;
     try {
-      const list = await listOllamaModels();
+      const list = await listOllamaModels(ep, android ? 5000 : 3000);
       setModels(list);
       setModel(pickOllamaModel(list) ?? '');
       if (!list.length) {
         setOl('error');
-        setOlError('Ollama запущена, но моделей нет. В командной строке: ollama pull qwen2.5:7b (или qwen2.5:1.5b для слабого ПК), затем нажми «Найти Ollama» ещё раз.');
+        setOlError('Ollama запущена, но моделей нет. В командной строке компьютера: ollama pull qwen2.5:7b (или qwen2.5:1.5b для слабого ПК), затем нажми «Найти Ollama» ещё раз.');
         return;
       }
       setOl('idle');
     } catch {
       setModels([]);
       setOl('error');
-      setOlError('Ollama на этом ПК не отвечает. Установи её с сайта ollama.com/download, запусти, выполни ollama pull qwen2.5:7b и нажми «Найти Ollama» ещё раз.');
+      setOlError(ollamaNotFoundText(android, ep));
     }
   };
 
   const useOllama = async () => {
     if (!model || ol === 'busy') return;
+    const ep = endpointOrError();
+    if (!ep) return;
     setOl('busy');
     setOlError('');
     try {
       if (aiGateway.getProvider('ollama')) {
-        await aiGateway.updateProvider('ollama', { model, enabled: true });
+        await aiGateway.updateProvider('ollama', { endpoint: ep, model, enabled: true });
       } else {
-        await aiGateway.addProvider({ id: 'ollama', name: '★ Светлана Локальная (Ollama / Offline)', type: 'offline', endpoint: OLLAMA, model, enabled: true });
+        await aiGateway.addProvider({ id: 'ollama', name: '★ Светлана Локальная (Ollama / Offline)', type: 'offline', endpoint: ep, model, enabled: true });
       }
       aiGateway.setActiveProvider('ollama');
       await aiGateway.chat([{ role: 'user', content: PING }], { max_tokens: 50 }, 'ollama');
@@ -195,7 +246,7 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" role="dialog" aria-modal="true">
-      <div className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-900 text-white p-6 max-h-[90vh] overflow-y-auto">
+      <div className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-900 text-white p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between mb-4">
           <div>
             <h2 className="text-xl font-bold flex items-center gap-2"><Sparkles className="w-5 h-5 text-pink-400" />Добро пожаловать в Светлану 2.0</h2>
@@ -209,7 +260,7 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
           <p className="text-xs text-slate-400 mt-1">Единая обученная Светлана на мир-самозанятых.рф, полный режим. Нужен ключ Светланы, который вы получили от владельца сервера.
             {keyStorageHint(platform)}
           </p>
-          <div className="flex gap-2 mt-3">
+          <div className="flex flex-col sm:flex-row gap-2 mt-3">
             <input
               type="password"
               value={key}
@@ -223,7 +274,7 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
             <button
               onClick={connectServer}
               disabled={(!key.trim() && !keySaved) || sv === 'busy'}
-              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm font-medium flex items-center gap-2"
+              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm font-medium flex items-center justify-center gap-2"
             >
               {sv === 'busy' && <Loader2 className="w-4 h-4 animate-spin" />}{retryOnly ? 'Повторить проверку' : 'Подключить'}
             </button>
@@ -231,41 +282,56 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
           {statusLine(sv, svError, 'Светлана ответила. Открываю чат…')}
         </section>
 
-        {/* Ollama работает на компьютере; в телефоне её нет. */}
-        {!android && (
-          <section className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-4 mb-4">
-            <h3 className="font-semibold flex items-center gap-2"><HardDrive className="w-4 h-4 text-cyan-300" />Без интернета: локальная модель через Ollama</h3>
+        {/* Ollama: на ПК и сайте — этот компьютер, на телефоне — компьютер в той же Wi-Fi сети. */}
+        <section className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-4 mb-4" data-testid="setup-ollama">
+          <h3 className="font-semibold flex items-center gap-2"><HardDrive className="w-4 h-4 text-cyan-300" />Без интернета: локальная модель через Ollama</h3>
+          {android ? (
+            <p className="text-xs text-slate-400 mt-1">Модель работает на твоём компьютере, телефон обращается к нему по домашней Wi-Fi сети, в интернет переписка не уходит. На ПК нужна Ollama (ollama.com/download), модель («ollama pull qwen2.5:7b») и запуск с OLLAMA_HOST=0.0.0.0.</p>
+          ) : (
             <p className="text-xs text-slate-400 mt-1">Переписка не покидает компьютер. Нужна установленная Ollama (ollama.com/download) и скачанная модель, например «ollama pull qwen2.5:7b».</p>
-            <div className="flex flex-wrap gap-2 mt-3">
-              <button
-                onClick={findOllama}
-                disabled={ol === 'busy'}
-                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-50 text-sm flex items-center gap-2"
-              >
-                {ol === 'busy' && !models.length && <Loader2 className="w-4 h-4 animate-spin" />}Найти Ollama
-              </button>
-              {models.length > 0 && (
-                <>
-                  <select
-                    value={model}
-                    onChange={e => setModel(e.target.value)}
-                    className="px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm"
-                  >
-                    {models.map(m => <option key={m} value={m} className="bg-slate-900">{m}</option>)}
-                  </select>
-                  <button
-                    onClick={useOllama}
-                    disabled={!model || ol === 'busy'}
-                    className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-sm font-medium flex items-center gap-2"
-                  >
-                    {ol === 'busy' && <Loader2 className="w-4 h-4 animate-spin" />}Использовать
-                  </button>
-                </>
-              )}
-            </div>
-            {statusLine(ol, olError, 'Локальная модель ответила. Открываю чат…')}
-          </section>
-        )}
+          )}
+          {android && (
+            <input
+              value={olAddr}
+              onChange={e => setOlAddr(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && findOllama()}
+              placeholder="адрес ПК, например 192.168.1.10"
+              inputMode="url"
+              autoComplete="off"
+              aria-label="Адрес компьютера с Ollama"
+              className="w-full min-w-0 mt-3 px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-cyan-500"
+              disabled={ol === 'busy'}
+            />
+          )}
+          <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 mt-3">
+            <button
+              onClick={findOllama}
+              disabled={ol === 'busy'}
+              className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-50 text-sm flex items-center justify-center gap-2"
+            >
+              {ol === 'busy' && !models.length && <Loader2 className="w-4 h-4 animate-spin" />}Найти Ollama
+            </button>
+            {models.length > 0 && (
+              <>
+                <select
+                  value={model}
+                  onChange={e => setModel(e.target.value)}
+                  className="min-w-0 px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm"
+                >
+                  {models.map(m => <option key={m} value={m} className="bg-slate-900">{m}</option>)}
+                </select>
+                <button
+                  onClick={useOllama}
+                  disabled={!model || ol === 'busy'}
+                  className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-sm font-medium flex items-center justify-center gap-2"
+                >
+                  {ol === 'busy' && <Loader2 className="w-4 h-4 animate-spin" />}Использовать
+                </button>
+              </>
+            )}
+          </div>
+          {statusLine(ol, olError, 'Локальная модель ответила. Открываю чат…')}
+        </section>
 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <button onClick={() => { markSetupDone(); onOpenProviders(); }} className="text-sm text-indigo-300 hover:text-indigo-200">Другие ИИ (OpenAI, Claude, Groq, DeepSeek…) →</button>
