@@ -3,10 +3,12 @@
 // Токен хранится только зашифрованным (SecretStore). Раз в 10 минут отправляется «пульс»:
 // версия, флаги защиты и список установленных локальных моделей. Клиенты, финансы, голос,
 // переписка и ключи в кабинет НЕ передаются никогда: тело запроса собирается по белому списку.
-// Кабинет — для компьютера (платформа windows): в приложении для Android он выключен (CRMLauncher).
+// Одинаково в Windows и Android. Телефон привязывается как platform 'android' и не ищет модели на 127.0.0.1
+// (локальные модели бывают только на компьютере).
 import { getSecret, setSecret, deleteSecret, secretStorageMode } from '../security/SecretStore';
 import { loadTemplate } from '../voice/VoicePrint';
 import { APP_VERSION as CURRENT_VERSION } from '../../version';
+import { isAndroidApp } from '../../platform';
 
 export const CABINET_ORIGINS = [
   'https://xn----8sba1acxdkgqms3b9euc.xn--p1ai', // мир-самозанятых.рф
@@ -22,6 +24,11 @@ const MAX_REPLY = 64 * 1024;
 export const HEARTBEAT_MS = 10 * 60_000;
 /** Версия приложения — одна на всё приложение (src/version.ts). */
 export const APP_VERSION = CURRENT_VERSION;
+
+/** Как устройство представляется кабинету. */
+export function devicePlatform(): 'windows' | 'android' {
+  return isAndroidApp() ? 'android' : 'windows';
+}
 
 /** Каталог моделей ПК (id совпадают с каталогом сайта). Сопоставление с именами моделей Ollama. */
 const OLLAMA_TO_CATALOG: [RegExp, string][] = [
@@ -83,15 +90,16 @@ const defaultFetch = (): FetchLike => {
   return fetch as unknown as FetchLike;
 };
 
-/** Привязать этот компьютер к личному кабинету по одноразовому коду. */
+/** Привязать это устройство (компьютер или телефон) к личному кабинету по одноразовому коду. */
 export async function linkDevice(opts: { code: string; name: string; origin?: string; fetchImpl?: FetchLike; storage?: KV | null }): Promise<CabinetMeta> {
   const code = normalizeLinkCode(opts.code);
   const origin = assertCabinetOrigin(opts.origin ?? CABINET_ORIGINS[0]);
-  const name = String(opts.name ?? '').trim().slice(0, 80) || 'Компьютер';
+  const platform = devicePlatform();
+  const name = String(opts.name ?? '').trim().slice(0, 80) || (platform === 'android' ? 'Телефон' : 'Компьютер');
   const { status, body } = await call(opts.fetchImpl ?? defaultFetch(), `${origin}${API}/link`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ code, platform: 'windows', name, app_version: APP_VERSION }),
+    body: JSON.stringify({ code, platform, name, app_version: APP_VERSION }),
   });
   if (status !== 200 || typeof body?.device_token !== 'string' || typeof body?.device_id !== 'string' || !/^[A-Za-z0-9_-]{40,100}$/.test(body.device_token)) {
     throw new Error(typeof body?.message === 'string' ? body.message.slice(0, 200) : `Не удалось привязать (HTTP ${status})`);
@@ -125,17 +133,19 @@ async function ollamaModels(f: FetchLike): Promise<DeviceModel[]> {
 /** Собрать пульс по белому списку полей. Ничего личного сюда не попадает. */
 export async function collectHeartbeat(opts: { fetchImpl?: FetchLike | null; storage?: KV | null } = {}): Promise<Heartbeat> {
   const s = opts.storage === undefined ? kv() : opts.storage;
-  const paired = !!(await getSecret('bridge.code'));
+  const phone = isAndroidApp();
+  // Телефон: нет моста ПК ↔ телефон и локальных моделей, 127.0.0.1 не опрашивается.
+  const paired = phone ? false : !!(await getSecret('bridge.code'));
   return {
     app_version: APP_VERSION,
     status: {
-      bridge_v2: true,
+      bridge_v2: !phone,
       voice_enrolled: !!loadTemplate(s as any),
       secrets_encrypted: (await secretStorageMode()) === 'encrypted',
       confirm_gate: true,
       paired_with: paired ? 'android' : null,
     },
-    models: opts.fetchImpl === null ? [] : await ollamaModels(opts.fetchImpl ?? defaultFetch()),
+    models: phone || opts.fetchImpl === null ? [] : await ollamaModels(opts.fetchImpl ?? defaultFetch()),
   };
 }
 
