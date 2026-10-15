@@ -5,6 +5,8 @@
 // попадают в JavaScript: запрос в облако делает нативная часть (security/NativeBridge, src-tauri/src/secure_ai.rs).
 // В приложении для Android то же самое делает SecureAi.kt (Android Keystore). В обоих приложениях облако —
 // ТОЛЬКО через нативную часть (сторонний прокси не используется): окно подтверждения не обойти.
+// GigaChat (Сбер, бесплатный тариф) — только в приложениях: его сервер подписан сертификатом Минцифры и не отвечает
+// браузеру (CORS), поэтому вход по ключу авторизации и запрос делает нативная часть (secure_ai.rs / SecureAi.kt).
 // Локальные модели (Ollama, LM Studio и др.): на компьютере и сайте — только 127.0.0.1/localhost; в приложении
 // для Android — ещё и компьютер в домашней сети (10.x, 172.16–31.x, 192.168.x): запрос делает телефон
 // (команда lan_http, первая отправка на новый адрес — после нативного подтверждения, см. AndroidFiles).
@@ -78,11 +80,26 @@ const DEFAULT_OFFLINE_PROVIDERS: AIProvider[] = [
   },
 ];
 
+/** GigaChat работает только в приложениях (нативная часть): браузер к нему не подключится. */
+export const GIGACHAT_WEB_ONLY = 'GigaChat работает в приложениях Светланы для Windows и Android. На сайте браузер не может к нему подключиться: выберите другой ИИ или откройте приложение.';
+
+/** «Ключ авторизации» GigaChat из Studio: без слова Basic, пробелов и переносов (их часто копируют вместе с ключом). */
+export function normalizeGigachatKey(k: string): string {
+  return String(k ?? '').trim().replace(/^Basic\s+/i, '').replace(/\s+/g, '');
+}
+
+/** Температура для GigaChat: он не принимает 0, диапазон 0.1–2. */
+export function gigachatTemperature(t: unknown): number {
+  const n = typeof t === 'number' && Number.isFinite(t) ? t : 0.7;
+  return Math.min(2, Math.max(0.1, n));
+}
+
 /** Официальные адреса облачных сервисов, у которых адрес берётся из настроек. */
 const OFFICIAL_ENDPOINTS: Record<string, string[]> = {
   mistral: ['https://api.mistral.ai/v1'],
   google: ['https://generativelanguage.googleapis.com/v1beta', 'https://generativelanguage.googleapis.com/v1'],
   svetlana: [SVETLANA_CORE_ORIGIN],
+  gigachat: ['https://api.giga.chat/v1'],
 };
 const LOCAL_RE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?(\/[A-Za-z0-9._~-]+)*$/;
 /** Телефон: ещё и компьютер в домашней сети (только IP, без имён). */
@@ -115,7 +132,7 @@ export function validateProxyUrl(url: string): string {
   throw new Error('Прокси может быть только на своём сервере (/api/...) или на этом компьютере');
 }
 
-const FALLBACK_ORDER = ['ollama', 'lmstudio', 'svetlana', 'groq', 'openai', 'anthropic', 'deepseek'];
+const FALLBACK_ORDER = ['ollama', 'lmstudio', 'svetlana', 'groq', 'openai', 'anthropic', 'deepseek', 'gigachat'];
 
 /**
  * Запасные провайдеры при ошибке [failed]. Только включённые и только ТОГО ЖЕ типа:
@@ -131,6 +148,13 @@ export function fallbackCandidates(all: AIProvider[], failed: Pick<AIProvider, '
 
 const secretName = (id: string) => `ai.${id}`;
 
+/** Ключ из настроек: для GigaChat — чистый «Ключ авторизации» (отметку «ключ в хранилище» не трогаем). */
+function keyOf(id: string, v: unknown): string | undefined {
+  if (typeof v !== 'string' || !v) return undefined;
+  const k = id === 'gigachat' && v !== NATIVE_KEY_PLACEHOLDER ? normalizeGigachatKey(v) : v;
+  return k ? k.slice(0, 500) : undefined;
+}
+
 function sanitizeProvider(v: unknown): AIProvider | null {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
   const r = v as Record<string, unknown>;
@@ -145,7 +169,7 @@ function sanitizeProvider(v: unknown): AIProvider | null {
       model: r.id === 'svetlana' ? SVETLANA_CORE_MODEL : stripControl(String(r.model ?? '')).slice(0, 100),
       enabled: r.enabled === true,
       useProxy: r.useProxy === true ? true : undefined,
-      apiKey: typeof r.apiKey === 'string' && r.apiKey ? r.apiKey.slice(0, 500) : undefined,
+      apiKey: keyOf(r.id, r.apiKey),
     };
   } catch { return null; }
 }
@@ -373,6 +397,10 @@ class AIGateway {
     if (provider.type === 'online' && isNativeApp()) {
       return this.callNative(provider, messages, options);
     }
+    // GigaChat — только через нативную часть приложения (ключ не уходит ни в прокси, ни в браузерный запрос).
+    if (provider.id === 'gigachat') {
+      throw new Error(GIGACHAT_WEB_ONLY);
+    }
     const proxy = this.getProxyUrl();
     if ((proxy || provider.useProxy) && provider.type === 'online') {
       return this.callViaProxy(proxy || '/api/ai-proxy', provider, messages, options);
@@ -428,6 +456,8 @@ class AIGateway {
         systemInstruction: systemMessage ? { parts: [{ text: systemMessage.content }] } : undefined,
         generationConfig: { temperature, maxOutputTokens: options?.max_tokens },
       };
+    } else if (provider.id === 'gigachat') {
+      body = { model: provider.model, messages, temperature: gigachatTemperature(temperature), max_tokens: options?.max_tokens ?? 4096 };
     } else {
       body = { model: provider.model, messages, temperature, max_tokens: options?.max_tokens ?? 4096 };
     }

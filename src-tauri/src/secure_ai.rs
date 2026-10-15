@@ -8,6 +8,11 @@
 //! «svetlana» — единая Светлана на своём сервере (мир-самозанятых.рф), полный режим Svetlana 2.0.
 //! Ключ — ASSISTANT_KEY_SVETLANA2 с сервера, адрес фиксирован (SVETLANA_CORE), тело { message, history, system }.
 //!
+//! «gigachat» — GigaChat от Сбера (бесплатный тариф для физлиц). В хранилище лежит «Ключ авторизации» из Studio;
+//! по нему нативная часть получает временный токен (30 минут, храним 25 и только в памяти) и с ним
+//! делает запрос. Серверы GigaChat подписаны корневым сертификатом Минцифры: он добавлен
+//! ТОЛЬКО в отдельный клиент для двух фиксированных адресов GigaChat, остальные запросы ему не доверяют.
+//!
 //! Защита от чужого скрипта на странице:
 //! - любое изменение или удаление ключа подтверждается в НАТИВНОМ окне Windows;
 //! - запросы в облако идут только по разрешению из такого же окна. Разрешение привязано к
@@ -37,11 +42,21 @@ const MAX_BODY: usize = 2 * 1024 * 1024;
 const MAX_RESPONSE: usize = 8 * 1024 * 1024;
 const MAX_MESSAGES: usize = 200;
 const MAX_TEXT: usize = 200_000;
-const PROVIDERS: [&str; 8] = ["openai", "groq", "openrouter", "deepseek", "mistral", "anthropic", "google", "svetlana"];
+const PROVIDERS: [&str; 9] = ["openai", "groq", "openrouter", "deepseek", "mistral", "anthropic", "google", "svetlana", "gigachat"];
 /// Единая Светлана на своём сервере (мир-самозанятых.рф), профиль полного режима Svetlana 2.0.
 const SVETLANA_CORE: &str = "https://xn----8sba1acxdkgqms3b9euc.xn--p1ai/api/v1/assistant/svetlana2/chat";
 const SVETLANA_MODEL: &str = "svetlana2";
 const SVETLANA_MAX_HISTORY: usize = 10;
+/// GigaChat: вход по ключу авторизации и запрос (официальные адреса из документации developers.sber.ru).
+const GIGACHAT_OAUTH: &str = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth";
+const GIGACHAT_CHAT: &str = "https://api.giga.chat/v1/chat/completions";
+const GIGACHAT_SCOPE: &str = "GIGACHAT_API_PERS";
+const GIGACHAT_TOKEN_TTL: Duration = Duration::from_secs(25 * 60);
+const MAX_TOKEN_RESPONSE: usize = 64 * 1024;
+const GIGACHAT_BAD_KEY: &str = "GigaChat не принял ключ: вставьте «Ключ авторизации» из проекта GigaChat API в Studio (developers.sber.ru/studio)";
+const GIGACHAT_NO_TOKENS: &str = "GigaChat: закончились токены на счёте (проверьте лимит в Studio или выберите другую модель)";
+/// Корневой сертификат Минцифры (Russian Trusted Root CA, до 2032 года) — только для клиента GigaChat.
+const RUSSIAN_TRUSTED_ROOT_CA: &str = include_str!("../certs/russian_trusted_root_ca.pem");
 const CHAT_PER_MINUTE: usize = 30;
 const SECRET_WRITES_PER_MINUTE: usize = 10;
 const CONSENT_TTL: Duration = Duration::from_secs(15 * 60);
@@ -67,11 +82,19 @@ struct Issued {
     at: Instant,
 }
 
+/// Временный токен GigaChat (только в памяти), привязан к отпечатку ключа, с которым получен.
+struct GigaToken {
+    key_hash: [u8; 32],
+    token: String,
+    at: Instant,
+}
+
 static CHAT_CALLS: Mutex<VecDeque<Instant>> = Mutex::new(VecDeque::new());
 static SECRET_WRITES: Mutex<VecDeque<Instant>> = Mutex::new(VecDeque::new());
 static NEW_CONVERSATIONS: Mutex<VecDeque<Instant>> = Mutex::new(VecDeque::new());
 static CONSENTS: Mutex<Vec<Consent>> = Mutex::new(Vec::new());
 static ISSUED: Mutex<VecDeque<Issued>> = Mutex::new(VecDeque::new());
+static GIGA_TOKEN: Mutex<Option<GigaToken>> = Mutex::new(None);
 static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn rate_ok(m: &Mutex<VecDeque<Instant>>, max: usize) -> bool {
@@ -126,6 +149,27 @@ fn push_limited(buf: &mut Vec<u8>, chunk: &[u8], max: usize) -> Result<(), Strin
     }
     buf.extend_from_slice(chunk);
     Ok(())
+}
+
+/// Прочитать ответ по частям и оборвать на лимите: без Content-Length сервер мог бы слать сколько угодно.
+async fn read_limited(mut response: reqwest::Response, max: usize) -> Result<(reqwest::StatusCode, String), String> {
+    let status = response.status();
+    if response.content_length().map_or(false, |n| n > max as u64) {
+        return Err(TOO_BIG_RESPONSE.into());
+    }
+    let mut bytes: Vec<u8> = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.without_url().to_string())? {
+        push_limited(&mut bytes, &chunk, max)?;
+    }
+    Ok((status, String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+fn http_result(status: reqwest::StatusCode, text: String) -> Result<String, String> {
+    if !status.is_success() {
+        let short: String = text.chars().take(500).collect();
+        return Err(format!("HTTP {}: {}", status.as_u16(), short));
+    }
+    Ok(text)
 }
 
 /// Начало первого сообщения пользователя — только для окна подтверждения.
@@ -201,6 +245,123 @@ fn has_secret(e: &keyring::Entry) -> Result<bool, String> {
     }
 }
 
+// ---------- GigaChat: ключ авторизации → временный токен → запрос ----------
+
+/// «Ключ авторизации» из Studio — строка base64 (без пробелов и слова Basic).
+fn valid_gigachat_key(k: &str) -> bool {
+    (16..=1024).contains(&k.len()) && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=')
+}
+
+fn key_hash(key: &str) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&Sha256::digest(key.as_bytes()));
+    out
+}
+
+/// Уникальный номер запроса для GigaChat (RqUID) в виде UUID v4.
+fn rq_uid() -> String {
+    let h = random_id();
+    let variant = ["8", "9", "a", "b"][(u8::from_str_radix(&h[16..17], 16).unwrap_or(0) & 3) as usize];
+    format!("{}-{}-4{}-{}{}-{}", &h[0..8], &h[8..12], &h[13..16], variant, &h[17..20], &h[20..32])
+}
+
+fn cached_giga_token(slot: &Option<GigaToken>, hash: &[u8; 32], now: Instant) -> Option<String> {
+    slot.as_ref()
+        .filter(|t| &t.key_hash == hash && now.duration_since(t.at) < GIGACHAT_TOKEN_TTL)
+        .map(|t| t.token.clone())
+}
+
+fn giga_cached(hash: &[u8; 32]) -> Option<String> {
+    let slot = GIGA_TOKEN.lock().unwrap_or_else(|e| e.into_inner());
+    cached_giga_token(&slot, hash, Instant::now())
+}
+
+fn giga_store(hash: [u8; 32], token: String) {
+    *GIGA_TOKEN.lock().unwrap_or_else(|e| e.into_inner()) = Some(GigaToken { key_hash: hash, token, at: Instant::now() });
+}
+
+fn forget_giga_token() {
+    *GIGA_TOKEN.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// Токен из ответа входа: только печатные ASCII-символы и разумная длина (он уйдёт в заголовок).
+fn parse_giga_token(text: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(text).ok()?;
+    let t = v.get("access_token")?.as_str()?;
+    if t.is_empty() || t.len() > 8192 || !t.bytes().all(|b| b.is_ascii_graphic()) {
+        return None;
+    }
+    Some(t.to_string())
+}
+
+/// Отдельный клиент: системные корневые сертификаты + сертификат Минцифры, без редиректов.
+fn gigachat_client() -> Result<reqwest::Client, String> {
+    let ca = reqwest::Certificate::from_pem(RUSSIAN_TRUSTED_ROOT_CA.as_bytes()).map_err(|e| e.to_string())?;
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .redirect(reqwest::redirect::Policy::none())
+        .add_root_certificate(ca)
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+async fn gigachat_token(client: &reqwest::Client, key: &str) -> Result<String, String> {
+    let hash = key_hash(key);
+    if let Some(t) = giga_cached(&hash) {
+        return Ok(t);
+    }
+    let response = client
+        .post(GIGACHAT_OAUTH)
+        .header("Authorization", format!("Basic {key}"))
+        .header("RqUID", rq_uid())
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("Accept", "application/json")
+        .body(format!("scope={GIGACHAT_SCOPE}"))
+        .send()
+        .await
+        .map_err(|e| e.without_url().to_string())?;
+    let (status, text) = read_limited(response, MAX_TOKEN_RESPONSE).await?;
+    match status.as_u16() {
+        400 | 401 | 403 => return Err(GIGACHAT_BAD_KEY.into()),
+        s if !status.is_success() => return Err(format!("GigaChat: вход не удался, HTTP {s}")),
+        _ => {}
+    }
+    let token = parse_giga_token(&text).ok_or("GigaChat: в ответе нет токена")?;
+    giga_store(hash, token.clone());
+    Ok(token)
+}
+
+/// Запрос к GigaChat. Если токен устарел раньше срока (401) — один повтор с новым токеном.
+async fn gigachat_chat(key: &str, body_text: String) -> Result<String, String> {
+    if !valid_gigachat_key(key) {
+        return Err(GIGACHAT_BAD_KEY.into());
+    }
+    let client = gigachat_client()?;
+    for attempt in 0..2 {
+        let token = gigachat_token(&client, key).await?;
+        let response = client
+            .post(GIGACHAT_CHAT)
+            .bearer_auth(&token)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .body(body_text.clone())
+            .send()
+            .await
+            .map_err(|e| e.without_url().to_string())?;
+        let (status, text) = read_limited(response, MAX_RESPONSE).await?;
+        match status.as_u16() {
+            401 if attempt == 0 => {
+                forget_giga_token();
+                continue;
+            }
+            401 => return Err(GIGACHAT_BAD_KEY.into()),
+            402 => return Err(GIGACHAT_NO_TOKENS.into()),
+            _ => return http_result(status, text),
+        }
+    }
+    Err(GIGACHAT_BAD_KEY.into())
+}
+
 #[tauri::command]
 pub async fn secret_set(app: AppHandle, name: String, value: Option<String>) -> Result<(), String> {
     let provider = provider_of_secret(&name).ok_or("Недопустимое имя ключа")?;
@@ -210,6 +371,9 @@ pub async fn secret_set(app: AppHandle, name: String, value: Option<String>) -> 
         if v.len() > MAX_SECRET || v.chars().any(|c| c.is_control()) {
             return Err("Некорректный ключ".into());
         }
+        if provider == "gigachat" && !valid_gigachat_key(v) {
+            return Err(GIGACHAT_BAD_KEY.into());
+        }
     } else if !has_secret(&e)? {
         return Ok(());
     }
@@ -217,6 +381,9 @@ pub async fn secret_set(app: AppHandle, name: String, value: Option<String>) -> 
         return Err("Слишком частое изменение ключей, подождите минуту".into());
     }
     revoke_consents(provider);
+    if provider == "gigachat" {
+        forget_giga_token();
+    }
     let question = if value.is_some() {
         format!("Сохранить новый API-ключ для «{provider}» в хранилище Windows?")
     } else {
@@ -225,13 +392,17 @@ pub async fn secret_set(app: AppHandle, name: String, value: Option<String>) -> 
     if !confirm(&app, question).await {
         return Err("Отменено пользователем".into());
     }
-    match value {
+    let result = match value {
         Some(v) => e.set_password(&v).map_err(|err| err.to_string()),
         None => match e.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(err) => Err(err.to_string()),
         },
+    };
+    if provider == "gigachat" {
+        forget_giga_token();
     }
+    result
 }
 
 #[tauri::command]
@@ -382,7 +553,9 @@ fn validate_body(provider: &str, model: &str, body: &Value) -> Result<(), String
                     return Err("Системная инструкция должна быть текстом".into());
                 }
             }
-            check_number(obj, "temperature", 0.0, 2.0)?;
+            // GigaChat не принимает температуру 0.
+            let t_min = if provider == "gigachat" { 0.01 } else { 0.0 };
+            check_number(obj, "temperature", t_min, 2.0)?;
             check_number(obj, "max_tokens", 1.0, 65536.0)?;
         }
     }
@@ -433,6 +606,9 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conv
         Err(keyring::Error::NoEntry) => return Err("API-ключ не задан".into()),
         Err(err) => return Err(err.to_string()),
     };
+    if provider_id == "gigachat" {
+        return gigachat_chat(&key, body_text).await;
+    }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
         .redirect(reqwest::redirect::Policy::none())
@@ -454,27 +630,14 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conv
         "svetlana" => client.post(SVETLANA_CORE).bearer_auth(&key),
         _ => return Err("Этот облачный сервис не поддерживается".into()),
     };
-    let mut response = request
+    let response = request
         .header("Content-Type", "application/json")
         .body(body_text)
         .send()
         .await
         .map_err(|e| e.without_url().to_string())?;
-    let status = response.status();
-    if response.content_length().map_or(false, |n| n > MAX_RESPONSE as u64) {
-        return Err(TOO_BIG_RESPONSE.into());
-    }
-    // Читаем по частям и обрываем на лимите: без Content-Length сервер мог бы слать сколько угодно.
-    let mut bytes: Vec<u8> = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|e| e.without_url().to_string())? {
-        push_limited(&mut bytes, &chunk, MAX_RESPONSE)?;
-    }
-    let text = String::from_utf8_lossy(&bytes).into_owned();
-    if !status.is_success() {
-        let short: String = text.chars().take(500).collect();
-        return Err(format!("HTTP {}: {}", status.as_u16(), short));
-    }
-    Ok(text)
+    let (status, text) = read_limited(response, MAX_RESPONSE).await?;
+    http_result(status, text)
 }
 
 #[cfg(test)]
@@ -490,6 +653,7 @@ mod tests {
     fn only_known_provider_secrets() {
         assert_eq!(provider_of_secret("ai.openai"), Some("openai"));
         assert_eq!(provider_of_secret("ai.svetlana"), Some("svetlana"));
+        assert_eq!(provider_of_secret("ai.gigachat"), Some("gigachat"));
         assert_eq!(provider_of_secret("ai.evil"), None);
         assert_eq!(provider_of_secret("stt.apikey"), None);
     }
@@ -588,6 +752,39 @@ mod tests {
         let long: Vec<Value> = (0..11).map(|_| json!({"role": "user", "content": "x"})).collect();
         assert!(validate_body("svetlana", "svetlana2", &json!({"message": "x", "history": long})).is_err());
         assert_eq!(preview_of("svetlana", &ok), "Проверь код");
+    }
+
+    #[test]
+    fn gigachat_body_key_and_token_rules() {
+        let ok = json!({"model": "GigaChat-2", "messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "привет"}], "temperature": 0.7, "max_tokens": 100});
+        assert!(validate_body("gigachat", "GigaChat-2", &ok).is_ok());
+        let zero = json!({"model": "GigaChat-2", "messages": [{"role": "user", "content": "x"}], "temperature": 0});
+        assert!(validate_body("gigachat", "GigaChat-2", &zero).is_err());
+        assert!(valid_gigachat_key("MDE5YWJjZGUtZjAxMi00NTY3OmFiY2RlZg=="));
+        assert!(!valid_gigachat_key("Basic MDE5YWJjZGUtZjAxMi00NTY3"));
+        assert!(!valid_gigachat_key("short"));
+        assert!(!valid_gigachat_key("MDE5YWJjZGUtZjAx\r\nX-Evil: 1"));
+        let id = rq_uid();
+        assert_eq!(id.len(), 36);
+        let parts: Vec<&str> = id.split('-').collect();
+        assert_eq!(parts.iter().map(|p| p.len()).collect::<Vec<_>>(), vec![8, 4, 4, 4, 12]);
+        assert!(parts[2].starts_with('4'));
+        assert!(matches!(parts[3].chars().next(), Some('8' | '9' | 'a' | 'b')));
+        assert_ne!(rq_uid(), rq_uid());
+        assert_eq!(parse_giga_token(r#"{"access_token":"eyJ.abc","expires_at":1}"#), Some("eyJ.abc".to_string()));
+        assert_eq!(parse_giga_token(r#"{"access_token":"a b"}"#), None);
+        assert_eq!(parse_giga_token("not json"), None);
+        assert!(reqwest::Certificate::from_pem(RUSSIAN_TRUSTED_ROOT_CA.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn gigachat_token_is_bound_to_the_key_and_expires() {
+        let start = Instant::now();
+        let slot = Some(GigaToken { key_hash: key_hash("key-one-aaaaaaaaaaaa"), token: "t1".into(), at: start });
+        assert_eq!(cached_giga_token(&slot, &key_hash("key-one-aaaaaaaaaaaa"), start), Some("t1".to_string()));
+        assert_eq!(cached_giga_token(&slot, &key_hash("key-two-bbbbbbbbbbbb"), start), None);
+        assert_eq!(cached_giga_token(&slot, &key_hash("key-one-aaaaaaaaaaaa"), start + GIGACHAT_TOKEN_TTL), None);
+        assert_eq!(cached_giga_token(&None, &key_hash("key-one-aaaaaaaaaaaa"), start), None);
     }
 
     #[test]

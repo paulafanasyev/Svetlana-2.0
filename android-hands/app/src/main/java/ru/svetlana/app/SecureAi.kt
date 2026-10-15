@@ -7,7 +7,9 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.URL
+import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.UUID
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import javax.net.ssl.HttpsURLConnection
 
@@ -21,11 +23,15 @@ import javax.net.ssl.HttpsURLConnection
  * Любое изменение ключа и отправка переписки в облако подтверждаются в НАТИВНОМ окне телефона;
  * разрешение привязано к провайдеру, модели и случайному ID разговора (128 бит SecureRandom), 15 минут и 30 запросов.
  *
- * Полное удаление (wipeAll) — «забор»: поколение ключей меняется, разрешения сбрасываются, идущие запросы рвутся.
- * Последняя проверка поколения и отправка тела запроса идут под замком чтения, а смена поколения — под
- * замком записи: тело, уже уходящее в момент нажатия «Удалить», досылается и затем обрывается,
- * а ни одна новая отправка после этой черты не начинается. Запрос или сохранение ключа, начатые до
- * удаления, после него ничего не отправят и не запишут.
+ * GigaChat (Сбер): в хранилище лежит «Ключ авторизации» из Studio; по нему получается временный токен
+ * (храним 25 минут и только в памяти, привязан к отпечатку ключа и поколению). Корневой сертификат Минцифры
+ * подключён через res/xml/network_security_config.xml ТОЛЬКО для адресов GigaChat.
+ *
+ * Полное удаление (wipeAll) — «забор»: поколение ключей меняется, разрешения и токен GigaChat сбрасываются,
+ * идущие запросы рвутся. Последняя проверка поколения и отправка тела запроса идут под замком чтения,
+ * а смена поколения — под замком записи: тело, уже уходящее в момент нажатия «Удалить», досылается
+ * и затем обрывается, а ни одна новая отправка после этой черты не начинается. Запрос или
+ * сохранение ключа, начатые до удаления, после него ничего не отправят и не запишут.
  */
 object SecureAi {
     class Fail(message: String) : Exception(message)
@@ -35,11 +41,19 @@ object SecureAi {
     const val MAX_RESPONSE = 8 * 1024 * 1024
     const val MAX_MESSAGES = 200
     const val MAX_TEXT = 200_000
-    val PROVIDERS = listOf("openai", "groq", "openrouter", "deepseek", "mistral", "anthropic", "google", "svetlana")
+    val PROVIDERS = listOf("openai", "groq", "openrouter", "deepseek", "mistral", "anthropic", "google", "svetlana", "gigachat")
     /** Единая Светлана на своём сервере (мир-самозанятых.рф), профиль полного режима Svetlana 2.0. */
     const val SVETLANA_CORE = "https://xn----8sba1acxdkgqms3b9euc.xn--p1ai/api/v1/assistant/svetlana2/chat"
     const val SVETLANA_MODEL = "svetlana2"
     const val SVETLANA_MAX_HISTORY = 10
+    /** GigaChat: вход по ключу авторизации и запрос (как в secure_ai.rs). */
+    const val GIGACHAT_OAUTH = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+    const val GIGACHAT_CHAT = "https://api.giga.chat/v1/chat/completions"
+    const val GIGACHAT_SCOPE = "GIGACHAT_API_PERS"
+    const val GIGACHAT_TOKEN_TTL_MS = 25 * 60 * 1000L
+    const val MAX_TOKEN_RESPONSE = 64 * 1024
+    const val GIGACHAT_BAD_KEY = "GigaChat не принял ключ: вставьте «Ключ авторизации» из проекта GigaChat API в Studio (developers.sber.ru/studio)"
+    const val GIGACHAT_NO_TOKENS = "GigaChat: закончились токены на счёте (проверьте лимит в Studio или выберите другую модель)"
     const val CHAT_PER_MINUTE = 30
     const val SECRET_WRITES_PER_MINUTE = 10
     const val CONSENT_TTL_MS = 15 * 60 * 1000L
@@ -55,6 +69,8 @@ object SecureAi {
 
     private class Consent(val provider: String, val model: String, val conversation: String, val at: Long, var uses: Int)
     private class Issued(val id: String, val at: Long)
+    /** Временный токен GigaChat: только в памяти, для того же ключа и того же поколения ключей. */
+    private class GigaToken(val keyHash: String, val gen: Long, val token: String, val at: Long)
 
     private val chatCalls = RateLimit(CHAT_PER_MINUTE)
     private val secretWrites = RateLimit(SECRET_WRITES_PER_MINUTE)
@@ -62,6 +78,8 @@ object SecureAi {
     private val consents = ArrayList<Consent>()
     private val issued = ArrayDeque<Issued>()
     private val random = SecureRandom()
+    @Volatile
+    private var gigaToken: GigaToken? = null
 
     /** Забор полного удаления: поколение ключей и идущие соединения (всё под wipeLock). */
     private val wipeLock = Any()
@@ -81,6 +99,10 @@ object SecureAi {
 
     private fun storeName(provider: String) = "native.ai.$provider"
 
+    /** «Ключ авторизации» из Studio — строка base64 (без пробелов и слова Basic). */
+    fun validGigachatKey(k: String): Boolean =
+        k.length in 16..1024 && k.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it == '+' || it == '/' || it == '=' }
+
     fun secretHas(ctx: Context, name: String): Boolean {
         val provider = providerOfSecret(name) ?: throw Fail("Недопустимое имя ключа")
         return SecretStore.get(ctx, storeName(provider)) != null
@@ -92,11 +114,13 @@ object SecureAi {
         val v = value?.takeIf { it.isNotEmpty() }
         if (v != null) {
             if (v.toByteArray(Charsets.UTF_8).size > MAX_SECRET || v.any { it.isISOControl() }) throw Fail("Некорректный ключ")
+            if (provider == "gigachat" && !validGigachatKey(v)) throw Fail(GIGACHAT_BAD_KEY)
         } else if (SecretStore.get(ctx, storeName(provider)) == null) {
             return
         }
         if (!secretWrites.ok()) throw Fail("Слишком частое изменение ключей, подождите минуту")
         revokeConsents(provider)
+        if (provider == "gigachat") gigaToken = null
         val question = if (v != null) {
             "Сохранить новый API-ключ для «$provider» в защищённом хранилище телефона?"
         } else {
@@ -107,6 +131,7 @@ object SecureAi {
         synchronized(wipeLock) {
             if (generation != gen) throw Fail(WIPED)
             SecretStore.put(ctx, storeName(provider), v)
+            if (provider == "gigachat") gigaToken = null
         }
     }
 
@@ -121,6 +146,7 @@ object SecureAi {
         try {
             synchronized(wipeLock) {
                 generation++
+                gigaToken = null
                 synchronized(consents) { consents.clear() }
                 active.forEach { runCatching { it.disconnect() } }
                 active.clear()
@@ -312,7 +338,8 @@ object SecureAi {
             onlyKeys(obj, allowed)
             if ((opt(obj, "model") as? String) != model) throw Fail("Модель в запросе не совпадает с выбранной")
             opt(obj, "system")?.let { if (!isText(it)) throw Fail("Системная инструкция должна быть текстом") }
-            checkNumber(obj, "temperature", 0.0, 2.0)
+            // GigaChat не принимает температуру 0.
+            checkNumber(obj, "temperature", if (provider == "gigachat") 0.01 else 0.0, 2.0)
             checkNumber(obj, "max_tokens", 1.0, 65536.0)
         }
         val list = opt(obj, listKey) as? JSONArray ?: throw Fail("Некорректный список сообщений")
@@ -331,11 +358,84 @@ object SecureAi {
         "anthropic" -> "https://api.anthropic.com/v1/messages"
         "google" -> "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
         "svetlana" -> SVETLANA_CORE
+        "gigachat" -> GIGACHAT_CHAT
         else -> throw Fail("Этот облачный сервис не поддерживается")
     }
 
     private fun post(p: String, model: String, key: String, body: ByteArray, gen: Long): String {
-        val c = URL(endpoint(p, model)).openConnection() as? HttpsURLConnection ?: throw Fail("Разрешены только https-адреса")
+        if (p == "gigachat") return gigachat(key, body, gen)
+        val headers = LinkedHashMap<String, String>()
+        headers["Content-Type"] = "application/json"
+        when (p) {
+            "anthropic" -> {
+                headers["x-api-key"] = key
+                headers["anthropic-version"] = "2023-06-01"
+            }
+            "google" -> headers["x-goog-api-key"] = key
+            else -> headers["Authorization"] = "Bearer $key"
+        }
+        val (code, text) = exchange(endpoint(p, model), headers, body, gen, MAX_RESPONSE)
+        if (code !in 200..299) throw Fail("HTTP $code: ${text.take(500)}")
+        return text
+    }
+
+    // ---------- GigaChat: ключ авторизации → временный токен → запрос ----------
+
+    private fun sha256(s: String): String =
+        MessageDigest.getInstance("SHA-256").digest(s.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+    /** Токен из ответа входа: только печатные ASCII-символы и разумная длина (он уйдёт в заголовок). */
+    private fun parseGigaToken(text: String): String? {
+        val t = runCatching { JSONObject(text).opt("access_token") as? String }.getOrNull() ?: return null
+        if (t.isEmpty() || t.length > 8192 || t.any { it.code !in 0x21..0x7e }) return null
+        return t
+    }
+
+    private fun gigachatToken(key: String, gen: Long): String {
+        val h = sha256(key)
+        gigaToken?.let { if (it.keyHash == h && it.gen == gen && now() - it.at < GIGACHAT_TOKEN_TTL_MS) return it.token }
+        val headers = linkedMapOf(
+            "Authorization" to "Basic $key",
+            "RqUID" to UUID.randomUUID().toString(),
+            "Content-Type" to "application/x-www-form-urlencoded",
+            "Accept" to "application/json",
+        )
+        val (code, text) = exchange(GIGACHAT_OAUTH, headers, "scope=$GIGACHAT_SCOPE".toByteArray(Charsets.UTF_8), gen, MAX_TOKEN_RESPONSE)
+        if (code == 400 || code == 401 || code == 403) throw Fail(GIGACHAT_BAD_KEY)
+        if (code !in 200..299) throw Fail("GigaChat: вход не удался, HTTP $code")
+        val token = parseGigaToken(text) ?: throw Fail("GigaChat: в ответе нет токена")
+        synchronized(wipeLock) {
+            if (generation != gen) throw Fail(WIPED)
+            gigaToken = GigaToken(h, gen, token, now())
+        }
+        return token
+    }
+
+    /** Запрос к GigaChat. Если токен устарел раньше срока (401) — один повтор с новым токеном. */
+    private fun gigachat(key: String, body: ByteArray, gen: Long): String {
+        if (!validGigachatKey(key)) throw Fail(GIGACHAT_BAD_KEY)
+        for (attempt in 0..1) {
+            val token = gigachatToken(key, gen)
+            val headers = linkedMapOf(
+                "Authorization" to "Bearer $token",
+                "Content-Type" to "application/json",
+                "Accept" to "application/json",
+            )
+            val (code, text) = exchange(GIGACHAT_CHAT, headers, body, gen, MAX_RESPONSE)
+            when {
+                code == 401 && attempt == 0 -> gigaToken = null
+                code == 401 -> throw Fail(GIGACHAT_BAD_KEY)
+                code == 402 -> throw Fail(GIGACHAT_NO_TOKENS)
+                code !in 200..299 -> throw Fail("HTTP $code: ${text.take(500)}")
+                else -> return text
+            }
+        }
+        throw Fail(GIGACHAT_BAD_KEY)
+    }
+
+    /** Один HTTPS-запрос: без редиректов, под «забором» полного удаления, ответ читается по частям до [max]. */
+    private fun exchange(url: String, headers: Map<String, String>, body: ByteArray, gen: Long, max: Int): Pair<Int, String> {
+        val c = URL(url).openConnection() as? HttpsURLConnection ?: throw Fail("Разрешены только https-адреса")
         try {
             // Соединение видно «забору»: полное удаление его оборвёт.
             synchronized(wipeLock) {
@@ -349,15 +449,7 @@ object SecureAi {
             c.requestMethod = "POST"
             c.doOutput = true
             c.setFixedLengthStreamingMode(body.size)
-            c.setRequestProperty("Content-Type", "application/json")
-            when (p) {
-                "anthropic" -> {
-                    c.setRequestProperty("x-api-key", key)
-                    c.setRequestProperty("anthropic-version", "2023-06-01")
-                }
-                "google" -> c.setRequestProperty("x-goog-api-key", key)
-                else -> c.setRequestProperty("Authorization", "Bearer $key")
-            }
+            for ((k, v) in headers) c.setRequestProperty(k, v)
             // Последняя проверка и отправка — одно целое: поколение меняется только под замком записи.
             val r = dispatch.readLock()
             r.lock()
@@ -368,7 +460,7 @@ object SecureAi {
                 r.unlock()
             }
             val code = c.responseCode
-            if (c.contentLengthLong > MAX_RESPONSE) throw Fail(TOO_BIG_RESPONSE)
+            if (c.contentLengthLong > max) throw Fail(TOO_BIG_RESPONSE)
             val stream = if (code in 200..299) c.inputStream else c.errorStream
             val out = ByteArrayOutputStream()
             stream?.use { s ->
@@ -376,14 +468,12 @@ object SecureAi {
                 while (true) {
                     val n = s.read(buf)
                     if (n < 0) break
-                    if (out.size() + n > MAX_RESPONSE) throw Fail(TOO_BIG_RESPONSE)
+                    if (out.size() + n > max) throw Fail(TOO_BIG_RESPONSE)
                     out.write(buf, 0, n)
                 }
             }
             if (generation != gen) throw Fail(WIPED)
-            val text = String(out.toByteArray(), Charsets.UTF_8)
-            if (code !in 200..299) throw Fail("HTTP $code: ${text.take(500)}")
-            return text
+            return code to String(out.toByteArray(), Charsets.UTF_8)
         } catch (e: Fail) {
             throw e
         } catch (e: IOException) {
