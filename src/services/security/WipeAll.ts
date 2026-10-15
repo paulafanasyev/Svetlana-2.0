@@ -1,9 +1,10 @@
 // «Удалить все данные на этом устройстве»: CRM, бизнес, запись, память, голос владельца,
 // настройки ИИ, привязки (кабинет и телефон) и все секреты вместе с ключом шифрования.
-// В приложениях также стираются ключи облачных ИИ из хранилища системы:
-// Android — одним подтверждением всё хранилище и сам ключ Android Keystore. «Отмена» в этом окне останавливает
-//   ВСЁ удаление: CRM, бизнес и остальные данные остаются на месте.
+// В приложениях сначала стираются ключи облачных ИИ из хранилища системы:
+// Android — одним подтверждением всё хранилище и сам ключ Android Keystore;
 // Windows — каждый сохранённый ключ в Диспетчере учётных данных (Windows спросит подтверждение на каждый).
+// На обеих платформах «Отмена» или ошибка нативного удаления ОСТАНАВЛИВАЕТ всё: CRM, бизнес и остальные
+// данные остаются на месте, чтобы «удалено всё» никогда не означало «кроме ключа ИИ».
 import { clearAllSecrets } from './SecretStore';
 import { isNativeApp, nativeHasSecret, nativeSetSecret } from './NativeBridge';
 import { isAndroidApp } from '../../platform';
@@ -17,7 +18,7 @@ export const NATIVE_KEY_PROVIDERS = ['openai', 'groq', 'openrouter', 'deepseek',
 
 /**
  * Удалить ключи ИИ из хранилища приложения. Возвращает число удалённых записей.
- * Android: «Отмена» в окне телефона пробрасывается наружу (не путать с «ключей не было»).
+ * «Отмена» в окне системы пробрасывается наружу (не путать с «ключа не было»).
  */
 export async function wipeNativeKeys(): Promise<number> {
   if (!isNativeApp()) return 0;
@@ -25,16 +26,19 @@ export async function wipeNativeKeys(): Promise<number> {
   let n = 0;
   for (const id of NATIVE_KEY_PROVIDERS) {
     const name = `ai.${id}`;
-    try {
-      if (await nativeHasSecret(name)) { await nativeSetSecret(name, null); n++; }
-    } catch { /* «Отмена» или нет хранилища — идём дальше */ }
+    let has = false;
+    try { has = await nativeHasSecret(name); } catch { continue; /* нет хранилища — нечего удалять */ }
+    if (!has) continue;
+    // «Отмена» в окне Windows или ошибка удаления — останавливаем всё удаление.
+    await nativeSetSecret(name, null);
+    n++;
   }
   return n;
 }
 
 /**
  * Все ключи приложения начинаются с «svetlana». Возвращает число удалённых записей.
- * Если нативное удаление отменено или не удалось — бросает ошибку и ничего не трогает.
+ * Если нативное удаление отменено или не удалось — бросает ошибку и данные приложения не трогает.
  */
 export async function wipeAllLocalData(s: Store | null = ls()): Promise<number> {
   let n = await wipeNativeKeys();

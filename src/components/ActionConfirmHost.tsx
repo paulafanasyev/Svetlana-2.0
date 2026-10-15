@@ -1,8 +1,9 @@
 // Окно подтверждения действий, предложенных нейросетью или распознанных голосом.
-// Показывает точные параметры; по умолчанию фокус на «Отмена», Esc — отмена.
+// Показывает точные параметры; по умолчанию фокус на «Отмена», Esc и системная кнопка «Назад» телефона — отмена.
 import { useEffect, useRef, useState } from 'react';
 import { ShieldAlert } from 'lucide-react';
 import { setActionConfirmer, type ActionSummary } from '../services/security/ActionGate';
+import { onBack } from '../services/BackStack';
 
 interface Pending { summary: ActionSummary; resolve: (ok: boolean) => void }
 
@@ -29,6 +30,9 @@ export default function ActionConfirmHost() {
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   });
+
+  // «Назад» на телефоне отменяет текущее действие (окно подтверждения всегда поверх остальных).
+  useEffect(() => (current ? onBack(() => answer(false)) : undefined), [current]);
 
   if (!current) return null;
   const s = current.summary;

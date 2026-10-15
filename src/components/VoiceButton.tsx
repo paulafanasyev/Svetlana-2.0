@@ -1,5 +1,6 @@
 // Глобальная кнопка «Голос»: команды бизнеса и CRM голосом с любого экрана + настройки распознавания и озвучки.
 // В Android слушает распознавание самого телефона (ключ не нужен), в браузере и Windows — как раньше.
+// Панель настроек закрывается системной кнопкой «Назад» телефона.
 import { useEffect, useRef, useState } from 'react';
 import { Mic, MicOff, Settings2, X, Volume2, VolumeX } from 'lucide-react';
 import { sttSupport, getCloudStt, setCloudStt, resetWebStt, STT_PRESETS, type Listener } from '../services/voice/SpeechEngine';
@@ -9,6 +10,7 @@ import { normalizeSpoken } from '../services/voice/VoiceText';
 import { speakText, stopSpeaking, isMuted, setMuted, ttsAvailable } from '../services/voice/Tts';
 import { detectCRMIntent, runCRMActions } from '../services/crm/CRMTools';
 import { isAndroidApp } from '../platform';
+import { onBack } from '../services/BackStack';
 
 const input = 'w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-indigo-500/50';
 
@@ -99,6 +101,8 @@ function VoiceSettings({ onClose }: { onClose: () => void }) {
   const [muted, setMutedState] = useState(isMuted());
   const [msg, setMsg] = useState<string | null>(null);
   const s = sttSupport();
+
+  useEffect(() => onBack(onClose), []);
 
   const save = () => {
     setCloudStt(key.trim() ? { baseUrl: p.baseUrl, apiKey: key, model: p.model } : null);
