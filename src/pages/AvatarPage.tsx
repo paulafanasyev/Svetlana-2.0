@@ -231,7 +231,7 @@ export default function AvatarPage() {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-3">
           <Sparkles className="w-6 h-6 text-pink-400" />
@@ -270,7 +270,7 @@ export default function AvatarPage() {
         </motion.div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Chat Interface — на телефоне первым, чтобы сразу можно было писать */}
         <div className="lg:col-span-2 lg:order-2">
           <div className="glass-card rounded-2xl overflow-hidden h-full flex flex-col">
@@ -397,16 +397,16 @@ export default function AvatarPage() {
           </div>
         </div>
 
-        {/* Avatar Display */}
+        {/* Avatar Display: на телефоне компактно (меньше аватар, без кнопок эмоций), главное — микрофон */}
         <div className="lg:col-span-1 lg:order-1">
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="glass-card rounded-2xl p-5 sm:p-8 flex flex-col items-center"
+            className="glass-card rounded-2xl p-4 sm:p-8 flex flex-col items-center"
           >
-            <Avatar size="xl" emotion={emotion} interactive={true} onEmotionChange={setEmotion} />
+            <Avatar size={android ? 'lg' : 'xl'} emotion={emotion} interactive={true} onEmotionChange={setEmotion} />
 
-            <div className="mt-12 flex flex-wrap justify-center gap-2">
+            <div className="mt-12 hidden sm:flex flex-wrap justify-center gap-2">
               {emotionButtons.map(btn => (
                 <button
                   key={btn.emotion}
@@ -423,7 +423,7 @@ export default function AvatarPage() {
               ))}
             </div>
 
-            <div className="mt-8 w-full">
+            <div className="mt-6 sm:mt-8 w-full">
               <VoiceControl onCommand={handleVoiceCommand} />
             </div>
           </motion.div>
@@ -469,8 +469,8 @@ export default function AvatarPage() {
         </motion.div>
       )}
 
-      {/* Emotion System */}
-      <div className="glass-card rounded-xl p-5 sm:p-6">
+      {/* Emotion System (только большой экран: на телефоне это лишняя прокрутка) */}
+      <div className="hidden sm:block glass-card rounded-xl p-5 sm:p-6">
         <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
           <Heart className="w-5 h-5 text-pink-400" />
           Система эмоций

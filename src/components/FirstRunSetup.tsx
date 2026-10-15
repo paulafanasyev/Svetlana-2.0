@@ -201,7 +201,7 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
 
         <section className="rounded-xl border border-indigo-500/40 bg-indigo-950/30 p-4 mb-4">
           <h3 className="font-semibold flex items-center gap-2"><Key className="w-4 h-4 text-indigo-300" />★ Светлана Сервер (рекомендуется)</h3>
-          <p className="text-xs text-slate-400 mt-1">Единая обученная Светлана на мир-самозанятых.рф, полный режим. Нужен ключ ASSISTANT_KEY_SVETLANA2 с сервера.
+          <p className="text-xs text-slate-400 mt-1">Единая обученная Светлана на мир-самозанятых.рф, полный режим. Нужен ключ Светланы, который вы получили от владельца сервера.
             {keyStorageHint(platform)}
           </p>
           <div className="flex gap-2 mt-3">
