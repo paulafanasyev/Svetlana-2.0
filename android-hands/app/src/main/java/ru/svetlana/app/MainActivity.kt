@@ -37,8 +37,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * в WebView по адресу https://appassets.androidplatform.net. Ключи, облако, голос и руки — через Bridge.
  *
  * WebView закрыт: без доступа к файлам и content://, без смешанного контента, с Safe Browsing, без отладки;
- * чужие адреса открываются во внешнем браузере (только https, mailto, tel), микрофон — только своей странице.
+ * чужие адреса открываются во внешнем браузере (только https, mailto, tel, sms), микрофон — только своей странице.
  * Файлы (экспорт CRM, документы, .ics) сохраняются через системное окно «Сохранить как»: место выбирает человек.
+ * Системная кнопка «Назад» сначала закрывает открытое окно страницы (CRM, мастер настройки), и только потом выходит.
  */
 class MainActivity : Activity() {
     companion object {
@@ -48,6 +49,8 @@ class MainActivity : Activity() {
         private const val REQ_FILE = 42
         private const val REQ_SAVE = 43
         private const val CONFIRM_TIMEOUT_MIN = 3L
+        /** Спросить страницу: есть ли что закрыть по «Назад» (src/services/BackStack.ts). */
+        private const val BACK_JS = "(function(){try{var f=window.__svetlanaBack;return typeof f==='function'&&f()===true;}catch(e){return false;}})()"
         private const val OUTDATED = "<html><body style='font-family:sans-serif;padding:24px;background:#0b1020;color:#fff'>" +
             "<h2>Обновите Android System WebView</h2>" +
             "<p>Светлане нужен свежий компонент WebView (или Chrome). Обновите его в Google Play и откройте приложение снова.</p>" +
@@ -305,12 +308,20 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (::web.isInitialized && web.canGoBack()) {
-            web.goBack()
-        } else {
-            @Suppress("DEPRECATION")
-            super.onBackPressed()
+        if (!::web.isInitialized || bridge == null) {
+            systemBack()
+            return
         }
+        // Сначала страница: открытое окно (CRM, Бизнес, Кабинет, мастер настройки) закрывается, а не всё приложение.
+        web.evaluateJavascript(BACK_JS) { r ->
+            if (r == "true" || isFinishing || isDestroyed) return@evaluateJavascript
+            if (web.canGoBack()) web.goBack() else systemBack()
+        }
+    }
+
+    private fun systemBack() {
+        @Suppress("DEPRECATION")
+        super.onBackPressed()
     }
 
     override fun onPause() {

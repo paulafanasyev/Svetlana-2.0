@@ -1,7 +1,7 @@
 // Файлы и полное удаление ключей в приложении для Android.
 // В Android WebView ссылка <a download href="blob:…"> ничего не скачивает. Поэтому на телефоне такие клики
 // (экспорт CRM, книга доходов, документы, .ics) уходят в нативное окно «Сохранить как» — код страниц
-// не меняется и одинаков на сайте, в Windows и в Android.
+// не меняется и одинаков на сайте, в Windows и в Android. Перехват ставится в main.tsx до первого рендера.
 import { isAndroidApp } from '../platform';
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -12,6 +12,9 @@ const inv = (): Invoke | null => {
 
 export const SAVE_MIMES = ['text/csv', 'application/json', 'text/html', 'text/calendar', 'text/plain'] as const;
 export const MAX_SAVE_CHARS = 2_500_000;
+/** Символ UTF-8 — не больше 4 байт: больший blob отклоняем, даже не читая его в память. */
+export const MAX_SAVE_BYTES = MAX_SAVE_CHARS * 4;
+export const TOO_BIG = 'Файл слишком большой';
 
 /** Сохранить текстовый файл через системное окно телефона. true — сохранён, false — отменено. */
 export async function androidSaveFile(name: string, mime: string, text: string): Promise<boolean> {
@@ -19,11 +22,14 @@ export async function androidSaveFile(name: string, mime: string, text: string):
   if (!f) throw new Error('Доступно только в приложении для Android');
   const base = mime.split(';')[0].trim().toLowerCase();
   if (!(SAVE_MIMES as readonly string[]).includes(base)) throw new Error('Этот тип файла нельзя сохранить');
-  if (text.length > MAX_SAVE_CHARS) throw new Error('Файл слишком большой');
+  if (text.length > MAX_SAVE_CHARS) throw new Error(TOO_BIG);
   return (await f('save_file', { name: String(name).slice(0, 100), mime: base, text })) === true;
 }
 
-/** Удалить все ключи ИИ и сам ключ шифрования в Android Keystore (одно нативное подтверждение). */
+/**
+ * Удалить все ключи ИИ и сам ключ шифрования в Android Keystore (одно нативное подтверждение).
+ * «Отмена» в окне телефона — ошибка: вызывающий ничего другого удалять не должен.
+ */
 export async function androidWipeSecrets(): Promise<number> {
   const f = inv();
   if (!f) return 0;
@@ -54,8 +60,10 @@ export function installAndroidDownloads(): void {
     const blob = this.download && this.href.startsWith('blob:') ? blobs.get(this.href) : undefined;
     if (!blob) return click.call(this);
     const name = this.download;
+    const alertError = (e: unknown) => { try { window.alert(String((e as any)?.message ?? e)); } catch { /* noop */ } };
+    if (blob.size > MAX_SAVE_BYTES) { alertError(TOO_BIG); return; }
     void blob.text()
       .then(text => androidSaveFile(name, blob.type || 'text/plain', text))
-      .catch(e => { try { window.alert(String((e as any)?.message ?? e)); } catch { /* noop */ } });
+      .catch(alertError);
   };
 }
