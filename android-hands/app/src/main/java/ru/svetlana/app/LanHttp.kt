@@ -13,7 +13,7 @@ import java.net.Socket
  * и мост Svetlana-home. Страница открыта по https и сама не может ходить по http, поэтому запрос делает нативная часть.
  *
  * - только IP домашней сети (10.x, 172.16–31.x, 192.168.x) или этот телефон (127.x, localhost), без DNS: адрес не подменить;
- * - только GET и POST с JSON, без перенаправлений и куки, размер и частота ограничены;
+ * - только GET и POST с JSON, без перенаправлений и куки, размер (до 8 МБ, как у облака) и частота ограничены;
  * - отправка данных (POST) на новый адрес только после нативного подтверждения; разрешённые адреса
  *   стираются вместе с ключами (secret_wipe_all). GET (список моделей, состояние) данных не отправляет.
  */
@@ -21,7 +21,7 @@ object LanHttp {
     private const val PREFS = "svetlana_lan_v1"
     private const val KEY = "allowed"
     const val MAX_BODY = 2 * 1024 * 1024
-    const val MAX_RESPONSE = 20 * 1024 * 1024
+    const val MAX_RESPONSE = 8 * 1024 * 1024
     private const val MAX_LINE = 16 * 1024
     private const val MAX_HEADERS = 100
     private const val CONNECT_MS = 5_000
@@ -29,6 +29,7 @@ object LanHttp {
     private const val PER_MINUTE = 120
     const val BAD = "Адрес должен быть в домашней сети или на этом телефоне, например http://192.168.1.10:11434"
     private const val BAD_REPLY = "Устройство ответило непонятно"
+    private const val TOO_BIG = "Слишком большой ответ устройства"
     private val URL_RE = Regex("^http://((?:\\d{1,3}\\.){3}\\d{1,3}|localhost)(?::(\\d{1,5}))?(/[A-Za-z0-9._~%/:@=+,-]*)?(\\?[A-Za-z0-9._~%/:@=&+,-]*)?$")
     private val STATUS_RE = Regex("^HTTP/1\\.[01] (\\d{3})")
     private val calls = ArrayDeque<Long>()
@@ -141,7 +142,7 @@ object LanHttp {
             val data = when {
                 chunked -> readChunked(inp)
                 length >= 0 -> {
-                    if (length > MAX_RESPONSE) throw SecureAi.Fail("Слишком большой ответ устройства")
+                    if (length > MAX_RESPONSE) throw SecureAi.Fail(TOO_BIG)
                     readExact(inp, length.toInt())
                 }
                 else -> readAll(inp)
@@ -186,7 +187,7 @@ object LanHttp {
             val r = inp.read(buf)
             if (r < 0) break
             out.write(buf, 0, r)
-            if (out.size() > MAX_RESPONSE) throw SecureAi.Fail("Слишком большой ответ устройства")
+            if (out.size() > MAX_RESPONSE) throw SecureAi.Fail(TOO_BIG)
         }
         return out.toByteArray()
     }
@@ -202,7 +203,7 @@ object LanHttp {
                 while (runCatching { line(inp) }.getOrDefault("").isNotEmpty() && ++n < MAX_HEADERS) { /* пропускаем */ }
                 break
             }
-            if (out.size() + size > MAX_RESPONSE) throw SecureAi.Fail("Слишком большой ответ устройства")
+            if (out.size() + size > MAX_RESPONSE) throw SecureAi.Fail(TOO_BIG)
             out.write(readExact(inp, size))
             line(inp)
         }
