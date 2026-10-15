@@ -3,18 +3,23 @@
 //    → пробный запрос. Ключ сохраняется один раз: если пробный запрос не прошёл, «Повторить проверку» не
 //    спрашивает ключ заново. Если сохранить ключ не удалось («Отмена» в окне подтверждения), новый провайдер
 //    убирается, чтобы не висел «выбранным» без ключа.
-// 2) Локально через Ollama: проверяем, запущена ли Ollama, и берём УЖЕ скачанную модель
+// 2) GigaChat от Сбера — бесплатно, только в приложениях (Windows и Android): та же схема «ключ → хранилище → пробный запрос».
+//    На сайте — только подсказка, что он работает в приложении.
+// 3) Локально через Ollama: проверяем, запущена ли Ollama, и берём УЖЕ скачанную модель
 //    (имя по умолчанию svetlana:latest в открытом каталоге Ollama нет, поэтому не надеемся на него).
 //    На компьютере Ollama на этом же ПК (127.0.0.1). На телефоне Ollama работает на компьютере в той же
 //    Wi-Fi сети: вводим адрес ПК (например 192.168.1.10), запросы идут через нативный lan_http.
-// На телефоне системная кнопка «Назад» закрывает мастер так же, как крестик (BackStack).
+// Крестик и системная кнопка «Назад» телефона только закрывают мастер (при следующем запуске он покажется
+// снова); считать настройку законченной без ИИ можно только явной кнопкой «Пока пропустить».
 import { useEffect, useState } from 'react';
-import { Key, HardDrive, Loader2, CheckCircle2, AlertCircle, X, Sparkles } from 'lucide-react';
-import { aiGateway } from '../services/AIGateway';
+import { Key, HardDrive, Loader2, CheckCircle2, AlertCircle, X, Sparkles, Gift } from 'lucide-react';
+import { aiGateway, GIGACHAT_WEB_ONLY } from '../services/AIGateway';
+import { explainAiError } from '../services/AiErrors';
 import { SVETLANA_CORE_ORIGIN, SVETLANA_CORE_MODEL } from '../services/SvetlanaCore';
 import { isNativeApp } from '../services/security/NativeBridge';
 import { isAndroidApp } from '../platform';
 import { onBack } from '../services/BackStack';
+import { GIGACHAT_KEY_HINT } from '../pages/AIProvidersPage';
 
 const DONE_KEY = 'svetlana_setup_done_v1';
 const OLLAMA = 'http://127.0.0.1:11434';
@@ -122,11 +127,16 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
   onOpenProviders: () => void;
 }) {
   const android = isAndroidApp();
-  const platform = android ? 'android' : isNativeApp() ? 'windows' : 'web';
+  const native = isNativeApp();
+  const platform = android ? 'android' : native ? 'windows' : 'web';
   const [key, setKey] = useState('');
   const [keySaved, setKeySaved] = useState(false);
   const [sv, setSv] = useState<Status>('idle');
   const [svError, setSvError] = useState('');
+  const [gKey, setGKey] = useState('');
+  const [gSaved, setGSaved] = useState(false);
+  const [gs, setGs] = useState<Status>('idle');
+  const [gError, setGError] = useState('');
   const [ol, setOl] = useState<Status>('idle');
   const [olError, setOlError] = useState('');
   const [models, setModels] = useState<string[]>([]);
@@ -136,11 +146,14 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
   const [olAddr, setOlAddr] = useState(android ? (savedEndpoint.includes('127.0.0.1') ? '' : savedEndpoint) : OLLAMA);
 
   const finish = () => { markSetupDone(); setTimeout(onReady, 700); };
+  // Крестик и «Назад» только закрывают: случайное нажатие не оставляет человека навсегда без ИИ.
+  const close = () => { onClose(); };
   const skip = () => { markSetupDone(); onClose(); };
   const retryOnly = keySaved && !key.trim();
+  const gRetryOnly = gSaved && !gKey.trim();
 
   // Системная кнопка «Назад» телефона = крестик «Закрыть».
-  useEffect(() => onBack(skip), []);
+  useEffect(() => onBack(close), []);
 
   /** Сохранить ключ. При неудаче нового провайдера убираем (раньше настроенного не трогаем). */
   const saveKey = async (value: string): Promise<boolean> => {
@@ -177,6 +190,38 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
     } catch (e) {
       setSv('error');
       setSvError(explainServerError(errorText(e)));
+    }
+  };
+
+  /** GigaChat: ключ авторизации → хранилище приложения → пробный запрос. Ключ сохраняется один раз. */
+  const connectGiga = async () => {
+    if (!native || gs === 'busy' || (!gKey.trim() && !gSaved)) return;
+    setGs('busy');
+    setGError('');
+    if (gKey.trim()) {
+      const existed = !!aiGateway.getProvider('gigachat');
+      try {
+        await aiGateway.addProvider({
+          id: 'gigachat', name: 'GigaChat (Сбер, бесплатно)', type: 'online',
+          endpoint: 'https://api.giga.chat/v1', model: 'GigaChat-2', enabled: true, apiKey: gKey.trim(),
+        });
+      } catch (e) {
+        if (!existed) await aiGateway.removeProvider('gigachat').catch(() => undefined);
+        setGs('error');
+        setGError(explainKeySaveError(errorText(e)));
+        return;
+      }
+      setGKey('');
+      setGSaved(true);
+    }
+    try {
+      aiGateway.setActiveProvider('gigachat');
+      await aiGateway.chat([{ role: 'user', content: PING }], { max_tokens: 50 }, 'gigachat');
+      setGs('ok');
+      finish();
+    } catch (e) {
+      setGs('error');
+      setGError(explainAiError(errorText(e)));
     }
   };
 
@@ -233,7 +278,7 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
       finish();
     } catch (e) {
       setOl('error');
-      setOlError(errorText(e));
+      setOlError(explainAiError(errorText(e)));
     }
   };
 
@@ -245,14 +290,14 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" role="dialog" aria-modal="true" aria-label="Настройка ИИ">
       <div className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-900 text-white p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between mb-4">
           <div>
             <h2 className="text-xl font-bold flex items-center gap-2"><Sparkles className="w-5 h-5 text-pink-400" />Добро пожаловать в Светлану 2.0</h2>
             <p className="text-sm text-slate-400 mt-1">Выбери, через какой ИИ Светлана будет отвечать. Это можно поменять потом во вкладке «Модели ИИ».</p>
           </div>
-          <button onClick={skip} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400" title="Закрыть" aria-label="Закрыть"><X className="w-5 h-5" /></button>
+          <button onClick={close} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400" title="Закрыть" aria-label="Закрыть"><X className="w-5 h-5" /></button>
         </div>
 
         <section className="rounded-xl border border-indigo-500/40 bg-indigo-950/30 p-4 mb-4">
@@ -268,6 +313,7 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
               onKeyDown={e => e.key === 'Enter' && connectServer()}
               placeholder={keySaved ? 'ключ сохранён (можно вставить другой)' : 'ключ Светланы'}
               autoComplete="off"
+              aria-label="Ключ Светланы"
               className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-indigo-500"
               disabled={sv === 'busy'}
             />
@@ -282,9 +328,40 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
           {statusLine(sv, svError, 'Светлана ответила. Открываю чат…')}
         </section>
 
+        {/* GigaChat: бесплатно, только в приложениях Windows и Android. */}
+        <section className="rounded-xl border border-emerald-500/40 bg-emerald-950/20 p-4 mb-4" data-testid="setup-gigachat">
+          <h3 className="font-semibold flex items-center gap-2"><Gift className="w-4 h-4 text-emerald-300" />GigaChat от Сбера: бесплатно</h3>
+          <p className="text-xs text-slate-400 mt-1">Хорошо говорит по-русски, ничего устанавливать не нужно. {GIGACHAT_KEY_HINT}{native ? keyStorageHint(platform) : ''}</p>
+          {native ? (
+            <div className="flex flex-col sm:flex-row gap-2 mt-3">
+              <input
+                type="password"
+                value={gKey}
+                onChange={e => setGKey(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && connectGiga()}
+                placeholder={gSaved ? 'ключ сохранён (можно вставить другой)' : 'ключ авторизации из Studio'}
+                autoComplete="off"
+                aria-label="Ключ авторизации GigaChat"
+                className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-emerald-500"
+                disabled={gs === 'busy'}
+              />
+              <button
+                onClick={connectGiga}
+                disabled={(!gKey.trim() && !gSaved) || gs === 'busy'}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-sm font-medium flex items-center justify-center gap-2"
+              >
+                {gs === 'busy' && <Loader2 className="w-4 h-4 animate-spin" />}{gRetryOnly ? 'Повторить проверку' : 'Подключить'}
+              </button>
+            </div>
+          ) : (
+            <p className="text-xs text-amber-200 mt-2">{GIGACHAT_WEB_ONLY}</p>
+          )}
+          {statusLine(gs, gError, 'GigaChat ответил. Открываю чат…')}
+        </section>
+
         {/* Ollama: на ПК и сайте — этот компьютер, на телефоне — компьютер в той же Wi-Fi сети. */}
         <section className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-4 mb-4" data-testid="setup-ollama">
-          <h3 className="font-semibold flex items-center gap-2"><HardDrive className="w-4 h-4 text-cyan-300" />Без интернета: локальная модель через Ollama</h3>
+          <h3 className="font-semibold flex items-center gap-2"><HardDrive className="w-4 h-4 text-cyan-300" />Без интернета: локальная модель через Ollama (для опытных)</h3>
           {android ? (
             <p className="text-xs text-slate-400 mt-1">Модель работает на твоём компьютере, телефон обращается к нему по домашней Wi-Fi сети, в интернет переписка не уходит. На ПК нужна Ollama (ollama.com/download), модель («ollama pull qwen2.5:7b») и запуск с OLLAMA_HOST=0.0.0.0.</p>
           ) : (
@@ -316,6 +393,7 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
                 <select
                   value={model}
                   onChange={e => setModel(e.target.value)}
+                  aria-label="Модель Ollama"
                   className="min-w-0 px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm"
                 >
                   {models.map(m => <option key={m} value={m} className="bg-slate-900">{m}</option>)}
