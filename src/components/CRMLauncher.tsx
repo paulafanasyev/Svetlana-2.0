@@ -1,6 +1,7 @@
 // Floating button + full-screen overlay with Svetlana's CRM and Business tools, available on every page.
 // Also opens with the URL hash: #crm, #biz, #booking, #stats, #bank or #cabinet (e.g. http://tauri.localhost/#biz).
 // Одинаково на сайте, в Windows и в Android, включая «Кабинет» (телефон привязывается как устройство android).
+// В Android выгрузки файлов из этих разделов идут через системное окно «Сохранить как» (AndroidFiles).
 import { useEffect, useState } from 'react';
 import { Users, Briefcase, ShieldCheck, BarChart3, CalendarClock, UserCircle, X } from 'lucide-react';
 import CRMPage from '../pages/CRMPage';
@@ -10,8 +11,11 @@ import AnalyticsPage from '../pages/AnalyticsPage';
 import BookingPage from '../pages/BookingPage';
 import CabinetPage from '../pages/CabinetPage';
 import { startHeartbeat } from '../services/cabinet/CabinetClient';
+import { installAndroidDownloads } from '../services/AndroidFiles';
 import VoiceButton from './VoiceButton';
 import ActionConfirmHost from './ActionConfirmHost';
+
+installAndroidDownloads();
 
 type Section = 'crm' | 'biz' | 'bank' | 'stats' | 'booking' | 'cabinet';
 
