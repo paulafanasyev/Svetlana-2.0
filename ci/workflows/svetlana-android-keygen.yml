@@ -1,0 +1,109 @@
+name: svetlana-android-keygen
+# Один раз: создаёт ключ подписи Android и кладёт его ЗАШИФРОВАННЫМ архивом 7z (AES-256,
+# даже имена файлов скрыты) в артефакт на 1 день. Репозиторий публичный: артефакт может скачать
+# любой вошедший в GitHub, поэтому без пароля от архива он бесполезен.
+# Перед запуском создайте секрет SVETLANA_KEYGEN_PASSPHRASE (пароль от архива, минимум 20 символов).
+# Подробно: ci/workflows/README.md, раздел «Подпись Android».
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Напишите СОЗДАТЬ, чтобы создать новый ключ подписи"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: svetlana-keygen
+  cancel-in-progress: false
+
+jobs:
+  keygen:
+    if: github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # Защита от случайного запуска: новый ключ при уже выпущенном подписанном APK ломает обновления.
+      - name: Guard
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          PASSPHRASE: ${{ secrets.SVETLANA_KEYGEN_PASSPHRASE }}
+          EXISTING_KEY: ${{ secrets.SVETLANA_KEYSTORE_B64 }}
+        run: |
+          if [ "$CONFIRM" != "СОЗДАТЬ" ]; then
+            echo "::error::Для запуска нужно написать СОЗДАТЬ"
+            exit 1
+          fi
+          if [ "$(printf '%s' "$PASSPHRASE" | wc -m)" -lt 20 ]; then
+            echo "::error::Сначала создайте секрет SVETLANA_KEYGEN_PASSPHRASE (минимум 20 символов)"
+            exit 1
+          fi
+          if [ -n "$EXISTING_KEY" ]; then
+            echo "::error::Ключ уже настроен (секрет SVETLANA_KEYSTORE_B64). Новый ключ сломает обновления у тех, кто уже поставил подписанное приложение. Если точно нужно, сначала удалите секрет вручную."
+            exit 1
+          fi
+          command -v 7z >/dev/null || { echo "::error::На раннере нет 7z"; exit 1; }
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Generate key and encrypt
+        env:
+          PASSPHRASE: ${{ secrets.SVETLANA_KEYGEN_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          umask 077
+          work="$RUNNER_TEMP/keygen"
+          mkdir -p "$work" out
+          store_pass=$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | cut -c1-32)
+          [ "${#store_pass}" -eq 32 ] || { echo "::error::Не удалось создать пароль"; exit 1; }
+          echo "::add-mask::$store_pass"
+          alias=svetlana
+          # PKCS12: пароль ключа равен паролю хранилища, это нормально.
+          keytool -genkeypair -noprompt -keystore "$work/svetlana.jks" -storetype PKCS12 \
+            -alias "$alias" -keyalg RSA -keysize 4096 -validity 10000 \
+            -dname "CN=Svetlana 2.0, O=Svetlana, C=RU" \
+            -storepass "$store_pass" -keypass "$store_pass" >/dev/null 2>&1
+          fp=$(keytool -list -v -keystore "$work/svetlana.jks" -storepass "$store_pass" | grep -m1 'SHA256:' | sed 's/^[[:space:]]*SHA256:[[:space:]]*//')
+          [ -n "$fp" ] || { echo "::error::Ключ не создан"; exit 1; }
+
+          base64 -w0 "$work/svetlana.jks" > "$work/SVETLANA_KEYSTORE_B64.txt"
+          printf '%s' "$store_pass" > "$work/SVETLANA_KEYSTORE_PASSWORD.txt"
+          printf '%s' "$alias" > "$work/SVETLANA_KEY_ALIAS.txt"
+          printf '%s' "$store_pass" > "$work/SVETLANA_KEY_PASSWORD.txt"
+          printf '%s\n' "$fp" > "$work/fingerprint-sha256.txt"
+          cat > "$work/README.txt" <<'TXT'
+          Ключ подписи «Светлана 2.0» для Android.
+
+          1. GitHub -> Settings -> Secrets and variables -> Actions -> New repository secret.
+             Создайте 4 секрета: имя = имя файла без .txt, значение = содержимое файла
+             (SVETLANA_KEYSTORE_B64, SVETLANA_KEYSTORE_PASSWORD, SVETLANA_KEY_ALIAS, SVETLANA_KEY_PASSWORD).
+          2. Удалите секрет SVETLANA_KEYGEN_PASSPHRASE и артефакт со страницы запуска.
+          3. Храните svetlana.jks и пароль в двух надёжных местах (менеджер паролей + флешка).
+             Потеряете ключ: обновления поверх установленного приложения ставить будет нельзя.
+          4. fingerprint-sha256.txt не секрет: по нему можно проверить, что APK подписан именно этим ключом.
+          TXT
+          sed -i 's/^          //' "$work/README.txt"
+
+          (cd "$work" && 7z a -t7z -mhe=on -mx=9 -p"$PASSPHRASE" "$GITHUB_WORKSPACE/out/svetlana-android-key.7z" . >/dev/null)
+          7z t -p"$PASSPHRASE" out/svetlana-android-key.7z >/dev/null
+          # Ничего незашифрованного не остаётся на раннере.
+          find "$work" -type f -exec shred -u {} +
+          rm -rf "$work"
+          {
+            echo "### Ключ подписи создан"
+            echo "Артефакт **svetlana-android-key-encrypted** (7z, пароль = секрет SVETLANA_KEYGEN_PASSPHRASE) хранится 1 день."
+            echo "Отпечаток SHA-256 (не секрет): \`$fp\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload encrypted key
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: svetlana-android-key-encrypted
+          path: out/svetlana-android-key.7z
+          if-no-files-found: error
+          retention-days: 1
