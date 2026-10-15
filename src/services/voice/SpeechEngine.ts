@@ -3,7 +3,8 @@
 // В окне приложения на Windows (WebView2) встроенное распознавание обычно недоступно, поэтому при
 // ошибке «network»/«not-allowed» переключаемся на облако, если оно настроено. В приложении для Android слушает
 // распознавание речи самого телефона (режим «native»), а с записанным голосом — запись с микрофона,
-// которую распознаёт GigaAM на самом телефоне или облако (listenRecorded): тогда голос проверяется как на компьютере.
+// которую распознаёт GigaAM на самом телефоне или облако (listenRecorded): тогда голос проверяется как на компьютере,
+// причём по той же записи, из которой распознан текст (onAudio).
 
 import { getSecret, setSecret } from '../security/SecretStore';
 import { isAndroidApp } from '../../platform';
@@ -138,6 +139,8 @@ export interface ListenOptions {
   continuous?: boolean;
   onPartial?: (text: string) => void;
   onFinal: (text: string) => void;
+  /** Только listenRecorded: звук фразы, из которого распознан текст. Вызывается сразу перед onFinal. */
+  onAudio?: (pcm: Float32Array, sampleRate: number) => void;
   onError?: (message: string) => void;
   onEnd?: () => void;
 }
@@ -286,6 +289,7 @@ function concat(parts: Float32Array[], length: number): Float32Array {
 /**
  * Слушать записью: микрофон → фразы по паузам → распознавание на устройстве или в облаке. Так слушает
  * телефон с записанным голосом: распознавание телефона занимает микрофон само и сверить голос не даёт.
+ * Перед каждым onFinal отдаёт через onAudio именно тот звук, из которого распознан текст.
  * continuous — слушать, пока не остановят (режим «Светлана, …» без рук).
  */
 export function listenRecorded(opts: ListenOptions, rec = recordedRecognizer()): Listener | null {
@@ -307,6 +311,7 @@ export function listenRecorded(opts: ListenOptions, rec = recordedRecognizer()):
   let segLen = 0;
   let voicedMs = 0;
   let rate = 16000;
+  let waitingSince = Date.now(); // с какого момента ждём речь (для одной команды)
 
   const release = () => {
     if (proc) proc.onaudioprocess = null;
@@ -333,7 +338,7 @@ export function listenRecorded(opts: ListenOptions, rec = recordedRecognizer()):
       .then(t => {
         const text = String(t ?? '').trim();
         if (ended) return;
-        if (text) opts.onFinal(text);
+        if (text) { opts.onAudio?.(pcm, sr); opts.onFinal(text); }
         else if (!continuous) opts.onError?.(NOT_HEARD);
       }, e => {
         if (ended) return;
@@ -348,13 +353,13 @@ export function listenRecorded(opts: ListenOptions, rec = recordedRecognizer()):
       });
   };
 
-  /** Закончить текущую фразу: если в ней была речь — распознать. */
+  /** Закончить текущую фразу: если в ней была речь — распознать, короткий шум — выбросить и ждать дальше. */
   const flush = () => {
     if (!seg) return;
     const pcm = concat(seg, segLen);
     const voiced = voicedMs;
     seg = null; segLen = 0; voicedMs = 0;
-    if (voiced < VAD.minVoicedMs) return;
+    if (voiced < VAD.minVoicedMs) { waitingSince = Date.now(); return; }
     if (!continuous) { stopped = true; release(); }
     recognize(pcm, rate);
   };
@@ -378,8 +383,7 @@ export function listenRecorded(opts: ListenOptions, rec = recordedRecognizer()):
       let preLen = 0;
       const preMax = rate * VAD.preRollMs / 1000;
       let silence = 0;
-      let heard = false;
-      const startedAt = Date.now();
+      waitingSince = Date.now();
       proc.onaudioprocess = e => {
         if (stopped || ended) return;
         const chunk = new Float32Array(e.inputBuffer.getChannelData(0));
@@ -390,12 +394,13 @@ export function listenRecorded(opts: ListenOptions, rec = recordedRecognizer()):
         if (!seg) {
           if (loud) {
             seg = [...pre, chunk]; segLen = preLen + chunk.length;
-            pre.length = 0; preLen = 0; silence = 0; voicedMs = ms; heard = true;
+            pre.length = 0; preLen = 0; silence = 0; voicedMs = ms;
             return;
           }
           pre.push(chunk); preLen += chunk.length;
           while (pre.length > 1 && preLen - pre[0].length >= preMax) preLen -= pre.shift()!.length;
-          if (!continuous && !heard && Date.now() - startedAt > VAD.noSpeechMs) {
+          // Одна команда: если речи нет 8 секунд (или был только короткий шум) — микрофон отпускаем.
+          if (!continuous && Date.now() - waitingSince > VAD.noSpeechMs) {
             opts.onError?.(NOT_HEARD);
             stopped = true;
             maybeEnd();
