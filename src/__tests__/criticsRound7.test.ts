@@ -31,7 +31,12 @@ describe('printing on the phone', () => {
   it('one print window at a time, and a stuck document gives up', () => {
     expect(main).toContain('if (printView != null) { done(false, PRINT_BUSY); return }');
     expect(main).toContain('PRINT_LOAD_TIMEOUT_MS = 15_000L');
-    expect(main).not.toContain('printView?.destroy()\n        val v = WebView(this)');
+    expect(main).not.toContain('printView?.destroy()');
+  });
+
+  it('the print WebView is destroyed exactly once, also on app close', () => {
+    expect(main).toContain('releasePrint = release');
+    expect(main).toMatch(/override fun onDestroy\(\) \{[\s\S]*releasePrint\?\.invoke\(\)[\s\S]*super\.onDestroy\(\)/);
   });
 
   it('the print document stays locked down', () => {

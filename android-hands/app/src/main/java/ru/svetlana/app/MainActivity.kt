@@ -119,6 +119,8 @@ class MainActivity : Activity() {
     private var pendingSave: PendingSave? = null
     /** WebView документа для печати: живёт, пока открыто системное окно печати (только главный поток). */
     private var printView: WebView? = null
+    /** Единственный путь освобождения printView (окно печати закрыто, таймаут, ошибка или onDestroy): destroy ровно один раз. */
+    private var releasePrint: (() -> Unit)? = null
     private val permWaiters = HashMap<String, ArrayList<(Boolean) -> Unit>>()
     private val confirmLock = Any()
     /** Открытое окно подтверждения (только главный поток). */
@@ -312,9 +314,11 @@ class MainActivity : Activity() {
             if (!released) {
                 released = true
                 if (printView === v) printView = null
+                releasePrint = null
                 v.destroy()
             }
         }
+        releasePrint = release
         v.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
 
@@ -486,7 +490,9 @@ class MainActivity : Activity() {
         PERM_CODES.keys.forEach { drainWaiters(it, false) }
         pendingSave?.done?.invoke(false, "Приложение закрыто")
         pendingSave = null
-        printView?.destroy()
+        // Тот же путь, что и для закрытого окна печати: поздний onFinish уже ничего не уничтожит повторно.
+        releasePrint?.invoke()
+        releasePrint = null
         printView = null
         bridge?.close()
         bridge = null
