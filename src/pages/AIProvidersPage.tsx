@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { aiGateway, type AIProvider } from '../services/AIGateway';
+import { aiGateway, GIGACHAT_WEB_ONLY, type AIProvider } from '../services/AIGateway';
 import { SVETLANA_CORE_ORIGIN, SVETLANA_CORE_MODEL } from '../services/SvetlanaCore';
 import { isNativeApp } from '../services/security/NativeBridge';
 import { isAndroidApp, secureStoreName } from '../platform';
@@ -26,6 +26,9 @@ export function keyStoredText(): string {
 /** Подсказка к адресу локальной модели на телефоне: компьютер в домашней сети. */
 export const PHONE_LOCAL_HINT = 'На телефоне укажите адрес компьютера в домашней Wi‑Fi сети, например http://192.168.1.10:11434 (IP видно в Windows: «Параметры → Сеть»). На компьютере Ollama должна слушать сеть: setx OLLAMA_HOST 0.0.0.0 и перезапустить Ollama. При первом запросе телефон спросит разрешение.';
 
+/** Как получить бесплатный ключ GigaChat. */
+export const GIGACHAT_KEY_HINT = 'Бесплатно для физлиц: откройте developers.sber.ru/studio → войдите через СберID → создайте проект «GigaChat API» → «Настройки API» → «Получить ключ» и скопируйте «Ключ авторизации» сюда. На бесплатном тарифе самый большой запас у модели GigaChat-2.';
+
 // ==================== PRESET PROVIDERS ====================
 const PRESET_PROVIDERS: Omit<AIProvider, 'enabled' | 'apiKey'>[] = [
   // Offline Local Engines
@@ -36,6 +39,8 @@ const PRESET_PROVIDERS: Omit<AIProvider, 'enabled' | 'apiKey'>[] = [
   // Online Cloud APIs
   // Единая Светлана на своём сервере: одна обученная ИИ для всех сайтов, здесь — полный режим (код и команда).
   { id: 'svetlana', name: '★ Светлана Сервер (единая)', type: 'online', endpoint: SVETLANA_CORE_ORIGIN, model: SVETLANA_CORE_MODEL },
+  // GigaChat от Сбера: бесплатный тариф для физлиц, хорошо знает русский. Работает в приложениях Windows и Android.
+  { id: 'gigachat', name: 'GigaChat (Сбер, бесплатно)', type: 'online', endpoint: 'https://api.giga.chat/v1', model: 'GigaChat-2' },
   { id: 'openai', name: 'OpenAI (GPT-4o)', type: 'online', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
   { id: 'anthropic', name: 'Anthropic (Claude 3.5)', type: 'online', endpoint: 'https://api.anthropic.com/v1', model: 'claude-3-5-sonnet-20241022' },
   { id: 'groq', name: 'Groq (Ультрабыстрый)', type: 'online', endpoint: 'https://api.groq.com/openai/v1', model: 'llama-3.1-70b-versatile' },
@@ -56,6 +61,7 @@ const POPULAR_OFFLINE_MODELS = [
 
 const MODEL_OPTIONS: Record<string, string[]> = {
   svetlana: [SVETLANA_CORE_MODEL],
+  gigachat: ['GigaChat-2', 'GigaChat-2-Pro', 'GigaChat-2-Max'],
   openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
   anthropic: ['claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307', 'claude-3-opus-20240229'],
   google: ['gemini-1.5-pro', 'gemini-1.5-flash'],
@@ -68,6 +74,9 @@ const MODEL_OPTIONS: Record<string, string[]> = {
   llamacpp: ['local-model'],
   vllm: ['local-model'],
 };
+
+/** GigaChat работает только в приложениях (на сайте браузер к нему не подключится). */
+const appsOnly = (id: string) => id === 'gigachat' && !isNativeApp();
 
 // ==================== CONFIG MODAL ====================
 function ConfigModal({ provider, onSave, onClose }: {
@@ -84,6 +93,8 @@ function ConfigModal({ provider, onSave, onClose }: {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const isCore = provider.id === 'svetlana';
+  const isGiga = provider.id === 'gigachat';
+  const blocked = appsOnly(provider.id);
   const phoneLocal = isAndroidApp() && provider.type === 'offline';
 
   // Системная кнопка «Назад» телефона = «Отмена».
@@ -151,28 +162,39 @@ function ConfigModal({ provider, onSave, onClose }: {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h3 className="text-lg font-semibold">{provider.name}</h3>
-            <p className="text-xs text-slate-400">{provider.type === 'offline' ? (phoneLocal ? 'Локальная модель на вашем компьютере (домашняя сеть)' : 'Офлайн / Локальный движок') : isCore ? 'Единая Светлана на своём сервере (мир-самозанятых.рф)' : 'Внешний облачный ИИ'}</p>
+            <p className="text-xs text-slate-400">{provider.type === 'offline' ? (phoneLocal ? 'Локальная модель на вашем компьютере (домашняя сеть)' : 'Офлайн / Локальный движок') : isCore ? 'Единая Светлана на своём сервере (мир-самозанятых.рф)' : isGiga ? 'Облачный ИИ Сбера, бесплатный тариф' : 'Внешний облачный ИИ'}</p>
           </div>
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400" aria-label="Закрыть">
             <X className="w-5 h-5" />
           </button>
         </div>
 
+        {blocked && (
+          <p data-testid="gigachat-apps-only" className="mb-4 rounded-lg p-3 border border-amber-500/30 bg-amber-950/20 text-xs text-amber-200">{GIGACHAT_WEB_ONLY}</p>
+        )}
+
         <div className="space-y-4">
           {provider.type === 'online' && (
             <div>
-              <label className="text-sm text-slate-300 mb-1 block">{isCore ? 'Ключ Светланы' : 'Ключ API (API Key)'}</label>
+              <label className="text-sm text-slate-300 mb-1 block">{isCore ? 'Ключ Светланы' : isGiga ? 'Ключ авторизации (Authorization key)' : 'Ключ API (API Key)'}</label>
               <div className="relative">
                 <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                 <input
                   type="password"
                   value={apiKey}
                   onChange={e => { setApiKey(e.target.value); setSaved(false); }}
-                  placeholder={isCore ? 'ключ Светланы' : 'sk-...'}
+                  placeholder={isCore ? 'ключ Светланы' : isGiga ? 'ключ авторизации из Studio' : 'sk-...'}
                   autoComplete="off"
-                  className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-indigo-500"
+                  disabled={blocked}
+                  className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-50"
                 />
               </div>
+              {isGiga && (
+                <p data-testid="gigachat-key-hint" className="text-xs text-slate-300 mt-1.5">
+                  {GIGACHAT_KEY_HINT}{' '}
+                  <a href="https://developers.sber.ru/studio" target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline">Открыть Studio</a>
+                </p>
+              )}
               <p data-testid="key-storage" className="text-xs text-slate-400 mt-1.5">
                 {isCore ? 'Ключ выдаёт владелец сервера Светланы. ' : ''}{keyStoredText()}
               </p>
@@ -187,7 +209,7 @@ function ConfigModal({ provider, onSave, onClose }: {
                 type="text"
                 value={endpoint}
                 onChange={e => { setEndpoint(e.target.value); setSaved(false); }}
-                readOnly={isCore}
+                readOnly={isCore || isGiga}
                 inputMode={phoneLocal ? 'url' : undefined}
                 placeholder={phoneLocal ? 'http://192.168.1.10:11434' : undefined}
                 className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-sm font-mono focus:outline-none focus:border-indigo-500"
@@ -213,8 +235,8 @@ function ConfigModal({ provider, onSave, onClose }: {
 
           <button
             onClick={handleTest}
-            disabled={testStatus === 'testing' || saving}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-750 text-sm font-medium transition-colors"
+            disabled={testStatus === 'testing' || saving || blocked}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-750 text-sm font-medium transition-colors disabled:opacity-50"
           >
             {testStatus === 'testing' ? (
               <>
@@ -250,7 +272,7 @@ function ConfigModal({ provider, onSave, onClose }: {
           </button>
           <button
             onClick={handleSave}
-            disabled={saving || testStatus === 'testing'}
+            disabled={saving || testStatus === 'testing' || blocked}
             className="flex-1 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium flex items-center justify-center gap-2"
           >
             {saving && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -317,7 +339,7 @@ export default function AIProvidersPage() {
           </h2>
           <p className="text-sm text-slate-400 mt-1">
             {android
-              ? 'На телефоне Светлана отвечает через свой сервер, облачные ИИ или локальную модель на вашем компьютере в домашней сети (Ollama, LM Studio).'
+              ? 'На телефоне Светлана отвечает через свой сервер, облачные ИИ (в том числе бесплатный GigaChat) или локальную модель на вашем компьютере в домашней сети (Ollama, LM Studio).'
               : 'Переключайтесь между локальными офлайн-моделями на вашем ПК и мощными облачными ИИ.'}
           </p>
         </div>
@@ -372,7 +394,7 @@ export default function AIProvidersPage() {
           }`}
         >
           <Cloud className="w-4 h-4" />
-          {android ? 'Светлана Сервер и облачные ИИ' : 'Внешние облачные ИИ (OpenAI, Claude, Groq...)'}
+          {android ? 'Светлана Сервер и облачные ИИ' : 'Внешние облачные ИИ (GigaChat, OpenAI, Claude...)'}
         </button>
       </div>
 
@@ -520,6 +542,7 @@ export default function AIProvidersPage() {
             {PRESET_PROVIDERS.filter(p => p.type === 'online').map(p => {
               const configured = providers.find(ep => ep.id === p.id);
               const isSelected = activeProvider?.id === p.id;
+              const blocked = appsOnly(p.id);
 
               return (
                 <div
@@ -540,7 +563,9 @@ export default function AIProvidersPage() {
                         <span className="text-[11px] font-mono text-slate-400">{configured?.model || p.model}</span>
                       </div>
                     </div>
-                    {configured?.apiKey ? (
+                    {blocked ? (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">В приложении</span>
+                    ) : configured?.apiKey ? (
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">Ключ есть</span>
                     ) : (
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">Не настроен</span>
@@ -548,7 +573,7 @@ export default function AIProvidersPage() {
                   </div>
 
                   <div className="flex gap-2 pt-2 border-t border-slate-800">
-                    {configured && (
+                    {configured && !blocked && (
                       <button
                         onClick={() => handleSelectActive(p.id)}
                         className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
@@ -565,7 +590,7 @@ export default function AIProvidersPage() {
                       className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs flex items-center gap-1"
                     >
                       <Settings className="w-3.5 h-3.5" />
-                      {configured ? 'Изменить' : 'Подключить'}
+                      {blocked ? 'Подробнее' : configured ? 'Изменить' : 'Подключить'}
                     </button>
                   </div>
                 </div>
