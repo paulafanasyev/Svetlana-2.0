@@ -8,10 +8,21 @@ on:
       - "index.html"
       - "package.json"
       - "package-lock.json"
+      - "vite.config.*"
+      - "csp.mjs"
+      - "src-tauri/tauri.conf.json"
       - ".github/workflows/svetlana-android.yml"
   pull_request:
     paths:
       - "android-hands/**"
+      - "src/**"
+      - "public/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.*"
+      - "csp.mjs"
+      - "src-tauri/tauri.conf.json"
       - ".github/workflows/svetlana-android.yml"
   workflow_dispatch: {}
 
@@ -26,6 +37,8 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
     defaults:
       run:
         working-directory: android-hands
@@ -56,15 +69,16 @@ jobs:
           name: android-unit-test-report
           path: android-hands/app/build/reports/tests/
           retention-days: 7
+      # Отладочный APK только для проверок (артефакт запуска), в Releases он никогда не попадает.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: svetlana-hands-debug
           path: android-hands/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      # Подписанный релиз, если в секретах репозитория есть ключ (см. ci/workflows/README.md). Иначе в Releases
-      # уходит тот же отладочный APK, что и раньше. Секреты доступны только в push основных веток.
-      - name: Release signing key (optional)
+      # В Releases идёт только подписанный релиз (ключ в секретах, см. ci/workflows/README.md). Без ключа
+      # публикация пропускается с предупреждением. Секреты доступны только в push основных веток.
+      - name: Release signing key
         id: sign
         if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main')
         env:
@@ -79,29 +93,22 @@ jobs:
             echo "SVETLANA_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
             echo "signed=true" >> "$GITHUB_OUTPUT"
           else
+            echo "::warning::Нет ключа подписи: APK в Releases не публикуется (отладочный туда не идёт). См. ci/workflows/README.md"
             echo "signed=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Signed release APK
         if: steps.sign.outputs.signed == 'true'
-        working-directory: android-hands
         env:
           SVETLANA_KEYSTORE_PASSWORD: ${{ secrets.SVETLANA_KEYSTORE_PASSWORD }}
           SVETLANA_KEY_ALIAS: ${{ secrets.SVETLANA_KEY_ALIAS }}
           SVETLANA_KEY_PASSWORD: ${{ secrets.SVETLANA_KEY_PASSWORD }}
-        run: gradle assembleRelease --no-daemon
-      - name: Pick APK for Releases
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main')
-        working-directory: android-hands
         run: |
+          gradle assembleRelease --no-daemon
           mkdir -p ../release-apk
-          if [ "${{ steps.sign.outputs.signed }}" = "true" ]; then
-            cp app/build/outputs/apk/release/app-release.apk ../release-apk/Svetlana-2.0-Android.apk
-          else
-            cp "$(ls app/build/outputs/apk/debug/*.apk | head -n 1)" ../release-apk/Svetlana-2.0-Android.apk
-          fi
+          cp app/build/outputs/apk/release/app-release.apk ../release-apk/Svetlana-2.0-Android.apk
           rm -f "$RUNNER_TEMP/release.jks"
       - name: Upload APK for Releases
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main')
+        if: steps.sign.outputs.signed == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: svetlana-apk-release
@@ -110,10 +117,10 @@ jobs:
           retention-days: 14
 
   # Публикация в тот же релиз app-v<версия>, что и Windows: на него ведёт «Скачать APK» на сайте.
-  # Версия из того же tauri.conf.json и одна очередь svetlana-release на все ветки: один тег, без гонки.
+  # Только подписанный APK. Версия из того же tauri.conf.json и одна очередь svetlana-release на все ветки.
   release:
     needs: build
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main') && needs.build.outputs.signed == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:

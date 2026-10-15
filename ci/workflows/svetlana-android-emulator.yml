@@ -10,10 +10,25 @@ on:
     paths:
       - "android-hands/**"
       - "src/**"
+      - "public/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.*"
+      - "csp.mjs"
+      - "src-tauri/tauri.conf.json"
       - ".github/workflows/svetlana-android-emulator.yml"
   pull_request:
     paths:
       - "android-hands/**"
+      - "src/**"
+      - "public/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.*"
+      - "csp.mjs"
+      - "src-tauri/tauri.conf.json"
       - ".github/workflows/svetlana-android-emulator.yml"
 
 permissions:
@@ -62,13 +77,14 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: bash android-hands/scripts/emulator-smoke.sh
-      - name: Verify screenshot and logcat evidence
+      - name: Verify screenshot, logcat and screen tree
         if: success()
         run: |
           test -s smoke/screen.png
           signature=$(od -An -tx1 -N8 smoke/screen.png | tr -d ' \n')
           test "$signature" = "89504e470d0a1a0a"
           test -s smoke/logcat.txt
+          grep -q 'package="ru.svetlana.app"' smoke/ui.xml
       - name: Upload screenshot and logcat
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -10,6 +10,18 @@ val repoRoot: File = rootProject.projectDir.parentFile
 val webOut = layout.buildDirectory.dir("generated/web")
 val npm = if (System.getProperty("os.name").lowercase().contains("windows")) "npm.cmd" else "npm"
 
+// Версия одна на всё приложение: из src-tauri/tauri.conf.json (оттуда же берут её тег релиза и Windows).
+// versionCode = major*10000 + minor*100 + patch: растёт с каждой версией, иначе Android не примет обновление.
+val appVersion: String = run {
+    val conf = groovy.json.JsonSlurper().parse(File(repoRoot, "src-tauri/tauri.conf.json")) as Map<*, *>
+    conf["version"] as? String ?: error("В src-tauri/tauri.conf.json нет version")
+}
+val appVersionCode: Int = run {
+    val parts = appVersion.split(".").map { it.toIntOrNull() }
+    require(parts.size == 3 && parts.all { it != null && it in 0..99 }) { "Версия должна быть X.Y.Z (0..99): $appVersion" }
+    parts[0]!! * 10000 + parts[1]!! * 100 + parts[2]!!
+}
+
 // Подпись релиза: только из переменных окружения (в CI — секреты репозитория), ключ никогда не лежит в git.
 // Без них собирается как раньше (отладочный APK).
 val releaseKeystore: String? = System.getenv("SVETLANA_KEYSTORE")?.takeIf { it.isNotBlank() && File(it).isFile }
@@ -59,8 +71,8 @@ android {
         applicationId = "ru.svetlana.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 210
-        versionName = "2.1.0"
+        versionCode = appVersionCode
+        versionName = appVersion
         // Модель речи (ONNX Runtime): только архитектуры реальных телефонов и эмулятора, чтобы APK был меньше.
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
