@@ -26,6 +26,7 @@ class Bridge(private val act: MainActivity) {
         private const val MAX_SAVE_CHARS = 2_500_000
         private const val MAX_CLIP_CHARS = 100_000
         private val SAVE_MIMES = setOf("text/csv", "application/json", "text/html", "text/calendar", "text/plain")
+        const val INSTALL_BUSY = "Модель речи уже скачивается, дождитесь окончания"
 
         /** Имя файла без путей, управляющих и служебных символов. */
         fun safeFileName(raw: String): String {
@@ -70,6 +71,9 @@ class Bridge(private val act: MainActivity) {
     }
 
     private val pool = Executors.newFixedThreadPool(4)
+    /** Долгая загрузка модели речи: свой поток (не занимает общий пул) и только одна за раз. */
+    private val installer = Executors.newSingleThreadExecutor { r -> Thread(r, "svetlana-stt-install").apply { isDaemon = true } }
+    private val installBusy = AtomicBoolean(false)
     private val voice = NativeVoice(act)
     private val handsBusy = AtomicBoolean(false)
 
@@ -143,18 +147,31 @@ class Bridge(private val act: MainActivity) {
                 LanHttp.request(act, args.optString("url"), args.optString("method", "GET"), args.optString("body"), act::confirm)
             }
             "local_stt_status" -> bg(done) { LocalStt.status(act) }
-            // Загрузка долгая: в своём потоке, чтобы не занимать общий пул (статус опрашивается страницей).
-            "local_stt_install" -> Thread {
+            // Загрузка долгая: в своём потоке (статус опрашивается страницей). Повторное нажатие не запускает
+            // вторую загрузку того же файла параллельно с первой.
+            "local_stt_install" -> {
+                if (!installBusy.compareAndSet(false, true)) { done(false, INSTALL_BUSY); return }
+                val finish: Done = { ok, value -> installBusy.set(false); done(ok, value) }
                 try {
-                    LocalStt.install(act, act::confirm)
-                    done(true, null)
-                } catch (e: SecureAi.Fail) {
-                    done(false, e.message)
-                } catch (e: Exception) {
-                    done(false, e.message ?: e.javaClass.simpleName)
+                    installer.execute {
+                        try {
+                            LocalStt.install(act, act::confirm)
+                            finish(true, null)
+                        } catch (e: SecureAi.Fail) {
+                            finish(false, e.message)
+                        } catch (e: Exception) {
+                            finish(false, e.message ?: e.javaClass.simpleName)
+                        }
+                    }
+                } catch (e: RejectedExecutionException) {
+                    finish(false, "Приложение закрывается")
                 }
-            }.start()
-            "local_stt_remove" -> bg(done) { LocalStt.remove(act, act::confirm); null }
+            }
+            "local_stt_remove" -> {
+                // Не удаляем модель, пока она скачивается.
+                if (installBusy.get()) done(false, INSTALL_BUSY)
+                else bg(done) { LocalStt.remove(act, act::confirm); null }
+            }
             "local_stt_transcribe" -> bg(done) {
                 LocalStt.transcribe(act, LocalStt.decodePcm16(args.optString("pcm16")), args.optInt("sampleRate"))
             }
@@ -218,5 +235,7 @@ class Bridge(private val act: MainActivity) {
     fun close() {
         voice.close()
         pool.shutdownNow()
+        // Идущая загрузка дойдёт до конца сама (поток фоновый), новые не принимаются.
+        installer.shutdown()
     }
 }
