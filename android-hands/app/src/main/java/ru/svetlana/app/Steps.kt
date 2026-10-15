@@ -128,6 +128,11 @@ object Steps {
             return true to "подождала"
         }
         val hands = HandsService.instance ?: return false to "руки выключены: включите «Светлана: руки» в настройках → Специальные возможности"
+        // В окне самой Светланы руки не нажимают и не печатают: иначе ИИ мог бы сам нажать «ОК»
+        // в окне подтверждения (ключ, отправка в облако, новые шаги).
+        if ((s is Step.Tap || s is Step.Type || s is Step.Scroll) && hands.currentApp() == ctx.packageName) {
+            return false to "на экране сама Светлана: здесь руки ничего не нажимают, чтобы никто не подтвердил окна за вас"
+        }
         return when (s) {
             is Step.Tap -> if (hands.tap(s.target)) true to "нажала «${s.target}»" else false to "не нашла «${s.target}» на экране"
             is Step.Type -> if (hands.type(s.text, s.field)) true to "напечатала текст" else false to "не нашла поле для текста"
