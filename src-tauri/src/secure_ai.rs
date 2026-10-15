@@ -16,7 +16,9 @@
 //!   не больше 30 запросов. Другой разговор = новый вопрос; смена или удаление ключа отзывает
 //!   все разрешения; невыданный или устаревший ID = отказ;
 //! - только известные провайдеры и строгая рекурсивная схема тела запроса;
-//! - лимит частоты запросов, новых разговоров и изменений ключей.
+//! - лимит частоты запросов, новых разговоров и изменений ключей;
+//! - размер запроса проверяется ДО разбора схемы, ответ читается по частям и обрывается на лимите
+//!   (сервер не может забить память огромным ответом).
 
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -48,6 +50,7 @@ const CONVERSATION_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_CONVERSATIONS: usize = 32;
 const CONVERSATIONS_PER_MINUTE: usize = 10;
 const CONVERSATION_UNKNOWN: &str = "CONVERSATION_UNKNOWN: разговор не выдан приложением или устарел";
+const TOO_BIG_RESPONSE: &str = "Ответ слишком большой";
 
 /// Разрешение из нативного окна.
 struct Consent {
@@ -114,6 +117,15 @@ fn issue_conversation(list: &mut VecDeque<Issued>, now: Instant) -> String {
 fn is_issued(list: &mut VecDeque<Issued>, id: &str, now: Instant) -> bool {
     list.retain(|c| now.duration_since(c.at) <= CONVERSATION_TTL);
     id.len() == 32 && list.iter().any(|c| c.id == id)
+}
+
+/// Добавить кусок ответа, не превышая лимит (иначе — ошибка и чтение обрывается).
+fn push_limited(buf: &mut Vec<u8>, chunk: &[u8], max: usize) -> Result<(), String> {
+    if buf.len().saturating_add(chunk.len()) > max {
+        return Err(TOO_BIG_RESPONSE.into());
+    }
+    buf.extend_from_slice(chunk);
+    Ok(())
 }
 
 /// Начало первого сообщения пользователя — только для окна подтверждения.
@@ -387,6 +399,11 @@ fn validate_body(provider: &str, model: &str, body: &Value) -> Result<(), String
 #[tauri::command]
 pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conversation: String, body: Value) -> Result<String, String> {
     let provider_id = PROVIDERS.iter().copied().find(|p| *p == provider).ok_or("Этот облачный сервис не поддерживается")?;
+    // Размер — до разбора схемы: огромное тело не должно проходить рекурсивную проверку и подсчёт символов.
+    let body_text = serde_json::to_string(&body).map_err(|e| e.to_string())?;
+    if body_text.len() > MAX_BODY {
+        return Err("Запрос слишком большой".into());
+    }
     validate_body(provider_id, &model, &body)?;
     if !is_issued(&mut ISSUED.lock().unwrap_or_else(|e| e.into_inner()), &conversation, Instant::now()) {
         return Err(CONVERSATION_UNKNOWN.into());
@@ -416,10 +433,6 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conv
         Err(keyring::Error::NoEntry) => return Err("API-ключ не задан".into()),
         Err(err) => return Err(err.to_string()),
     };
-    let body_text = serde_json::to_string(&body).map_err(|e| e.to_string())?;
-    if body_text.len() > MAX_BODY {
-        return Err("Запрос слишком большой".into());
-    }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
         .redirect(reqwest::redirect::Policy::none())
@@ -441,16 +454,20 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conv
         "svetlana" => client.post(SVETLANA_CORE).bearer_auth(&key),
         _ => return Err("Этот облачный сервис не поддерживается".into()),
     };
-    let response = request
+    let mut response = request
         .header("Content-Type", "application/json")
         .body(body_text)
         .send()
         .await
         .map_err(|e| e.without_url().to_string())?;
     let status = response.status();
-    let bytes = response.bytes().await.map_err(|e| e.without_url().to_string())?;
-    if bytes.len() > MAX_RESPONSE {
-        return Err("Ответ слишком большой".into());
+    if response.content_length().map_or(false, |n| n > MAX_RESPONSE as u64) {
+        return Err(TOO_BIG_RESPONSE.into());
+    }
+    // Читаем по частям и обрываем на лимите: без Content-Length сервер мог бы слать сколько угодно.
+    let mut bytes: Vec<u8> = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.without_url().to_string())? {
+        push_limited(&mut bytes, &chunk, MAX_RESPONSE)?;
     }
     let text = String::from_utf8_lossy(&bytes).into_owned();
     if !status.is_success() {
@@ -519,6 +536,16 @@ mod tests {
         let c = issue_conversation(&mut list, start);
         assert!(is_issued(&mut list, &c, start));
         assert!(!is_issued(&mut list, &c, start + CONVERSATION_TTL + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn response_reading_stops_at_the_limit() {
+        let mut buf = Vec::new();
+        assert!(push_limited(&mut buf, &[1, 2, 3], 5).is_ok());
+        assert!(push_limited(&mut buf, &[4, 5], 5).is_ok());
+        assert_eq!(buf.len(), 5);
+        assert_eq!(push_limited(&mut buf, &[6], 5), Err(TOO_BIG_RESPONSE.to_string()));
+        assert_eq!(buf.len(), 5);
     }
 
     #[test]
