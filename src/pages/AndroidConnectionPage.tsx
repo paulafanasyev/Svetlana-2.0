@@ -8,7 +8,23 @@ import { Smartphone, Wifi, WifiOff, RefreshCw, CheckCircle, XCircle, AlertCircle
 
 const CONFIG_KEY = 'svetlana_android_config';
 const CODE_SECRET = 'bridge.code';
-export const SVETLANA_HOME_RELEASES = 'https://github.com/paulafanasyev/Svetlana-Home/releases';
+const SVETLANA_HOME_RELEASES = 'https://github.com/paulafanasyev/Svetlana-Home/releases';
+const NET_HINT = 'Проверьте: «Подключение к ПК» на телефоне включено, телефон и ПК в одной Wi‑Fi сети (не гостевой), VPN на ПК выключен, сеть в Windows отмечена как «Частная».';
+
+/** Технические ошибки моста превращаем в понятные следующие шаги. */
+function explainBridgeError(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes('failed to fetch') || m.includes('timeout') || m.includes('health') || m.includes('refused') || m.includes('networkerror') || m.includes('not connected')) {
+    return `Телефон не отвечает. ${NET_HINT}`;
+  }
+  if (/\b(401|403)\b/.test(m) || m.includes('unauthorized') || m.includes('forbidden')) {
+    return 'Телефон не принял код. Код меняется при каждом включении подключения: введите свежий с экрана телефона.';
+  }
+  if (/\b426\b/.test(m) || m.includes('upgrade')) {
+    return 'Версии Светланы на ПК и телефоне не совпадают. Обновите оба приложения.';
+  }
+  return message;
+}
 
 export default function AndroidConnectionPage() {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
@@ -59,10 +75,7 @@ export default function AndroidConnectionPage() {
       const hands = handsManager.getHands();
       if (hands) setDeviceInfo(await hands.getDeviceInfo());
     } catch (err: any) {
-      const message = err?.message || 'Не удалось подключиться';
-      setError(message === 'Failed to fetch'
-        ? 'Телефон не отвечает. Проверьте, что «Подключение к ПК» включено и ПК в той же Wi‑Fi сети.'
-        : message);
+      setError(explainBridgeError(String(err?.message || 'Не удалось подключиться')));
     }
   };
 
@@ -82,7 +95,7 @@ export default function AndroidConnectionPage() {
       <div className="max-w-4xl mx-auto">
         <div className="mb-8">
           <h1 className="text-4xl font-bold text-white mb-2 flex items-center gap-3"><Smartphone className="w-10 h-10" />Телефон</h1>
-          <p className="text-slate-300">Подключение к Светлане на Android (Svetlana-home)</p>
+          <p className="text-slate-300">Связь со Светланой на Android (Svetlana-home). Сейчас это проверка связи и данные устройства; команды телефону из чата появятся в следующих версиях.</p>
         </div>
         <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-6 border border-slate-700 mb-6">
           <div className="flex items-center justify-between mb-4">

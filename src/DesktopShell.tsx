@@ -15,7 +15,7 @@ import { APP_VERSION } from './version';
 type Tab = 'chat' | 'providers' | 'phone' | 'dev';
 
 // Только то, что реально работает. Оркестратор задач пока демо, он во вкладке «Для разработчика».
-export const TABS: { id: Tab; label: string; icon: typeof MessageCircle }[] = [
+const TABS: { id: Tab; label: string; icon: typeof MessageCircle }[] = [
   { id: 'chat', label: 'Чат со Светланой', icon: MessageCircle },
   { id: 'providers', label: 'Модели ИИ', icon: Cpu },
   { id: 'phone', label: 'Телефон', icon: Smartphone },
@@ -28,11 +28,20 @@ export default function DesktopShell() {
   const [tab, setTab] = useState<Tab>('chat');
   const [setupOpen, setSetupOpen] = useState(() => !isSetupDone());
   const [active, setActive] = useState(() => aiGateway.getActiveProvider());
+  // ИИ «выбран» ещё не значит «работает»: по умолчанию выбрана Ollama, даже если её нет.
+  // Пока мастер не проверил связь, показываем «не проверен».
+  const [verified, setVerified] = useState(() => isSetupDone());
 
   useEffect(() => {
-    const t = setInterval(() => setActive(aiGateway.getActiveProvider()), 1500);
+    const t = setInterval(() => { setActive(aiGateway.getActiveProvider()); setVerified(isSetupDone()); }, 1500);
     return () => clearInterval(t);
   }, []);
+
+  const pill = !active
+    ? { text: 'ИИ не выбран', cls: 'bg-red-500/10 border-red-500/30 text-red-300', title: 'Нажмите «Настройка»' }
+    : verified
+      ? { text: `ИИ: ${active.name}`, cls: 'bg-white/5 border-white/15 text-sv-text', title: 'Выбранный ИИ. Перепроверить связь можно в «Настройке»' }
+      : { text: 'ИИ не проверен', cls: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-300', title: `Выбран: ${active.name}. Проверьте связь в «Настройке»` };
 
   const bar = (
     <header className="sticky top-0 z-40 bg-sv-darker/95 backdrop-blur-xl border-b border-sv-border px-4 py-2 flex flex-wrap items-center gap-2">
@@ -58,12 +67,14 @@ export default function DesktopShell() {
         ))}
       </nav>
       <div className="ml-auto flex items-center gap-2">
-        <span
-          title={active ? 'Выбранный ИИ. Работает ли он, проверяет «Настройка»' : undefined}
-          className={`text-xs px-3 py-1.5 rounded-full border ${active ? 'bg-white/5 border-white/15 text-sv-text' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}
+        <button
+          data-testid="ai-pill"
+          onClick={() => setSetupOpen(true)}
+          title={pill.title}
+          className={`text-xs px-3 py-1.5 rounded-full border ${pill.cls}`}
         >
-          {active ? `ИИ: ${active.name}` : 'ИИ не выбран'}
-        </span>
+          {pill.text}
+        </button>
         <button
           onClick={() => setSetupOpen(true)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs"
@@ -76,8 +87,8 @@ export default function DesktopShell() {
 
   const setup = setupOpen && (
     <FirstRunSetup
-      onClose={() => setSetupOpen(false)}
-      onReady={() => { setSetupOpen(false); setTab('chat'); setActive(aiGateway.getActiveProvider()); }}
+      onClose={() => { setSetupOpen(false); setVerified(isSetupDone()); }}
+      onReady={() => { setSetupOpen(false); setTab('chat'); setActive(aiGateway.getActiveProvider()); setVerified(isSetupDone()); }}
       onOpenProviders={() => { setSetupOpen(false); setTab('providers'); }}
     />
   );
@@ -110,7 +121,7 @@ export default function DesktopShell() {
             <div data-testid="voice-note" className="mb-4 px-4 py-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-xs text-indigo-200 flex items-start gap-2">
               <Mic className="w-4 h-4 shrink-0 mt-0.5" />
               <span>
-                Писать можно сразу. Для голосовых команд в Windows нужен ключ Groq или OpenAI в настройках голоса: встроенное распознавание браузера здесь не работает, а локальная модель речи пока только проверяет голос цифрами.
+                Писать можно сразу. Для голосовых команд в Windows нужен ключ Groq или OpenAI: нажмите круглую кнопку «Голос» внизу справа и вставьте ключ там. Встроенное распознавание браузера в Windows-приложении не работает, а локальная модель речи пока только проверяет голос цифрами.
               </span>
             </div>
             <AvatarPage />
