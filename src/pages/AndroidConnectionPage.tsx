@@ -1,13 +1,14 @@
-// Android Connection Page - Connect to the Svetlana-home bridge on the phone
+// Страница «Телефон»: подключение к мосту Svetlana-home на Android по домашней Wi‑Fi сети.
 import { useState, useEffect } from 'react';
 import { handsManager } from '../services/HandsManager';
 import type { ConnectionStatus } from '../services/PlatformHands';
 import { validateBridgeEndpoint } from '../services/security/BridgeCrypto';
 import { getSecret, setSecret } from '../services/security/SecretStore';
-import { Smartphone, Wifi, WifiOff, RefreshCw, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { Smartphone, Wifi, WifiOff, RefreshCw, CheckCircle, XCircle, AlertCircle, Download } from 'lucide-react';
 
 const CONFIG_KEY = 'svetlana_android_config';
 const CODE_SECRET = 'bridge.code';
+export const SVETLANA_HOME_RELEASES = 'https://github.com/paulafanasyev/Svetlana-Home/releases';
 
 export default function AndroidConnectionPage() {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
@@ -19,7 +20,7 @@ export default function AndroidConnectionPage() {
   useEffect(() => {
     const unsubscribe = handsManager.onStatusChange(setStatus);
     let alive = true;
-    (async () => {
+    void (async () => {
       const saved = localStorage.getItem(CONFIG_KEY);
       let legacyCode = '';
       if (saved && saved.length < 2000) {
@@ -30,13 +31,15 @@ export default function AndroidConnectionPage() {
         } catch { /* повреждённые настройки игнорируем */ }
       }
       if (legacyCode) {
-        // Миграция: код лежал открытым текстом — переносим в зашифрованное хранилище.
+        // Миграция: код лежал открытым текстом, переносим в зашифрованное хранилище.
         await setSecret(CODE_SECRET, legacyCode);
         try { localStorage.setItem(CONFIG_KEY, JSON.stringify({ transport: 'http', endpoint: JSON.parse(saved!).endpoint ?? '' })); } catch { /* noop */ }
       }
       const code = await getSecret(CODE_SECRET);
       if (alive && code) setToken(code);
-    })();
+    })().catch(() => {
+      if (alive) setError('Не удалось прочитать сохранённый код из защищённого хранилища. Введите код с телефона заново.');
+    });
     return () => { alive = false; unsubscribe(); };
   }, []);
 
@@ -56,15 +59,22 @@ export default function AndroidConnectionPage() {
       const hands = handsManager.getHands();
       if (hands) setDeviceInfo(await hands.getDeviceInfo());
     } catch (err: any) {
-      const message = err?.message || 'Failed to connect';
+      const message = err?.message || 'Не удалось подключиться';
       setError(message === 'Failed to fetch'
         ? 'Телефон не отвечает. Проверьте, что «Подключение к ПК» включено и ПК в той же Wi‑Fi сети.'
         : message);
     }
   };
 
-  const handleDisconnect = async () => { await handsManager.disconnect(); setDeviceInfo(null); };
-  const handleForget = async () => { await handleDisconnect(); await setSecret(CODE_SECRET, null); setToken(''); };
+  const handleDisconnect = async () => {
+    try { await handsManager.disconnect(); } catch { /* уже отключено */ }
+    setDeviceInfo(null);
+  };
+  const handleForget = async () => {
+    await handleDisconnect();
+    try { await setSecret(CODE_SECRET, null); } catch { setError('Не удалось удалить код из хранилища'); }
+    setToken('');
+  };
   const locked = status === 'connected' || status === 'connecting';
 
   return (
@@ -100,7 +110,13 @@ export default function AndroidConnectionPage() {
         </div>
         <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl p-6 border border-slate-700">
           <h2 className="text-2xl font-bold text-white mb-4">Как подключить</h2>
-          <ol className="space-y-3 text-slate-300"><li>1. Установите Svetlana-home на телефон и разрешите доступы в мастере.</li><li>2. На главном экране Светланы нажмите «Подключение к ПК: Включить».</li><li>3. Введите здесь адрес и код с экрана телефона.</li><li>4. Телефон и ПК должны быть в одной домашней Wi‑Fi сети.</li></ol>
+          <ol className="space-y-3 text-slate-300">
+            <li>1. Скачайте и установите Svetlana-home (файл .apk) на телефон, разрешите доступы в мастере.</li>
+            <li>2. На главном экране Светланы нажмите «Подключение к ПК: Включить».</li>
+            <li>3. Введите здесь адрес и код с экрана телефона.</li>
+            <li>4. Телефон и ПК должны быть в одной домашней Wi‑Fi сети. Гостевая сеть роутера и VPN на ПК часто блокируют связь; если Windows спросит про сеть, выберите «Частная».</li>
+          </ol>
+          <a href={SVETLANA_HOME_RELEASES} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium"><Download className="w-4 h-4" />Скачать Svetlana-home для Android</a>
           <div className="mt-6 p-4 bg-emerald-900/20 border border-emerald-700 rounded-lg"><p className="text-emerald-300 text-sm"><strong>Защита:</strong> каждый запрос и ответ шифруется ключом из кода подключения; сам код по сети не передаётся, перехваченный запрос нельзя повторить, а чужое устройство не выдаст себя за ваш телефон. Нужны свежие версии Светланы на ПК и телефоне. Веб-версия по https к телефону не подключится (браузер блокирует), нужна Windows-версия.</p></div>
         </div>
       </div>
