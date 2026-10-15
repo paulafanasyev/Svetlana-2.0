@@ -48,7 +48,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * чужие адреса открываются во внешнем браузере (только https, mailto, tel, sms), микрофон — только своей странице.
  * Файлы (экспорт CRM, документы, .ics) сохраняются через системное окно «Сохранить как»: место выбирает человек.
  * Печать и PDF — системное окно печати (документ рисуется в отдельном WebView без JavaScript и без сети).
- * Буфер обмена — только сразу после настоящего касания экрана (не через чужое окно поверх).
+ * Буфер обмена — только сразу после настоящего касания экрана (не через чужое окно поверх), одно касание — одно копирование.
  * Системная кнопка «Назад» сначала закрывает открытое окно страницы (CRM, мастер настройки), и только потом выходит.
  */
 class MainActivity : Activity() {
@@ -200,10 +200,15 @@ class MainActivity : Activity() {
         return super.dispatchTouchEvent(ev)
     }
 
-    /** Человек только что коснулся экрана (как user activation в браузере). */
+    /**
+     * Человек только что коснулся экрана (как user activation в браузере). Касание расходуется:
+     * одно нажатие — одно копирование. Вызывать в главном потоке.
+     */
     fun touchedRecently(): Boolean {
         val t = lastTouchAt
-        return t > 0 && SystemClock.uptimeMillis() - t in 0..ACTIVATION_MS
+        val ok = t > 0 && SystemClock.uptimeMillis() - t in 0..ACTIVATION_MS
+        if (ok) lastTouchAt = 0L
+        return ok
     }
 
     private fun openExternal(u: Uri) {
