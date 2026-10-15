@@ -24,23 +24,29 @@ const TABS: { id: Tab; label: string; icon: typeof MessageCircle }[] = [
 
 const AVATAR = `${import.meta.env.BASE_URL}images/avatar/svetlana-master.jpg`;
 
+// Какой ИИ последним УСПЕШНО прошёл проверку в мастере. Пропуск мастера или «Другие ИИ» сюда не пишут.
+const VERIFIED_KEY = 'svetlana_ai_verified_v1';
+const readVerified = (): string | null => {
+  try { return localStorage.getItem(VERIFIED_KEY); } catch { return null; }
+};
+
 export default function DesktopShell() {
   const [tab, setTab] = useState<Tab>('chat');
   const [setupOpen, setSetupOpen] = useState(() => !isSetupDone());
   const [active, setActive] = useState(() => aiGateway.getActiveProvider());
   // ИИ «выбран» ещё не значит «работает»: по умолчанию выбрана Ollama, даже если её нет.
-  // Пока мастер не проверил связь, показываем «не проверен».
-  const [verified, setVerified] = useState(() => isSetupDone());
+  const [verifiedId, setVerifiedId] = useState<string | null>(readVerified);
 
   useEffect(() => {
-    const t = setInterval(() => { setActive(aiGateway.getActiveProvider()); setVerified(isSetupDone()); }, 1500);
+    const t = setInterval(() => { setActive(aiGateway.getActiveProvider()); setVerifiedId(readVerified()); }, 1500);
     return () => clearInterval(t);
   }, []);
 
+  const verified = !!active && verifiedId === active.id;
   const pill = !active
     ? { text: 'ИИ не выбран', cls: 'bg-red-500/10 border-red-500/30 text-red-300', title: 'Нажмите «Настройка»' }
     : verified
-      ? { text: `ИИ: ${active.name}`, cls: 'bg-white/5 border-white/15 text-sv-text', title: 'Выбранный ИИ. Перепроверить связь можно в «Настройке»' }
+      ? { text: `ИИ: ${active.name}`, cls: 'bg-white/5 border-white/15 text-sv-text', title: 'Этот ИИ ответил при проверке. Перепроверить можно в «Настройке»' }
       : { text: 'ИИ не проверен', cls: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-300', title: `Выбран: ${active.name}. Проверьте связь в «Настройке»` };
 
   const bar = (
@@ -87,8 +93,13 @@ export default function DesktopShell() {
 
   const setup = setupOpen && (
     <FirstRunSetup
-      onClose={() => { setSetupOpen(false); setVerified(isSetupDone()); }}
-      onReady={() => { setSetupOpen(false); setTab('chat'); setActive(aiGateway.getActiveProvider()); setVerified(isSetupDone()); }}
+      onClose={() => setSetupOpen(false)}
+      onReady={() => {
+        // onReady вызывается только после успешной проверки связи в мастере.
+        const ok = aiGateway.getActiveProvider();
+        try { if (ok) localStorage.setItem(VERIFIED_KEY, ok.id); } catch { /* noop */ }
+        setSetupOpen(false); setTab('chat'); setActive(ok); setVerifiedId(ok?.id ?? null);
+      }}
       onOpenProviders={() => { setSetupOpen(false); setTab('providers'); }}
     />
   );
@@ -121,7 +132,7 @@ export default function DesktopShell() {
             <div data-testid="voice-note" className="mb-4 px-4 py-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-xs text-indigo-200 flex items-start gap-2">
               <Mic className="w-4 h-4 shrink-0 mt-0.5" />
               <span>
-                Писать можно сразу. Для голосовых команд в Windows нужен ключ Groq или OpenAI: нажмите круглую кнопку «Голос» внизу справа и вставьте ключ там. Встроенное распознавание браузера в Windows-приложении не работает, а локальная модель речи пока только проверяет голос цифрами.
+                Писать можно сразу. Для голосовых команд в Windows нужен ключ Groq или OpenAI: нажмите кнопку «Голос» внизу слева и вставьте ключ там. Встроенное распознавание браузера в Windows-приложении не работает, а локальная модель речи пока только проверяет голос цифрами.
               </span>
             </div>
             <AvatarPage />
