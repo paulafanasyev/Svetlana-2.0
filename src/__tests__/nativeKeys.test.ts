@@ -57,7 +57,7 @@ describe('desktop app keeps AI keys in the OS keychain', () => {
     expect(calls.filter(c => c[0] === 'secret_set')).toHaveLength(0);
   });
 
-  it('a cancelled Windows dialog rejects the save and does not leave a fake "key present" mark', async () => {
+  it('a cancelled Windows dialog rejects the save and rolls the new provider back', async () => {
     (globalThis as any).__TAURI_INTERNALS__ = {
       invoke: async (cmd: string) => {
         if (cmd === 'secret_set') throw 'Отменено пользователем';
@@ -65,9 +65,27 @@ describe('desktop app keeps AI keys in the OS keychain', () => {
         return null;
       },
     };
+    const before = aiGateway.getActiveProvider()?.id;
     await expect(aiGateway.addProvider({ id: 'groq', name: 'Groq', type: 'online', endpoint: 'https://api.groq.com/openai/v1', model: 'llama-3.1-8b-instant', enabled: true, apiKey: 'gsk-NEW' }))
       .rejects.toBe('Отменено пользователем');
-    expect(aiGateway.getProvider('groq')!.apiKey).toBeUndefined();
+    // Не висит «выбранным» без ключа, прежний выбор возвращён.
+    expect(aiGateway.getProvider('groq')).toBeUndefined();
+    expect(aiGateway.getActiveProvider()?.id).toBe(before);
+  });
+
+  it('a cancelled key change keeps the existing provider settings', async () => {
+    (globalThis as any).__TAURI_INTERNALS__ = {
+      invoke: async (cmd: string) => {
+        if (cmd === 'secret_set') throw 'Отменено пользователем';
+        if (cmd === 'secret_has') return true;
+        return null;
+      },
+    };
+    const model = aiGateway.getProvider('openai')!.model;
+    await expect(aiGateway.addProvider({ id: 'openai', name: 'OpenAI', type: 'online', endpoint: 'https://api.openai.com/v1', model: 'gpt-4-turbo', enabled: true, apiKey: 'sk-OTHER' }))
+      .rejects.toBe('Отменено пользователем');
+    expect(aiGateway.getProvider('openai')!.model).toBe(model);
+    expect(aiGateway.getProvider('openai')!.apiKey).toBe(NATIVE_KEY_PLACEHOLDER);
   });
 
   it('asks the native side for a fresh conversation id once when the old one expired', async () => {
