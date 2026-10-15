@@ -13,10 +13,14 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.CancellationSignal
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.print.PageRange
 import android.print.PrintAttributes
+import android.print.PrintDocumentAdapter
 import android.print.PrintManager
 import android.provider.Settings
 import android.view.MotionEvent
@@ -60,6 +64,9 @@ class MainActivity : Activity() {
         private const val REQ_SAVE = 43
         private const val REQ_CONTACTS = 44
         private const val CONFIRM_TIMEOUT_MIN = 3L
+        /** Сколько ждать, пока документ для печати отрисуется (дальше — ошибка и освобождение WebView). */
+        private const val PRINT_LOAD_TIMEOUT_MS = 15_000L
+        const val PRINT_BUSY = "Печать уже открыта: закройте окно печати и попробуйте снова"
         /** Сколько после касания считается «по нажатию» (как user activation в браузере). */
         private const val ACTIVATION_MS = 5_000L
         /** Спросить страницу: есть ли что закрыть по «Назад» (src/services/BackStack.ts). */
@@ -77,12 +84,43 @@ class MainActivity : Activity() {
 
     private class PendingSave(val text: String, val done: Done)
 
+    /** Адаптер печати WebView с уведомлением: системное окно печати закрыто — документ больше не нужен. */
+    private class ReleasingAdapter(private val inner: PrintDocumentAdapter, private val onFinished: () -> Unit) : PrintDocumentAdapter() {
+        override fun onStart() = inner.onStart()
+
+        override fun onLayout(
+            oldAttributes: PrintAttributes?,
+            newAttributes: PrintAttributes?,
+            cancellationSignal: CancellationSignal?,
+            callback: PrintDocumentAdapter.LayoutResultCallback?,
+            extras: Bundle?,
+        ) = inner.onLayout(oldAttributes, newAttributes, cancellationSignal, callback, extras)
+
+        override fun onWrite(
+            pages: Array<out PageRange>?,
+            destination: ParcelFileDescriptor?,
+            cancellationSignal: CancellationSignal?,
+            callback: PrintDocumentAdapter.WriteResultCallback?,
+        ) = inner.onWrite(pages, destination, cancellationSignal, callback)
+
+        override fun onFinish() {
+            try {
+                inner.onFinish()
+            } finally {
+                onFinished()
+            }
+        }
+    }
+
     val main = Handler(Looper.getMainLooper())
     private lateinit var web: WebView
     private var bridge: Bridge? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var pendingSave: PendingSave? = null
+    /** WebView документа для печати: живёт, пока открыто системное окно печати (только главный поток). */
     private var printView: WebView? = null
+    /** Единственный путь освобождения printView (окно печати закрыто, таймаут, ошибка или onDestroy): destroy ровно один раз. */
+    private var releasePrint: (() -> Unit)? = null
     private val permWaiters = HashMap<String, ArrayList<(Boolean) -> Unit>>()
     private val confirmLock = Any()
     /** Открытое окно подтверждения (только главный поток). */
@@ -256,10 +294,12 @@ class MainActivity : Activity() {
     /**
      * Печать или PDF: документ рисуется в отдельном WebView без JavaScript, файлов и сети, потом
      * открывается системное окно печати (там же «Сохранить как PDF»). Вызывать в главном потоке.
+     * Одно окно за раз; WebView документа освобождается, когда окно печати закрыто, или если
+     * документ не отрисовался за 15 секунд (тогда ответ — ошибка, а не вечное ожидание).
      */
     fun printHtml(html: String, title: String, done: Done) {
         if (isFinishing || isDestroyed) { done(false, "Приложение закрыто"); return }
-        printView?.destroy()
+        if (printView != null) { done(false, PRINT_BUSY); return }
         val v = WebView(this)
         printView = v
         val ps = v.settings
@@ -269,6 +309,16 @@ class MainActivity : Activity() {
         ps.blockNetworkLoads = true
         ps.setGeolocationEnabled(false)
         var started = false
+        var released = false
+        val release = {
+            if (!released) {
+                released = true
+                if (printView === v) printView = null
+                releasePrint = null
+                v.destroy()
+            }
+        }
+        releasePrint = release
         v.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
 
@@ -284,13 +334,22 @@ class MainActivity : Activity() {
                 try {
                     val pm = getSystemService(Context.PRINT_SERVICE) as PrintManager
                     val job = title.ifBlank { "Светлана" }
-                    pm.print(job, view.createPrintDocumentAdapter(job), PrintAttributes.Builder().build())
+                    val adapter = ReleasingAdapter(view.createPrintDocumentAdapter(job)) { main.post { release() } }
+                    pm.print(job, adapter, PrintAttributes.Builder().build())
                     done(true, true)
                 } catch (e: Exception) {
+                    main.post { release() }
                     done(false, "Не удалось открыть печать")
                 }
             }
         }
+        main.postDelayed({
+            if (!started && !released) {
+                started = true
+                release()
+                done(false, "Не удалось подготовить документ к печати")
+            }
+        }, PRINT_LOAD_TIMEOUT_MS)
         v.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
     }
 
@@ -431,7 +490,9 @@ class MainActivity : Activity() {
         PERM_CODES.keys.forEach { drainWaiters(it, false) }
         pendingSave?.done?.invoke(false, "Приложение закрыто")
         pendingSave = null
-        printView?.destroy()
+        // Тот же путь, что и для закрытого окна печати: поздний onFinish уже ничего не уничтожит повторно.
+        releasePrint?.invoke()
+        releasePrint = null
         printView = null
         bridge?.close()
         bridge = null
