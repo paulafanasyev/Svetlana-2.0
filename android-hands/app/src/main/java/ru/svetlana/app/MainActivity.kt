@@ -15,9 +15,11 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.provider.Settings
+import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.webkit.PermissionRequest
@@ -46,6 +48,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * чужие адреса открываются во внешнем браузере (только https, mailto, tel, sms), микрофон — только своей странице.
  * Файлы (экспорт CRM, документы, .ics) сохраняются через системное окно «Сохранить как»: место выбирает человек.
  * Печать и PDF — системное окно печати (документ рисуется в отдельном WebView без JavaScript и без сети).
+ * Буфер обмена — только сразу после настоящего касания экрана (не через чужое окно поверх).
  * Системная кнопка «Назад» сначала закрывает открытое окно страницы (CRM, мастер настройки), и только потом выходит.
  */
 class MainActivity : Activity() {
@@ -57,6 +60,8 @@ class MainActivity : Activity() {
         private const val REQ_SAVE = 43
         private const val REQ_CONTACTS = 44
         private const val CONFIRM_TIMEOUT_MIN = 3L
+        /** Сколько после касания считается «по нажатию» (как user activation в браузере). */
+        private const val ACTIVATION_MS = 5_000L
         /** Спросить страницу: есть ли что закрыть по «Назад» (src/services/BackStack.ts). */
         private const val BACK_JS = "(function(){try{var f=window.__svetlanaBack;return typeof f==='function'&&f()===true;}catch(e){return false;}})()"
         private const val OUTDATED = "<html><body style='font-family:sans-serif;padding:24px;background:#0b1020;color:#fff'>" +
@@ -82,6 +87,8 @@ class MainActivity : Activity() {
     private val confirmLock = Any()
     /** Открытое окно подтверждения (только главный поток). */
     private var confirmDialog: AlertDialog? = null
+    /** Когда человек последний раз настоящим касанием отпустил палец на экране приложения. */
+    @Volatile private var lastTouchAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -183,6 +190,20 @@ class MainActivity : Activity() {
             val u = runCatching { Uri.parse(url) }.getOrNull()
             if (u != null && u.scheme == "https") openExternal(u)
         }
+    }
+
+    /** Запоминаем настоящие касания (не сквозь чужое окно поверх): только после них можно писать в буфер. */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_UP && (ev.flags and MotionEvent.FLAG_WINDOW_IS_OBSCURED) == 0) {
+            lastTouchAt = SystemClock.uptimeMillis()
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /** Человек только что коснулся экрана (как user activation в браузере). */
+    fun touchedRecently(): Boolean {
+        val t = lastTouchAt
+        return t > 0 && SystemClock.uptimeMillis() - t in 0..ACTIVATION_MS
     }
 
     private fun openExternal(u: Uri) {
