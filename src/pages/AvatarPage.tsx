@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Avatar, { VoiceControl, useSpeech } from '../components/Avatar';
 import { aiGateway, type ChatMessage } from '../services/AIGateway';
+import { explainAiError } from '../services/AiErrors';
 import { crmSystemPrompt, detectCRMIntent, parseCRMActions, runCRMActions } from '../services/crm/CRMTools';
 import { toModelHistory } from '../services/security/History';
 import { resetNativeConversation } from '../services/security/NativeBridge';
@@ -82,7 +83,8 @@ function cleanEmotionTag(text: string): string {
   return text.replace(/\[EMOTION:\s*\w+\]/gi, '').trim();
 }
 
-export default function AvatarPage() {
+/** onConnectAi — открыть мастер настройки ИИ (кнопка «Подключить ИИ», когда ИИ не выбран). */
+export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void } = {}) {
   const platform = appPlatform();
   const android = platform === 'android';
   const quick = QUICK_COMMANDS;
@@ -163,7 +165,7 @@ export default function AvatarPage() {
 
       const provider = aiGateway.getActiveProvider();
       if (!provider) {
-        throw new Error('ИИ не выбран: нажми «Настройка» вверху или открой «Модели ИИ». CRM-команды («Сводка CRM», «Занеси контакты с телефона в CRM») работают и без него.');
+        throw new Error('ИИ не выбран: нажми «Подключить ИИ» или «Настройка» вверху. CRM-команды («Сводка CRM», «Занеси контакты с телефона в CRM») работают и без него.');
       }
 
       // История для модели: результаты инструментов — только как данные, блоки действий обезврежены.
@@ -202,8 +204,9 @@ export default function AvatarPage() {
       setTimeout(() => setEmotion('neutral'), 6000);
     } catch (err: any) {
       console.error('AI Error:', err);
-      // Ошибки нативной части (Windows и Android) приходят строкой.
-      const text = (typeof err?.message === 'string' && err.message) || (typeof err === 'string' ? err : '') || 'Ошибка при обращении к ИИ';
+      // Ошибки нативной части (Windows и Android) приходят строкой; технические тексты переводим на понятный русский.
+      const raw = (typeof err?.message === 'string' && err.message) || (typeof err === 'string' ? err : '') || '';
+      const text = explainAiError(raw);
       setError(text);
       setMessages(prev => [...prev, {
         role: 'svetlana',
@@ -259,10 +262,26 @@ export default function AvatarPage() {
         </div>
       </div>
 
+      {/* Без ИИ — не тупик: одна кнопка ведёт в мастер настройки. */}
+      {!usable && onConnectAi && (
+        <div data-testid="connect-ai" className="p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-sm flex flex-wrap items-center justify-between gap-2">
+          <span className="text-indigo-100">
+            Чтобы Светлана отвечала, подключите ИИ.{platform === 'web' ? '' : ' Бесплатно: GigaChat от Сбера.'} CRM-команды работают и без него.
+          </span>
+          <button
+            onClick={onConnectAi}
+            className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium"
+          >
+            Подключить ИИ
+          </button>
+        </div>
+      )}
+
       {error && (
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
+          role="alert"
           className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400"
         >
           {error}
@@ -312,7 +331,7 @@ export default function AvatarPage() {
               </div>
             </div>
 
-            <div className="flex-1 p-3 sm:p-4 overflow-y-auto space-y-3 min-h-[300px] sm:min-h-[400px] max-h-[60vh] sm:max-h-[500px]">
+            <div className="flex-1 p-3 sm:p-4 overflow-y-auto space-y-3 min-h-[300px] sm:min-h-[400px] max-h-[60vh] sm:max-h-[500px]" aria-live="polite">
               <AnimatePresence>
                 {messages.map((msg, i) => (
                   <motion.div
@@ -327,7 +346,7 @@ export default function AvatarPage() {
                         : 'bg-white/5 text-sv-text rounded-2xl rounded-bl-md'
                     } px-4 py-2.5`}>
                       {msg.role === 'svetlana' && msg.emotion && (
-                        <span className="text-xs text-sv-muted block mb-1">
+                        <span className="text-xs text-sv-muted block mb-1" aria-hidden="true">
                           {msg.emotion === 'happy' && '😊'}
                           {msg.emotion === 'sad' && '😢'}
                           {msg.emotion === 'laughing' && '😂'}
@@ -366,6 +385,7 @@ export default function AvatarPage() {
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && sendMessage(input)}
                   placeholder={usable ? 'Напишите Светлане...' : 'CRM-команды работают и без ИИ'}
+                  aria-label="Сообщение Светлане"
                   className="flex-1 min-w-0 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm focus:outline-none focus:border-indigo-500/50 disabled:opacity-50"
                   disabled={isLoading}
                 />
@@ -405,11 +425,12 @@ export default function AvatarPage() {
           >
             <Avatar size={android ? 'lg' : 'xl'} emotion={emotion} interactive={true} onEmotionChange={setEmotion} />
 
-            <div className="mt-12 hidden sm:flex flex-wrap justify-center gap-2">
+            <div className="mt-12 hidden sm:flex flex-wrap justify-center gap-2" role="group" aria-label="Эмоция аватара">
               {emotionButtons.map(btn => (
                 <button
                   key={btn.emotion}
                   onClick={() => setEmotion(btn.emotion)}
+                  aria-pressed={emotion === btn.emotion}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
                     emotion === btn.emotion
                       ? 'bg-white/10 border border-white/20'
@@ -486,8 +507,10 @@ export default function AvatarPage() {
             { emotion: 'crying', emoji: '😭', label: 'Плач', desc: 'Сильные эмоции' },
             { emotion: 'surprised', emoji: '😮', label: 'Удивление', desc: 'Неожиданность' },
           ].map(item => (
-            <div
+            <button
+              type="button"
               key={item.emotion}
+              aria-pressed={emotion === item.emotion}
               className={`p-3 rounded-lg border text-center cursor-pointer transition-all ${
                 emotion === item.emotion
                   ? 'bg-indigo-500/10 border-indigo-500/30'
@@ -495,10 +518,10 @@ export default function AvatarPage() {
               }`}
               onClick={() => setEmotion(item.emotion as Emotion)}
             >
-              <span className="text-2xl">{item.emoji}</span>
+              <span className="text-2xl" aria-hidden="true">{item.emoji}</span>
               <p className="text-xs font-medium mt-1">{item.label}</p>
               <p className="text-xs text-sv-muted">{item.desc}</p>
-            </div>
+            </button>
           ))}
         </div>
       </div>

@@ -10,7 +10,8 @@
 // Локальные модели (Ollama, LM Studio и др.): на компьютере и сайте — только 127.0.0.1/localhost; в приложении
 // для Android — ещё и компьютер в домашней сети (10.x, 172.16–31.x, 192.168.x): запрос делает телефон
 // (команда lan_http, первая отправка на новый адрес — после нативного подтверждения, см. AndroidFiles).
-// Облачные — только официальные адреса, прокси — только свой сервер. Подменённый адрес не получит ни ключ, ни переписку.
+// Облачные — только официальные адреса (список для КАЖДОГО сервиса, неизвестный облачный сервис отклоняется),
+// прокси — только свой сервер. Подменённый адрес не получит ни ключ, ни переписку.
 // Локальная модель при ошибке НИКОГДА не переключается на облако сама: переписка не покидает
 // домашнюю сеть без явного выбора облачного провайдера пользователем (см. fallbackCandidates).
 // Вызовы инструментов от модели проходят строгую проверку по схеме инструмента (security/ToolCallSchema).
@@ -94,8 +95,13 @@ export function gigachatTemperature(t: unknown): number {
   return Math.min(2, Math.max(0.1, n));
 }
 
-/** Официальные адреса облачных сервисов, у которых адрес берётся из настроек. */
+/** Официальные адреса КАЖДОГО облачного сервиса. Другие адреса и неизвестные сервисы отклоняются. */
 const OFFICIAL_ENDPOINTS: Record<string, string[]> = {
+  openai: ['https://api.openai.com/v1'],
+  anthropic: ['https://api.anthropic.com/v1'],
+  groq: ['https://api.groq.com/openai/v1'],
+  openrouter: ['https://openrouter.ai/api/v1'],
+  deepseek: ['https://api.deepseek.com/v1', 'https://api.deepseek.com'],
   mistral: ['https://api.mistral.ai/v1'],
   google: ['https://generativelanguage.googleapis.com/v1beta', 'https://generativelanguage.googleapis.com/v1'],
   svetlana: [SVETLANA_CORE_ORIGIN],
@@ -120,7 +126,8 @@ export function validateEndpoint(p: Pick<AIProvider, 'id' | 'type' | 'endpoint'>
     return e;
   }
   const official = OFFICIAL_ENDPOINTS[p.id];
-  if (official && !official.includes(e)) throw new Error(`Для ${p.id} разрешён только официальный адрес: ${official[0]}`);
+  if (!official) throw new Error(`Облачный сервис «${p.id}» не поддерживается`);
+  if (!official.includes(e)) throw new Error(`Для ${p.id} разрешён только официальный адрес: ${official[0]}`);
   return e;
 }
 
@@ -270,7 +277,8 @@ class AIGateway {
       if (p.apiKey === NATIVE_KEY_PLACEHOLDER) return Promise.resolve();
       const value = p.apiKey ?? null;
       p.apiKey = value ? NATIVE_KEY_PLACEHOLDER : undefined;
-      void setSecret(name, null);
+      // Браузерную копию стираем фоном; её ошибка не должна становиться необработанным промисом.
+      void Promise.resolve(setSecret(name, null)).catch(() => undefined);
       return nativeSetSecret(name, value).catch(async (e) => {
         console.error('Не удалось сохранить ключ в хранилище приложения', e);
         // Отметка должна совпадать с хранилищем (например, пользователь нажал «Отмена» в окне подтверждения).
@@ -430,7 +438,7 @@ class AIGateway {
         if (provider.type === 'offline') {
           return this.callOllama(provider, messages, options);
         }
-        throw new Error(`Provider ${provider.id} not implemented`);
+        throw new Error(`Облачный сервис «${provider.id}» не поддерживается`);
     }
   }
 

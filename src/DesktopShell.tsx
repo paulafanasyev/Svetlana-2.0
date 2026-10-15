@@ -4,7 +4,8 @@
 // В Android есть ещё «Руки»: действия на самом телефоне через спец. возможности.
 // Схемы, планы, оркестратор задач и демо разработки (старый Command Center, App.tsx) убраны во вкладку
 // «Для разработчика» и помечены: это описание, а не работающая функция. При первом запуске открывается
-// мастер настройки (FirstRunSetup): без него чат не знает, куда слать вопрос.
+// мастер настройки (FirstRunSetup): без него чат не знает, куда слать вопрос. Если ИИ не выбран, в чате
+// есть кнопка «Подключить ИИ», которая снова открывает мастер.
 import { useEffect, useState } from 'react';
 import { MessageCircle, Cpu, Smartphone, Wrench, Settings2, AlertTriangle, Mic, Download, Hand } from 'lucide-react';
 import App from './App';
@@ -160,7 +161,7 @@ export default function DesktopShell() {
                 </span>
               </div>
             )}
-            <AvatarPage />
+            <AvatarPage onConnectAi={() => setSetupOpen(true)} />
           </>
         )}
         {tab === 'providers' && <AIProvidersPage />}
