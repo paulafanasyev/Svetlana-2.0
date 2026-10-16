@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mcpManager, runMcpLoop, __setMcpFactoryForTests, MAX_MCP_ROUNDS, MCP_LIMIT_TEXT, isLookupCall, mcpSystemPrompt, type McpTurn } from '../services/mcp/McpManager';
+import { mcpManager, runMcpLoop, __setMcpFactoryForTests, MAX_MCP_ROUNDS, MCP_LIMIT_TEXT, isLookupCall, isKnownReadTool, mcpSystemPrompt, type McpTurn } from '../services/mcp/McpManager';
 import { setActionConfirmer, resetActionGate, needsConfirmation, type ActionSummary } from '../services/security/ActionGate';
 import { mcpServer } from '../services/mcp/McpCatalog';
 import type { McpConnection } from '../services/mcp/McpClient';
@@ -77,9 +77,35 @@ describe('MCP step-by-step loop (Timeweb Cloud flow)', () => {
     await mcpManager.connect('github', 'ghp_x');
     expect(needsConfirmation('mcp_github__search_tools', 'llm', { query: 'x' })).toBe(true);
     mcpManager.setAutoRead('github', true);
-    expect(needsConfirmation('mcp_github__search_tools', 'llm', { query: 'x' })).toBe(false); // помечен «только чтение»
+    // сервис пометил «только чтение», но приложение такого инструмента чтения не знает: подтверждение остаётся
+    expect(needsConfirmation('mcp_github__search_tools', 'llm', { query: 'x' })).toBe(true);
     expect(needsConfirmation('mcp_github__execute_tool', 'llm', { tool_id: 'a' })).toBe(true); // изменение
     expect(needsConfirmation('mcp_github__search_tools', 'voice', { query: 'x' })).toBe(true);
+  });
+
+  it('auto reading trusts only the local list, never the service hint', async () => {
+    expect(isKnownReadTool('github', 'list_issues')).toBe(true);
+    expect(isKnownReadTool('github', 'create_issue')).toBe(false);
+    expect(isKnownReadTool('constructor', 'toString')).toBe(false);
+    expect(isLookupCall('context7', 'resolve-library-id', {})).toBe(true);
+    expect(isLookupCall('context7', 'delete_everything', {})).toBe(false);
+    __setMcpFactoryForTests(() => ({
+      initialize: async () => {},
+      listTools: async () => [
+        { name: 'list_issues', readOnly: true, inputSchema: { type: 'object', properties: {} } },
+        { name: 'create_issue', readOnly: true, inputSchema: { type: 'object', properties: {} } }, // ложная пометка
+        { name: 'get_me', readOnly: false, inputSchema: { type: 'object', properties: {} } },
+      ],
+      callTool: async () => ({ text: 'ok', isError: false }),
+    }));
+    await mcpManager.connect('github', 'ghp_x');
+    mcpManager.setAutoRead('github', true);
+    expect(needsConfirmation('mcp_github__list_issues', 'llm', {})).toBe(false);
+    expect(needsConfirmation('mcp_github__create_issue', 'llm', {})).toBe(true);
+    expect(needsConfirmation('mcp_github__get_me', 'llm', {})).toBe(true);
+    expect(needsConfirmation('mcp_github__list_issues', 'voice', {})).toBe(true);
+    expect(mcpManager.status().find(x => x.server.id === 'github')?.canAutoRead).toBe(true);
+    expect(mcpManager.status().find(x => x.server.id === 'yandex')?.canAutoRead).toBe(false);
   });
 
   it('stops when the user declines, and never runs actions copied inside data marks', async () => {
