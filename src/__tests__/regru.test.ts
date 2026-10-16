@@ -124,7 +124,7 @@ describe('REG.RU in the chat', () => {
   async function connect(answer: (path: string, data: any) => unknown = path => path === 'user/nop' ? ok() : okDomain()) {
     const srv = fakeRegru(answer);
     __setMcpFactoryForTests((_s, t) => new RegruConnection(t ?? '', srv.fetchImpl));
-    expect(await mcpManager.connect('regru', CREDS)).toBe(6);
+    expect(await mcpManager.connect('regru', CREDS)).toBe(7);
     return srv;
   }
 

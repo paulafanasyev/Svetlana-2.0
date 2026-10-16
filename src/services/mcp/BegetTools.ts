@@ -1,6 +1,6 @@
 // Beget: удалённого MCP у хостинга нет, поэтому Светлана работает с ним напрямую через Beget API
 // (https://api.beget.com/api/<раздел>/<метод>). Набор запросов зашит в код: просмотр аккаунта, сайтов, доменов и DNS,
-// смена DNS-записей и привязка домена к сайту. Логин и пароль API уходят только в теле POST-запроса (не в адресе),
+// смена DNS-записей, добавление домена и сайта, привязка домена к сайту. Логин и пароль API уходят только в теле POST-запроса (не в адресе),
 // без редиректов и cookies. Каждое изменение пользователь подтверждает на экране (см. McpManager).
 import { safeJsonParse, stripControl } from '../security/SafeData';
 import { guardedFetch, readLimited, McpError, type FetchLike, type McpCallResult, type McpConnection, type McpToolDef } from './McpClient';
@@ -9,7 +9,7 @@ const BASE = 'https://api.beget.com/api';
 const MAX_RESULT_CHARS = 20_000;
 const MAX_RECORDS = 10;
 
-const fqdnProp = { type: 'string', description: 'Domain or subdomain, e.g. example.ru or www.example.ru' };
+const fqdnProp = { type: 'string', description: 'Домен или поддомен, например example.ru или www.example.ru' };
 const listProp = (d: string) => ({ type: 'array', items: { type: 'string' }, description: d });
 
 export const BEGET_TOOLS: readonly McpToolDef[] = Object.freeze([
@@ -26,20 +26,28 @@ export const BEGET_TOOLS: readonly McpToolDef[] = Object.freeze([
       + 'Передайте одну группу: a, mx и txt вместе, или ns (для поддомена), или cname (для поддомена). Запись mx: "10 mx1.beget.ru".',
     inputSchema: { type: 'object', properties: {
       fqdn: fqdnProp,
-      a: listProp('IPv4 addresses (A), up to 10; [] to remove all'),
-      mx: listProp('MX as "priority host", up to 10; [] to remove all'),
-      txt: listProp('TXT values, up to 10; [] to remove all'),
-      ns: listProp('NS hosts for a subdomain, up to 10'),
-      cname: { type: 'string', description: 'CNAME target for a subdomain' },
+      a: listProp('IPv4-адреса (A), до 10; пустой список удалит все записи этого типа'),
+      mx: listProp('MX в формате «приоритет сервер», например "10 mx1.beget.com", до 10; пустой список удалит все записи этого типа'),
+      txt: listProp('TXT-записи, до 10; пустой список удалит все записи этого типа'),
+      ns: listProp('DNS-серверы поддомена, до 10'),
+      cname: { type: 'string', description: 'Адрес CNAME для поддомена' },
     }, required: ['fqdn'] } },
+  { name: 'add_domain', title: 'Добавить домен в аккаунт', readOnly: false,
+    description: 'Добавляет уже зарегистрированный домен (где угодно, например на REG.RU) в аккаунт Beget. Регистрацию домена не оформляет. Возвращает номер домена для link_domain.',
+    inputSchema: { type: 'object', properties: { fqdn: { type: 'string', description: 'Домен, например example.ru' } }, required: ['fqdn'] } },
+  { name: 'add_site', title: 'Создать сайт', readOnly: false,
+    description: 'Создаёт новый пустой сайт (папку) в аккаунте Beget и возвращает его номер (site_id) для link_domain. Файлы сайта загружаются отдельно, не через API.',
+    inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Имя папки сайта, например example.ru' } }, required: ['name'] } },
   { name: 'link_domain', title: 'Привязать домен к сайту', readOnly: false, description: 'Привязывает домен к сайту (номера из list_domains и list_sites).',
-    inputSchema: { type: 'object', properties: { domain_id: { type: 'number', description: 'Domain id' }, site_id: { type: 'number', description: 'Site id' } }, required: ['domain_id', 'site_id'] } },
+    inputSchema: { type: 'object', properties: { domain_id: { type: 'number', description: 'Номер домена' }, site_id: { type: 'number', description: 'Номер сайта' } }, required: ['domain_id', 'site_id'] } },
 ]);
 
-const bad = (what: string) => new McpError(`Beget: ${what}`, 'protocol');
+/** Неверные аргументы действия (проверка до запроса): это ответ модели, а не поломка подключения. */
+class BegetInvalid extends McpError {}
+const bad = (what: string) => new BegetInvalid(`Beget: ${what}`, 'protocol');
 
 const LOGIN_RE = /^[A-Za-z0-9_.-]{1,64}$/;
-const HOST_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/;
+const HOST_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/;
 const IPV4_RE = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
 
 /** Логин и пароль API из поля «токен» в виде «логин:пароль». Пароль может содержать двоеточие. */
@@ -54,12 +62,28 @@ export function parseBegetCredentials(token: string): { login: string; password:
   return { login, password };
 }
 
+/**
+ * Домен в ASCII (punycode): «тест.рф» → «xn--e1aybc.xn--p1ai». Преобразуется только строка из букв, цифр,
+ * точек и дефисов, иначе возвращается как есть (дальше её отклонит проверка). Регистр приводится к нижнему.
+ */
+export function asciiDomain(v: string): string {
+  const s = v.trim().toLowerCase().replace(/\.$/, '');
+  if (!/[^\x00-\x7f]/.test(s) || !/^[\p{L}\p{N}\p{M}.-]{1,253}$/u.test(s)) return s;
+  try { return new URL(`http://${s}/`).hostname; } catch { return s; }
+}
+
 function host(v: unknown, what: string): string {
   if (typeof v !== 'string') throw bad(`нужно указать ${what}`);
-  const h = v.trim().toLowerCase().replace(/\.$/, '');
+  const h = asciiDomain(v);
   if (!HOST_RE.test(h)) throw bad(`неверный ${what}: ${stripControl(v, false).slice(0, 80)}`);
   return h;
 }
+
+/** Проверенный домен в том виде, в каком он уйдёт в Beget (для окна подтверждения). */
+export function begetFqdn(v: unknown): string { return host(v, 'домен'); }
+
+/** Проверенное имя сайта в том виде, в каком оно уйдёт в Beget. */
+export function begetSiteName(v: unknown): string { return siteName(v); }
 
 function list(v: unknown, what: string): string[] {
   if (!Array.isArray(v) || !v.every(x => typeof x === 'string')) throw bad(`${what}: нужен список строк`);
@@ -70,6 +94,41 @@ function list(v: unknown, what: string): string[] {
 function positiveId(v: unknown, what: string): number {
   if (typeof v !== 'number' || !Number.isInteger(v) || v <= 0 || v > 1e12) throw bad(`неверный ${what}`);
   return v;
+}
+
+const SITE_RE = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/;
+
+function siteName(v: unknown): string {
+  const n = typeof v === 'string' ? asciiDomain(v) : '';
+  if (!SITE_RE.test(n) || n.includes('..')) throw bad('имя сайта: латинские буквы, цифры, точка, дефис и подчёркивание, до 64 символов');
+  return n;
+}
+
+/** Имя домена без зоны и зона для domain/addVirtual: выбирается самая длинная подходящая зона Beget. */
+export function splitBegetDomain(fqdn: unknown, zones: Record<string, number>): { hostname: string; zone_id: number; zone: string } {
+  const h = host(fqdn, 'домен');
+  const labels = h.split('.');
+  for (let i = 1; i < labels.length; i++) {
+    const zone = labels.slice(i).join('.');
+    if (Object.prototype.hasOwnProperty.call(zones, zone)) {
+      const hostname = labels.slice(0, i).join('.');
+      if (hostname.includes('.')) throw bad(`${h}: указан поддомен. Сначала добавьте основной домен ${labels.slice(i - 1).join('.')}, а поддомен потом настройте в его DNS-записях.`);
+      return { hostname, zone_id: zones[zone], zone };
+    }
+  }
+  throw bad(`Beget не работает с зоной домена ${h}`);
+}
+
+/** Зоны из ответа domain/getZoneList: {"ru": {"id": "1", "zone": "ru"}, …} → {ru: 1}. */
+export function begetZones(result: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!result || typeof result !== 'object') return out;
+  for (const v of Object.values(result as Record<string, any>)) {
+    const zone = typeof v?.zone === 'string' ? asciiDomain(v.zone) : '';
+    const id = Number(v?.id);
+    if (zone && /^[a-z0-9.-]{2,63}$/.test(zone) && Number.isInteger(id) && id > 0) out[zone] = id;
+  }
+  return out;
 }
 
 type Rec = { priority: number; value: string };
@@ -111,6 +170,7 @@ export function begetRequest(name: string, args: Record<string, unknown>): { pat
     case 'list_domains': return { path: 'domain/getList' };
     case 'get_dns': return { path: 'dns/getData', data: { fqdn: host(args.fqdn, 'домен') } };
     case 'change_dns': return { path: 'dns/changeRecords', data: { fqdn: host(args.fqdn, 'домен'), records: begetDnsRecords(args) } };
+    case 'add_site': return { path: 'site/add', data: { name: siteName(args.name) } };
     case 'link_domain': return { path: 'site/linkDomain', data: { domain_id: positiveId(args.domain_id, 'domain_id'), site_id: positiveId(args.site_id, 'site_id') } };
     default: throw bad(`нет инструмента ${stripControl(name, false).slice(0, 60)}`);
   }
@@ -173,9 +233,11 @@ export class BegetConnection implements McpConnection {
 
   async callTool(name: string, args: Record<string, unknown>): Promise<McpCallResult> {
     // Неверные аргументы и отказ Beget возвращаются как результат действия: подключение при этом остаётся рабочим.
+    if (name === 'add_domain') return this.addDomain(args);
+    if (name === 'add_site') return this.addSite(args);
     let req: { path: string; data?: Record<string, unknown> };
     try { req = begetRequest(name, args); } catch (e) {
-      if (e instanceof McpError) return { text: e.message, isError: true };
+      if (e instanceof BegetInvalid) return { text: e.message, isError: true };
       throw e;
     }
     let a: Record<string, unknown>;
@@ -196,5 +258,56 @@ export class BegetConnection implements McpConnection {
     text = scrub(stripControl(text), this.password);
     if (text.length > MAX_RESULT_CHARS) text = `${text.slice(0, MAX_RESULT_CHARS)}\n…(обрезано)`;
     return { text, isError };
+  }
+
+  /**
+   * Создание сайта: site/add отвечает только «да/нет», поэтому номер нового сайта берётся из site/getList
+   * по папке «имя/public_html».
+   */
+  private async addSite(args: Record<string, unknown>): Promise<McpCallResult> {
+    const fail = (text: string): McpCallResult => ({ text: scrub(stripControl(text), this.password).slice(0, 2000), isError: true });
+    try {
+      const req = begetRequest('add_site', args);
+      const name = String(req.data?.name);
+      const a = await this.request(req.path, req.data);
+      if (a.status !== 'success' || (a.result !== true && a.result !== 1)) {
+        const errs = Array.isArray(a.errors) ? a.errors : [];
+        return fail(errs.slice(0, 5).map((e: any) => `${typeof e?.error_code === 'string' ? e.error_code : 'ERROR'}: ${typeof e?.error_text === 'string' ? e.error_text : ''}`).join('\n') || 'Beget не создал сайт');
+      }
+      const l = await this.request('site/getList');
+      if (l.status !== 'success' || !Array.isArray(l.result)) return fail('Сайт создан, но Beget не прислал список сайтов. Обновите список сайтов (list_sites) и повторите привязку домена.');
+      const sites = l.result;
+      const site = sites.find((x: any) => typeof x?.path === 'string' && x.path.toLowerCase().replace(/\/+$/, '') === `${name}/public_html`);
+      const id = Number(site?.id);
+      if (!(Number.isInteger(id) && id > 0)) {
+        return { text: JSON.stringify({ created: true, name, note: 'Сайт создан, но его номер не найден. Обновите список сайтов (list_sites) и повторите привязку домена.' }), isError: false };
+      }
+      return { text: JSON.stringify({ site_id: id, name, path: `${name}/public_html` }), isError: false };
+    } catch (e) {
+      if (e instanceof BegetInvalid || e instanceof BegetRejected) return fail(e.message);
+      throw e;
+    }
+  }
+
+  /** Добавление домена: зона берётся из domain/getZoneList, затем domain/addVirtual. */
+  private async addDomain(args: Record<string, unknown>): Promise<McpCallResult> {
+    const fail = (text: string): McpCallResult => ({ text: scrub(stripControl(text), this.password).slice(0, 2000), isError: true });
+    try {
+      host(args.fqdn, 'домен');
+      const z = await this.request('domain/getZoneList');
+      if (z.status !== 'success') return fail('Beget не прислал список доменных зон');
+      const d = splitBegetDomain(args.fqdn, begetZones(z.result));
+      const a = await this.request('domain/addVirtual', { hostname: d.hostname, zone_id: d.zone_id });
+      if (a.status !== 'success') {
+        const errs = Array.isArray(a.errors) ? a.errors : [];
+        return fail(errs.slice(0, 5).map((e: any) => `${typeof e?.error_code === 'string' ? e.error_code : 'ERROR'}: ${typeof e?.error_text === 'string' ? e.error_text : ''}`).join('\n') || 'Beget не добавил домен');
+      }
+      const id = Number(a.result);
+      if (!(id > 0)) return fail('Beget не вернул номер домена');
+      return { text: JSON.stringify({ domain_id: id, fqdn: `${d.hostname}.${d.zone}` }), isError: false };
+    } catch (e) {
+      if (e instanceof BegetInvalid || e instanceof BegetRejected) return fail(e.message);
+      throw e;
+    }
   }
 }

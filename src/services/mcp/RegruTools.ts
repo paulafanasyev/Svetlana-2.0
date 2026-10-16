@@ -1,9 +1,10 @@
 // REG.RU: удалённого MCP у регистратора нет, поэтому Светлана работает с ним напрямую через Рег.API 2
 // (https://api.reg.ru/api/regru2/<раздел>/<функция>). Набор запросов зашит в код: баланс, список доменов, DNS-серверы
-// и записи зоны (чтение), добавление и удаление одной DNS-записи. Записи добавляются по одной, поэтому остальные
+// и записи зоны (чтение), смена DNS-серверов, добавление и удаление одной DNS-записи. Записи добавляются по одной, поэтому остальные
 // записи домена не трогаются. Логин и пароль API уходят только в теле POST-запроса, без редиректов и cookies.
 // REG.RU пускает к API только с IP-адресов из «Настроек API», иначе отвечает ACCESS_DENIED_FROM_IP.
 import { safeJsonParse, stripControl } from '../security/SafeData';
+import { asciiDomain } from './BegetTools';
 import { guardedFetch, readLimited, McpError, type FetchLike, type McpCallResult, type McpConnection, type McpToolDef } from './McpClient';
 
 const BASE = 'https://api.reg.ru/api/regru2';
@@ -23,6 +24,13 @@ export const REGRU_TOOLS: readonly McpToolDef[] = Object.freeze([
     inputSchema: { type: 'object', properties: { domain: domainProp }, required: ['domain'] } },
   { name: 'get_dns', title: 'DNS-записи', readOnly: true, description: 'Все DNS-записи домена (работает, если домен на DNS-серверах REG.RU).',
     inputSchema: { type: 'object', properties: { domain: domainProp }, required: ['domain'] } },
+  { name: 'set_nss', title: 'Сменить DNS-серверы', readOnly: false,
+    description: 'Переносит обслуживание домена на другие DNS-серверы (2–4 сервера), например на хостинг: Beget — ns1.beget.com, ns2.beget.com, ns1.beget.pro, ns2.beget.pro. '
+      + 'После этого записи домена (сайт, почта) берутся у нового DNS-провайдера, а записи в REG.RU перестают действовать. Сначала вызовите get_nss.',
+    inputSchema: { type: 'object', properties: {
+      domain: domainProp,
+      nss: { type: 'array', items: { type: 'string' }, description: 'DNS-серверы, 2–4 шт.' },
+    }, required: ['domain', 'nss'] } },
   { name: 'add_record', title: 'Добавить DNS-запись', readOnly: false,
     description: 'Добавляет одну DNS-запись, остальные записи домена не меняются. Типы: A (IPv4), AAAA (IPv6), CNAME (адрес другого домена), MX (почта, с приоритетом), TXT.',
     inputSchema: { type: 'object', properties: {
@@ -45,7 +53,7 @@ const bad = (what: string) => new McpError(`REG.RU: ${what}`, 'protocol');
 const show = (v: unknown, n = 80) => stripControl(String(v ?? ''), false).slice(0, n);
 
 const LOGIN_RE = /^[A-Za-z0-9_.@+-]{1,100}$/;
-const HOST_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/;
+const HOST_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/;
 const SUB_RE = /^(?=.{1,200}$)(?:@|\*|(?:\*\.)?[a-z0-9_](?:[a-z0-9_-]{0,62})(?:\.[a-z0-9_](?:[a-z0-9_-]{0,62}))*)$/;
 const IPV4_RE = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
 const IPV6_RE = /^(?=.{2,39}$)[0-9a-f]{0,4}(?::[0-9a-f]{0,4}){2,7}$/;
@@ -64,7 +72,7 @@ export function parseRegruCredentials(token: string): { login: string; password:
 
 function domain(v: unknown): string {
   if (typeof v !== 'string') throw bad('нужно указать домен');
-  const h = v.trim().toLowerCase().replace(/\.$/, '');
+  const h = asciiDomain(v);
   if (!HOST_RE.test(h)) throw bad(`неверный домен: ${show(v)}`);
   return h;
 }
@@ -103,6 +111,16 @@ function recValue(type: RecType, v: unknown, exact = false): string {
   return exact ? v : s; // при удалении TXT сравнивается побайтно, поэтому пробелы по краям сохраняем
 }
 
+/** Проверенный список DNS-серверов для domain/update_nss: 2–4 разных имени. */
+export function regruNss(v: unknown): string[] {
+  if (!Array.isArray(v) || !v.every(x => typeof x === 'string')) throw bad('nss: нужен список DNS-серверов');
+  const list = v.map(x => asciiDomain(x as string));
+  if (list.length < 2 || list.length > 4) throw bad('нужно от 2 до 4 DNS-серверов');
+  for (const h of list) if (!HOST_RE.test(h)) throw bad(`неверный DNS-сервер: ${show(h)}`);
+  if (new Set(list).size !== list.length) throw bad('DNS-серверы повторяются');
+  return list;
+}
+
 export interface RegruRecord { domain: string; subdomain: string; type: RecType; value: string; priority?: number }
 
 /** Проверенная запись для add_record/remove_record (используется и для текста подтверждения). */
@@ -123,6 +141,11 @@ export function regruRequest(name: string, args: Record<string, unknown>): { pat
     case 'list_domains': return { path: 'service/get_list', data: { servtype: 'domain' } };
     case 'get_nss': return { path: 'domain/get_nss', data: { domains: [{ dname: domain(args.domain) }] } };
     case 'get_dns': return { path: 'zone/get_resource_records', data: { domains: [{ dname: domain(args.domain) }] } };
+    case 'set_nss': {
+      const nss: Record<string, string> = {};
+      regruNss(args.nss).forEach((h, i) => { nss[`ns${i}`] = h; });
+      return { path: 'domain/update_nss', data: { domains: [{ dname: domain(args.domain) }], nss } };
+    }
     case 'add_record': {
       const r = regruRecord(args);
       const base = { domains: [{ dname: r.domain }], subdomain: r.subdomain };
