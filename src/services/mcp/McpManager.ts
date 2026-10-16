@@ -123,6 +123,12 @@ let factory: ConnectionFactory = defaultFactory;
 /** Для тестов: подменить создание подключений. */
 export function __setMcpFactoryForTests(f: ConnectionFactory | null): void { factory = f ?? defaultFactory; }
 
+interface TokenStore { get(name: string): Promise<string | null>; set(name: string, value: string | null): Promise<unknown>; del(name: string): Promise<unknown> }
+const defaultStore: TokenStore = { get: getSecret, set: setSecret, del: deleteSecret };
+let store: TokenStore = defaultStore;
+/** Для тестов: подменить хранилище токенов (например, чтобы задержать запись). */
+export function __setMcpTokenStoreForTests(s: TokenStore | null): void { store = s ?? defaultStore; }
+
 export const secretName = (serverId: string) => `mcp.${serverId}`;
 
 function slug(name: string): string {
@@ -174,7 +180,7 @@ function sameDef(a: McpToolDef, b: McpToolDef): boolean {
   } catch { return false; }
 }
 
-export interface ActiveTool { id: string; server: McpServerInfo; def: McpToolDef }
+export interface ActiveTool { id: string; server: McpServerInfo; def: McpToolDef; /** номер намерения, при котором инструмент получен */ epoch: number }
 export interface ServerStatus { server: McpServerInfo; connected: boolean; enabled: boolean; autoRead: boolean; canAutoRead: boolean; verified: boolean; error: string | null; tools: { id: string; def: McpToolDef; on: boolean }[] }
 
 export class McpManager {
@@ -194,6 +200,8 @@ export class McpManager {
   private gen = 0;
   /** Номер намерения по каждому сервису: включение, выключение, подключение, обновление, отключение. */
   private epochs = new Map<string, number>();
+  /** Очередь записи токенов по сервису: запись и удаление идут строго друг за другом. */
+  private tokenOps = new Map<string, Promise<unknown>>();
   private startup: Promise<void> = Promise.resolve();
 
   constructor(private readonly kv: KV | null = storage()) {
@@ -224,8 +232,17 @@ export class McpManager {
 
   private notify(): void { this.listeners.forEach(fn => { try { fn(); } catch { /* noop */ } }); }
 
-  /** Сервис больше не считается проверенным: его инструменты сразу убираются из чата. */
+  /** Операции с сохранённым токеном сервиса выполняются по очереди, чтобы старая запись не легла поверх удаления. */
+  private withToken<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.tokenOps.get(id) ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(fn);
+    this.tokenOps.set(id, next.catch(() => {}));
+    return next;
+  }
+
+  /** Сервис больше не считается проверенным: его инструменты сразу убираются из чата, начатые проверки устаревают. */
   private invalidate(id: string, error?: string): void {
+    this.bump(id);
     this.conns.delete(id);
     this.verified.delete(id);
     if (error) this.errors.set(id, error);
@@ -285,7 +302,7 @@ export class McpManager {
       if (!st || !st.enabled || !this.verified.has(server.id)) continue; // только проверенные в этом сеансе
       for (const [id, def] of this.ids(server.id, st.tools)) {
         if (st.off.includes(def.name)) continue;
-        const active: ActiveTool = { id, server, def };
+        const active: ActiveTool = { id, server, def, epoch: this.epoch(server.id) };
         this.registered.set(id, active);
         toolRegistry.registerTool(this.toTool(active));
         const title = def.title || def.name;
@@ -336,6 +353,7 @@ export class McpManager {
         return 'Подготовка: если операция что-то меняет, Timeweb Cloud пока ничего не сделает, а пришлёт сводку для отдельного подтверждения. Если операция только читает, ответ придёт сразу.';
       }
       const s = this.rawSummary(args) ?? '';
+      if (s.includes('[BILLABLE]') && s.includes('[WRITE]')) return 'Платная операция: Timeweb Cloud спишет деньги с баланса и изменит ресурсы. Точную стоимость сервис не сообщил, проверьте тариф в панели Timeweb перед подтверждением.';
       if (s.includes('[BILLABLE]')) return 'Платная операция: Timeweb Cloud спишет деньги с баланса. Точную стоимость сервис не сообщил, проверьте тариф в панели Timeweb перед подтверждением.';
       if (s.includes('[WRITE]')) return 'Операция изменит ресурсы в Timeweb Cloud.';
       return 'Сводку операции сервис не прислал. Действие может изменить ресурсы или списать деньги, проверьте параметры.';
@@ -370,15 +388,15 @@ export class McpManager {
     const g = this.gen;
     const ep = this.epoch(server.id);
     const stale = () => g !== this.gen || ep !== this.epoch(server.id) || !this.state[server.id]?.enabled;
-    const token = await getSecret(secretName(server.id));
+    const token = await store.get(secretName(server.id));
     if (stale()) throw new McpError(`${server.name}: проверка прервана, потому что сервис выключили или изменили его настройки. Попробуйте ещё раз.`, 'denied');
     if (server.tokenRequired && !token) throw new McpError(`${server.name}: токен не найден. Откройте «Сервисы», нажмите «Сменить токен» у этого сервиса, вставьте токен и нажмите «Подключить».`, 'auth');
-    if (token) this.secrets.set(server.id, token);
     const c = factory(server, token);
     // Сохранённому списку инструментов не доверяем: в новом сеансе сервис заново отвечает по токену.
     await c.initialize();
     const tools = cleanTools(await c.listTools(), token);
     if (stale()) throw new McpError(`${server.name}: проверка прервана, потому что сервис выключили или изменили его настройки. Попробуйте ещё раз.`, 'denied');
+    if (token) this.secrets.set(server.id, token); else this.secrets.delete(server.id);
     this.conns.set(server.id, c);
     this.verified.add(server.id);
     this.errors.delete(server.id);
@@ -395,6 +413,7 @@ export class McpManager {
       // изменилось (или инструмент пропал), ничего не выполняем: модель предложит действие заново.
       const current = this.registered.get(a.id);
       if (!current) return { success: false, error: `${a.server.name}: этого действия больше нет. Откройте «Сервисы» и нажмите «Обновить».` };
+      if (current.epoch !== a.epoch || this.conns.get(a.server.id) !== c) return { success: false, error: `${a.server.name}: пока открывалось подтверждение, подключение сервиса изменилось, поэтому Светлана ничего не выполнила. Повторите запрос.` };
       if (!sameDef(current.def, a.def)) return { success: false, error: `${a.server.name}: сервис изменил это действие, поэтому Светлана его не выполнила. Повторите запрос, чтобы подтвердить новую версию.` };
       const r = await c.callTool(a.def.name, params);
       const text = scrubSecret(r.text, secret());
@@ -428,8 +447,8 @@ export class McpManager {
       if (e instanceof Error && /недопустимые символы/.test(e.message)) throw new McpError(e.message, 'auth');
       throw new McpError(`${server.name}: не получилось подключиться. Проверьте токен и интернет.`, 'network');
     });
-    if (stale()) throw cancelled();
-    await setSecret(secretName(server.id), t || null);
+    // Запись токена стоит в очереди: если пока она шла, сервис отключили, удаление выполнится после неё.
+    await this.withToken(server.id, async () => { if (!stale()) await store.set(secretName(server.id), t || null); });
     if (stale()) throw cancelled();
     if (t) this.secrets.set(server.id, t); else this.secrets.delete(server.id);
     this.conns.set(server.id, c);
@@ -446,8 +465,7 @@ export class McpManager {
     const server = mcpServer(serverId);
     const st = this.state[serverId];
     if (!server || !st) throw new McpError('Сервис не подключён', 'denied');
-    this.bump(serverId);
-    this.invalidate(serverId);
+    this.invalidate(serverId); // заодно делает устаревшими все начатые проверки
     const ep = this.epoch(serverId);
     try {
       await this.connection(server); // заново initialize + tools/list, список сохраняется там же
@@ -466,7 +484,7 @@ export class McpManager {
     this.errors.delete(serverId);
     if (serverId === 'timeweb') this.summaries.clear();
     delete this.state[serverId];
-    await deleteSecret(secretName(serverId));
+    await this.withToken(serverId, () => store.del(secretName(serverId)));
     this.save();
   }
 
@@ -730,4 +748,4 @@ export async function runMcpLoop(opts: { reply: string; actions: McpAction[]; so
   return { notes, summary, lastReply };
 }
 
-export const MCP_REJECTED_TEXT = 'Действие пропускается: запрос получился слишком длинным или сложным, и Светлана не смогла бы показать его вам целиком. Попросите сделать это по частям.';
+export const MCP_REJECTED_TEXT = 'Действие пропущено: запрос получился слишком длинным или сложным, и Светлана не смогла бы показать его вам целиком. Попросите сделать это по частям.';
