@@ -1,8 +1,8 @@
 // Каталог внешних сервисов (MCP и Vercel API), к которым Светлана может подключиться по токену.
 // Адреса зашиты в код и совпадают с официальной документацией каждого сервиса: подменить сервер
 // нельзя ни из модели, ни из настроек. Те же адреса разрешены в CSP (csp.mjs и tauri.conf.json).
-// Российские облака: Timeweb Cloud и Yandex Cloud (официальные удалённые MCP). Selectel, REG.RU и Beget
-// своего удалённого MCP не имеют.
+// Российские облака: Timeweb Cloud и Yandex Cloud (официальные удалённые MCP). У Beget удалённого MCP нет,
+// поэтому он работает через встроенный набор запросов к Beget API (BegetTools.ts). Selectel и REG.RU пока не подключены.
 // Сервисы, которые пускают только по OAuth для одобренных приложений (Notion, Cloudflare,
 // официальный Vercel MCP), подключить токеном нельзя; Vercel работает напрямую через его API.
 
@@ -13,6 +13,8 @@ export interface McpServerInfo {
   name: string;
   /** mcp — настоящий MCP-сервер (Streamable HTTP); rest — встроенный набор инструментов поверх API сервиса. */
   kind: 'mcp' | 'rest';
+  /** Подсказка в поле ввода, если там не просто токен (например, «логин:пароль API»). */
+  tokenLabel?: string;
   url: string;
   auth: McpAuth;
   tokenRequired: boolean;
@@ -45,6 +47,13 @@ export const MCP_SERVERS: readonly McpServerInfo[] = Object.freeze([
     tokenUrl: 'https://yandex.cloud/ru/docs/iam/operations/iam-token/create',
     tokenHint: 'Нужен IAM-токен: его выдаёт программа yc (команда yc iam create-token) на компьютере, где она установлена и настроена. Токен действует до 12 часов, потом вставьте новый. Если yc у вас нет, откройте инструкцию по ссылке или попросите специалиста.',
     description: 'Деплой простых приложений: Compute (ВМ), сети, IAM, Object Storage (S3), YDB.',
+  },
+  {
+    id: 'beget', name: 'Beget', kind: 'rest', url: 'https://api.beget.com/api', auth: 'bearer', tokenRequired: true,
+    tokenLabel: 'логин:пароль API',
+    tokenUrl: 'https://beget.com/ru/kb/api/obshhij-princzip-raboty-s-api',
+    tokenHint: 'Панель Beget → «Настройки» → «Доступ к API»: включите доступ и задайте отдельный пароль для API (не пароль входа). Вставьте логин и этот пароль через двоеточие: mylogin:пароль. Если в панели включён доступ только с определённых IP, добавьте туда свой адрес.',
+    description: 'Российский хостинг: сайты, домены, DNS-записи, привязка домена к сайту. Файлы сайта через API Beget не загружаются.',
   },
   {
     id: 'supabase', name: 'Supabase', kind: 'mcp', url: 'https://mcp.supabase.com/mcp', auth: 'bearer', tokenRequired: true,
