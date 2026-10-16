@@ -14,7 +14,7 @@ interface Store { length: number; key(i: number): string | null; removeItem(k: s
 function ls(): Store | null { try { return typeof localStorage !== 'undefined' ? (localStorage as Store) : null; } catch { return null; } }
 
 /** Облачные ИИ, чьи ключи держит нативная часть (как PROVIDERS в secure_ai.rs и SecureAi.kt). */
-export const NATIVE_KEY_PROVIDERS = ['openai', 'groq', 'openrouter', 'deepseek', 'mistral', 'anthropic', 'google', 'svetlana', 'gigachat'] as const;
+export const NATIVE_KEY_PROVIDERS = ['openai', 'groq', 'openrouter', 'deepseek', 'mistral', 'anthropic', 'google', 'svetlana', 'gigachat', 'anymodel', 'opencode'] as const;
 
 /**
  * Удалить ключи ИИ из хранилища приложения. Возвращает число удалённых записей.
