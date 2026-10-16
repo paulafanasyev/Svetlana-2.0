@@ -70,6 +70,12 @@ function ServerCard({ s }: { s: ServerStatus }) {
           <button onClick={() => setOpen(!open)} className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs">
             Инструменты: {onCount} из {s.tools.length}
           </button>
+          {s.canAutoRead && (
+            <label className="flex items-center gap-1.5 text-xs" title="Известные приложению инструменты чтения (просмотр, поиск) выполняются без окна подтверждения. Изменения и голосовые команды подтверждаются всегда.">
+              <input type="checkbox" checked={s.autoRead} onChange={e => mcpManager.setAutoRead(s.server.id, e.target.checked)} aria-label={`Чтение без подтверждения: ${s.server.name}`} />
+              чтение без подтверждения
+            </label>
+          )}
           <button onClick={refresh} disabled={busy} title="Обновить список" aria-label={`Обновить ${s.server.name}`} className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
           </button>
@@ -113,7 +119,7 @@ export default function McpPanel({ onClose }: { onClose?: () => void }) {
         )}
       </div>
       <p className="text-sm text-sv-muted">
-        Подключите сервис токеном, и Светлана сможет работать с ним из чата: «покажи открытые issues в моём репозитории», «почему упал последний деплой». Любой вызов вы подтверждаете на экране, действия, которые меняют данные, помечены ⚠️.
+        Подключите сервис токеном, и Светлана сможет работать с ним из чата: «покажи открытые issues в моём репозитории», «почему упал последний деплой». Вызовы вы подтверждаете на экране (изменения помечены ⚠️). Без подтверждения идут только справочные шаги: поиск операций Timeweb и документация Context7, а чтение можно разрешить галочкой.
       </p>
       {web && <p data-testid="mcp-web-note" className="text-xs text-yellow-300">{MCP_WEB_NOTE}</p>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
