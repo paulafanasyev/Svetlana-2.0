@@ -82,7 +82,7 @@ function ServerCard({ s }: { s: ServerStatus }) {
       {s.connected && s.enabled && !s.verified && (
         <p role={s.error ? 'alert' : 'status'} aria-live={s.error ? 'assertive' : 'polite'} className={`text-xs ${s.error ? 'text-red-400' : 'text-sv-muted'}`}>
           {s.error
-            ? `Не удалось проверить подключение. ${s.error}${/Сменить токен|Обновить/.test(s.error) ? '' : ' Нажмите «Обновить», чтобы попробовать снова.'}`
+            ? `Не удалось проверить подключение. ${s.error}${/Сменить токен|Обновить|Подключить/.test(s.error) ? '' : ' Нажмите «Обновить», чтобы попробовать снова.'}`
             : 'Проверяю подключение…'}
         </p>
       )}
