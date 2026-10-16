@@ -6,6 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.net.URI
 import java.net.URL
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -23,6 +24,10 @@ import javax.net.ssl.HttpsURLConnection
  * Любое изменение ключа и отправка переписки в облако подтверждаются в НАТИВНОМ окне телефона;
  * разрешение привязано к провайдеру, модели и случайному ID разговора (128 бит SecureRandom), 15 минут и 30 запросов.
  *
+ * «Свой ИИ» (custom, только Android): любой OpenAI-совместимый сервер по https. Адрес лежит ВМЕСТЕ с ключом
+ * в защищённом хранилище и меняется только через нативное окно, где адрес показан целиком: страница
+ * не может незаметно увести ключ или переписку на другой сервер. Смена адреса сбрасывает разрешения.
+ *
  * GigaChat (Сбер): в хранилище лежит «Ключ авторизации» из Studio; по нему получается временный токен
  * (храним 25 минут и только в памяти, привязан к отпечатку ключа и поколению). Корневой сертификат Минцифры
  * подключён через res/xml/network_security_config.xml ТОЛЬКО для адресов GigaChat.
@@ -36,12 +41,20 @@ import javax.net.ssl.HttpsURLConnection
 object SecureAi {
     class Fail(message: String) : Exception(message)
 
+    /** Свой ИИ: адрес и ключ (ключ может быть пустым, если сервер работает без него). */
+    class CustomAi(val endpoint: String, val key: String)
+
     const val MAX_SECRET = 4096
     const val MAX_BODY = 2 * 1024 * 1024
     const val MAX_RESPONSE = 8 * 1024 * 1024
     const val MAX_MESSAGES = 200
     const val MAX_TEXT = 200_000
     val PROVIDERS = listOf("openai", "groq", "openrouter", "deepseek", "mistral", "anthropic", "google", "svetlana", "gigachat")
+    /** «Свой ИИ»: только в приложении для Android (в Windows его нет, поэтому он не в PROVIDERS). */
+    const val CUSTOM = "custom"
+    const val MAX_CUSTOM_URL = 200
+    const val CUSTOM_BAD = "Свой ИИ: нужен адрес вида https://api.example.com/v1 (только https, без логина и параметров) и ключ без пробелов"
+    const val CUSTOM_NOT_SET = "Свой ИИ не настроен: откройте «Модели ИИ» → «Свой ИИ» и сохраните адрес"
     /** Единая Светлана на своём сервере (мир-самозанятых.рф), профиль полного режима Svetlana 2.0. */
     const val SVETLANA_CORE = "https://xn----8sba1acxdkgqms3b9euc.xn--p1ai/api/v1/assistant/svetlana2/chat"
     const val SVETLANA_MODEL = "svetlana2"
@@ -69,7 +82,7 @@ object SecureAi {
 
     private class Consent(val provider: String, val model: String, val conversation: String, val at: Long, var uses: Int)
     private class Issued(val id: String, val at: Long)
-    /** Временный токен GigaChat: только в памяти, для того же ключа и того же поколения ключей. */
+    /** Временный токен GigaChat: только в памяти, для того же ключа и того же поколения. */
     private class GigaToken(val keyHash: String, val gen: Long, val token: String, val at: Long)
 
     private val chatCalls = RateLimit(CHAT_PER_MINUTE)
@@ -94,7 +107,7 @@ object SecureAi {
     fun providerOfSecret(name: String): String? {
         if (!name.startsWith("ai.")) return null
         val p = name.removePrefix("ai.")
-        return PROVIDERS.firstOrNull { it == p }
+        return PROVIDERS.firstOrNull { it == p } ?: CUSTOM.takeIf { it == p }
     }
 
     private fun storeName(provider: String) = "native.ai.$provider"
@@ -102,6 +115,40 @@ object SecureAi {
     /** «Ключ авторизации» из Studio — строка base64 (без пробелов и слова Basic). */
     fun validGigachatKey(k: String): Boolean =
         k.length in 16..1024 && k.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it == '+' || it == '/' || it == '=' }
+
+    // ---------- «Свой ИИ»: адрес и значение в хранилище (как normalizeCustomEndpoint в AIGateway.ts) ----------
+
+    private val CUSTOM_HOST = Regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$")
+    private val CUSTOM_PATH = Regex("^(/[A-Za-z0-9._~-]+)*$")
+    private const val COMPLETIONS = "/chat/completions"
+
+    /** Адрес своего ИИ: только https, имя хоста без логина, параметров и #. Хвост /chat/completions отрезается. */
+    fun customEndpoint(raw: String): String? {
+        var s = raw.trim().trimEnd('/')
+        if (s.endsWith(COMPLETIONS, ignoreCase = true)) s = s.dropLast(COMPLETIONS.length)
+        if (s.length > MAX_CUSTOM_URL || !s.startsWith("https://", ignoreCase = true)) return null
+        val u = try { URI(s) } catch (e: Exception) { return null }
+        if (!"https".equals(u.scheme, ignoreCase = true)) return null
+        if (u.rawUserInfo != null || u.rawQuery != null || u.rawFragment != null) return null
+        val host = u.host?.lowercase() ?: return null
+        if (!CUSTOM_HOST.matches(host)) return null
+        val port = u.port
+        if (port != -1 && port !in 1..65535) return null
+        val path = u.rawPath.orEmpty()
+        if (!CUSTOM_PATH.matches(path)) return null
+        return "https://$host" + (if (port == -1) "" else ":$port") + path
+    }
+
+    /** Значение со страницы или из хранилища: {"endpoint":"https://…","key":"…"} и ничего больше. */
+    fun parseCustom(v: String): CustomAi? {
+        val o = try { JSONObject(v) } catch (e: Exception) { return null }
+        for (k in o.keys()) if (k != "endpoint" && k != "key") return null
+        val endpoint = customEndpoint((o.opt("endpoint") as? String).orEmpty()) ?: return null
+        val key = if (o.isNull("key")) "" else (o.opt("key") as? String ?: return null)
+        // Ключ уйдёт в заголовок: только печатные ASCII-символы без пробелов.
+        if (key.length > MAX_SECRET || key.any { it.code !in 0x21..0x7e }) return null
+        return CustomAi(endpoint, key)
+    }
 
     fun secretHas(ctx: Context, name: String): Boolean {
         val provider = providerOfSecret(name) ?: throw Fail("Недопустимое имя ключа")
@@ -112,25 +159,37 @@ object SecureAi {
         val gen = generation
         val provider = providerOfSecret(name) ?: throw Fail("Недопустимое имя ключа")
         val v = value?.takeIf { it.isNotEmpty() }
+        var custom: CustomAi? = null
         if (v != null) {
-            if (v.toByteArray(Charsets.UTF_8).size > MAX_SECRET || v.any { it.isISOControl() }) throw Fail("Некорректный ключ")
-            if (provider == "gigachat" && !validGigachatKey(v)) throw Fail(GIGACHAT_BAD_KEY)
+            if (provider == CUSTOM) {
+                if (v.length > MAX_SECRET + 1024) throw Fail(CUSTOM_BAD)
+                custom = parseCustom(v) ?: throw Fail(CUSTOM_BAD)
+            } else {
+                if (v.toByteArray(Charsets.UTF_8).size > MAX_SECRET || v.any { it.isISOControl() }) throw Fail("Некорректный ключ")
+                if (provider == "gigachat" && !validGigachatKey(v)) throw Fail(GIGACHAT_BAD_KEY)
+            }
         } else if (SecretStore.get(ctx, storeName(provider)) == null) {
             return
         }
         if (!secretWrites.ok()) throw Fail("Слишком частое изменение ключей, подождите минуту")
         revokeConsents(provider)
         if (provider == "gigachat") gigaToken = null
-        val question = if (v != null) {
-            "Сохранить новый API-ключ для «$provider» в защищённом хранилище телефона?"
-        } else {
-            "Удалить API-ключ «$provider» из хранилища телефона?"
+        val c = custom
+        val question = when {
+            c != null -> "Подключить свой ИИ по адресу\n${c.endpoint}\n" +
+                (if (c.key.isEmpty()) "без ключа" else "с API-ключом (он останется в защищённом хранилище телефона)") +
+                "?\n\nПереписка со Светланой будет уходить на этот сервер. Подключайте только сервер, которому доверяете."
+            v != null -> "Сохранить новый API-ключ для «$provider» в защищённом хранилище телефона?"
+            provider == CUSTOM -> "Отключить свой ИИ и удалить его адрес и ключ из хранилища телефона?"
+            else -> "Удалить API-ключ «$provider» из хранилища телефона?"
         }
         if (!confirm(question)) throw Fail(CANCELLED)
+        // Свой ИИ: в хранилище ложится именно тот адрес, который человек видел в окне.
+        val stored = if (c != null) JSONObject().put("endpoint", c.endpoint).put("key", c.key).toString() else v
         // Если пока ждали ответа, всё удалили — старый запрос ключ не восстанавливает.
         synchronized(wipeLock) {
             if (generation != gen) throw Fail(WIPED)
-            SecretStore.put(ctx, storeName(provider), v)
+            SecretStore.put(ctx, storeName(provider), stored)
             if (provider == "gigachat") gigaToken = null
         }
     }
@@ -218,7 +277,7 @@ object SecureAi {
 
     fun cloudChat(ctx: Context, provider: String, model: String, conversation: String, body: Any?, confirm: (String) -> Boolean): String {
         val gen = generation
-        val p = PROVIDERS.firstOrNull { it == provider } ?: throw Fail("Этот облачный сервис не поддерживается")
+        val p = PROVIDERS.firstOrNull { it == provider } ?: CUSTOM.takeIf { it == provider } ?: throw Fail("Этот облачный сервис не поддерживается")
         val obj = body as? JSONObject ?: throw Fail("Тело запроса должно быть объектом")
         // Размер — до разбора схемы: огромное тело не должно проходить рекурсивную проверку.
         val bodyBytes = obj.toString().toByteArray(Charsets.UTF_8)
@@ -228,9 +287,17 @@ object SecureAi {
         if (!chatCalls.ok()) throw Fail("Слишком много запросов к облачному ИИ, подождите минуту")
         if (!takeConsent(p, model, conversation)) {
             val preview = previewOf(p, obj)
-            val question = "Разрешить Светлане отправить переписку в облачный ИИ «$p», модель $model?\n" +
-                "Разговор: «$preview»\n" +
-                "Разрешение действует только для этого разговора: 15 минут и не больше $CONSENT_MAX_USES запросов."
+            val question = if (p == CUSTOM) {
+                // В окне — адрес из хранилища, а не со страницы: именно туда уйдёт запрос.
+                val target = SecretStore.get(ctx, storeName(p))?.let { parseCustom(it) }?.endpoint ?: throw Fail(CUSTOM_NOT_SET)
+                "Разрешить Светлане отправить переписку в свой ИИ по адресу $target, модель $model?\n" +
+                    "Разговор: «$preview»\n" +
+                    "Разрешение действует только для этого разговора: 15 минут и не больше $CONSENT_MAX_USES запросов."
+            } else {
+                "Разрешить Светлане отправить переписку в облачный ИИ «$p», модель $model?\n" +
+                    "Разговор: «$preview»\n" +
+                    "Разрешение действует только для этого разговора: 15 минут и не больше $CONSENT_MAX_USES запросов."
+            }
             if (!confirm(question)) throw Fail(CANCELLED)
             synchronized(wipeLock) {
                 if (generation != gen) throw Fail(WIPED)
@@ -240,7 +307,8 @@ object SecureAi {
         val key = synchronized(wipeLock) {
             if (generation != gen) throw Fail(WIPED)
             SecretStore.get(ctx, storeName(p))
-        } ?: throw Fail("API-ключ не задан")
+        } ?: throw Fail(if (p == CUSTOM) CUSTOM_NOT_SET else "API-ключ не задан")
+        if (p == CUSTOM) return postCustom(parseCustom(key) ?: throw Fail(CUSTOM_NOT_SET), bodyBytes, gen)
         return post(p, model, key, bodyBytes, gen)
     }
 
@@ -376,6 +444,15 @@ object SecureAi {
         }
         val (code, text) = exchange(endpoint(p, model), headers, body, gen, MAX_RESPONSE)
         if (code !in 200..299) throw Fail("HTTP $code: ${text.take(500)}")
+        return text
+    }
+
+    /** Свой ИИ: OpenAI-совместимый /chat/completions по адресу из хранилища (те же лимиты, без редиректов). */
+    private fun postCustom(c: CustomAi, body: ByteArray, gen: Long): String {
+        val headers = linkedMapOf("Content-Type" to "application/json", "Accept" to "application/json")
+        if (c.key.isNotEmpty()) headers["Authorization"] = "Bearer ${c.key}"
+        val (code, text) = exchange(c.endpoint + COMPLETIONS, headers, body, gen, MAX_RESPONSE)
+        if (code !in 200..299) throw Fail("Свой ИИ: HTTP $code: ${text.take(500)}")
         return text
     }
 

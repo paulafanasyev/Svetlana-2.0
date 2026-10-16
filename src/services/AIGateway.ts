@@ -12,6 +12,9 @@
 // (команда lan_http, первая отправка на новый адрес — после нативного подтверждения, см. AndroidFiles).
 // Облачные — только официальные адреса (список для КАЖДОГО сервиса, неизвестный облачный сервис отклоняется),
 // прокси — только свой сервер. Подменённый адрес не получит ни ключ, ни переписку.
+// Исключение — «Свой ИИ» (id 'custom', только приложение для Android): любой OpenAI-совместимый сервер по https.
+// Его адрес хранится вместе с ключом в Android Keystore и меняется только через нативное окно с адресом
+// целиком (SecureAi.kt): страница не может незаметно увести ключ или переписку на другой сервер.
 // Локальная модель при ошибке НИКОГДА не переключается на облако сама: переписка не покидает
 // домашнюю сеть без явного выбора облачного провайдера пользователем (см. fallbackCandidates).
 // Вызовы инструментов от модели проходят строгую проверку по схеме инструмента (security/ToolCallSchema).
@@ -95,6 +98,29 @@ export function gigachatTemperature(t: unknown): number {
   return Math.min(2, Math.max(0.1, n));
 }
 
+/** «Свой ИИ»: любой OpenAI-совместимый сервер по https. Пока только в приложении для Android (SecureAi.kt). */
+export const CUSTOM_AI_ID = 'custom';
+export const CUSTOM_AI_ANDROID_ONLY = 'Свой ИИ пока подключается только в приложении для Android.';
+export const CUSTOM_AI_BAD_URL = 'Свой ИИ: нужен адрес вида https://api.example.com/v1 (только https, без логина и параметров)';
+export const CUSTOM_AI_REENTER_KEY = 'Адрес своего ИИ изменился: введите ключ ещё раз (или очистите поле, если сервер работает без ключа).';
+const CUSTOM_HOST_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+const CUSTOM_PATH_RE = /^(\/[A-Za-z0-9._~-]+)*$/;
+
+/** Адрес своего ИИ: https, имя хоста, путь до /chat/completions (сам хвост отрезается). Как customEndpoint в SecureAi.kt. */
+export function normalizeCustomEndpoint(raw: string): string {
+  let s = String(raw ?? '').trim().replace(/\/+$/, '');
+  s = s.replace(/\/chat\/completions$/i, '');
+  const m = /^https:\/\/([^/:?#@\s]+)(?::(\d{1,5}))?(\/[^?#\s]*)?$/i.exec(s);
+  if (!m || s.length > 200) throw new Error(CUSTOM_AI_BAD_URL);
+  const host = m[1].toLowerCase();
+  const port = m[2] ? Number(m[2]) : null;
+  const path = m[3] ?? '';
+  if (!CUSTOM_HOST_RE.test(host) || (port !== null && (port < 1 || port > 65535)) || !CUSTOM_PATH_RE.test(path)) {
+    throw new Error(CUSTOM_AI_BAD_URL);
+  }
+  return `https://${host}${port !== null ? `:${port}` : ''}${path}`;
+}
+
 /** Официальные адреса КАЖДОГО облачного сервиса. Другие адреса и неизвестные сервисы отклоняются. */
 const OFFICIAL_ENDPOINTS: Record<string, string[]> = {
   openai: ['https://api.openai.com/v1'],
@@ -117,6 +143,11 @@ const octetsOk = (e: string) => (/^http:\/\/(\d+)\.(\d+)\.(\d+)\.(\d+)/.exec(e)?
 /** Проверка адреса провайдера. Возвращает нормализованный адрес или бросает ошибку. */
 export function validateEndpoint(p: Pick<AIProvider, 'id' | 'type' | 'endpoint'>): string {
   const e = String(p.endpoint ?? '').trim().replace(/\/+$/, '');
+  if (p.id === CUSTOM_AI_ID) {
+    if (p.type !== 'online') throw new Error(CUSTOM_AI_BAD_URL);
+    if (!isAndroidApp()) throw new Error(CUSTOM_AI_ANDROID_ONLY);
+    return normalizeCustomEndpoint(e);
+  }
   if (p.type === 'offline') {
     if (isAndroidApp()) {
       if (!LAN_RE.test(e) || !octetsOk(e)) throw new Error('Локальная модель: адрес компьютера в домашней сети, например http://192.168.1.10:11434 (или http://127.0.0.1:порт, если модель запущена на самом телефоне)');
@@ -247,8 +278,9 @@ class AIGateway {
       if (native) {
         // Приложение (Windows или Android): ключ переносим в хранилище системы и стираем из браузерного хранилища;
         // в памяти JavaScript остаётся только отметка «ключ есть».
+        // У своего ИИ в хранилище лежит пара «адрес + ключ»: старый одиночный ключ туда не переносим.
         const name = secretName(p.id);
-        const legacy = p.apiKey && p.apiKey !== NATIVE_KEY_PLACEHOLDER ? p.apiKey : await getSecret(name);
+        const legacy = p.id === CUSTOM_AI_ID ? null : p.apiKey && p.apiKey !== NATIVE_KEY_PLACEHOLDER ? p.apiKey : await getSecret(name);
         if (legacy) {
           try { await nativeSetSecret(name, legacy); await setSecret(name, null); } catch (e) { console.error('Не удалось перенести ключ в хранилище приложения', e); }
         }
@@ -275,7 +307,10 @@ class AIGateway {
     if (isNativeApp()) {
       // Отметка «ключ есть» из интерфейса никогда не перезаписывает настоящий ключ.
       if (p.apiKey === NATIVE_KEY_PLACEHOLDER) return Promise.resolve();
-      const value = p.apiKey ?? null;
+      // Свой ИИ: адрес уходит в хранилище вместе с ключом (ключ может быть пустым), телефон покажет адрес в окне.
+      const value = p.id === CUSTOM_AI_ID
+        ? JSON.stringify({ endpoint: p.endpoint, key: p.apiKey ?? '' })
+        : p.apiKey ?? null;
       p.apiKey = value ? NATIVE_KEY_PLACEHOLDER : undefined;
       // Браузерную копию стираем фоном; её ошибка не должна становиться необработанным промисом.
       void Promise.resolve(setSecret(name, null)).catch(() => undefined);
@@ -289,15 +324,25 @@ class AIGateway {
     return Promise.resolve(setSecret(name, p.apiKey ?? null)).then(() => undefined);
   }
 
+  /** Свой ИИ: сменить адрес без ключа нельзя — иначе старый ключ ушёл бы на новый сервер (или адрес в интерфейсе разошёлся бы с хранилищем). */
+  private guardCustomEndpoint(before: AIProvider | undefined, next: AIProvider) {
+    if (next.id === CUSTOM_AI_ID && before && before.endpoint !== next.endpoint && next.apiKey === NATIVE_KEY_PLACEHOLDER) {
+      throw new Error(CUSTOM_AI_REENTER_KEY);
+    }
+  }
+
   /**
    * Добавить провайдера. Дождитесь промиса перед проверкой соединения: ключ записывается асинхронно.
    * Если ключ не сохранён — откат: новый провайдер удаляется, у существующего возвращаются прежние
    * настройки (отметка ключа — по факту хранилища), активным снова становится прежний.
    */
   addProvider(provider: AIProvider): Promise<void> {
+    // Понятная ошибка адреса своего ИИ (вместо общей «некорректные настройки»).
+    if (provider?.id === CUSTOM_AI_ID) validateEndpoint(provider);
     const p = sanitizeProvider(provider);
     if (!p) throw new Error('Некорректные настройки провайдера (адрес или идентификатор)');
     const before = this.providers.get(p.id);
+    this.guardCustomEndpoint(before, p);
     const prev = before ? { ...before } : undefined;
     const prevActive = this.activeProvider;
     this.providers.set(p.id, p);
@@ -337,10 +382,12 @@ class AIGateway {
     if (!provider) return Promise.resolve();
     const next = sanitizeProvider({ ...provider, ...updates, id });
     if (!next) throw new Error('Некорректные настройки провайдера (адрес)');
+    this.guardCustomEndpoint(provider, next);
     Object.assign(provider, next);
     if (updates.enabled) {
       this.activeProvider = id;
     }
+    // У своего ИИ адрес лежит в хранилище вместе с ключом: новый адрес записывается туда же.
     const saved = 'apiKey' in updates ? this.storeKey(provider) : Promise.resolve();
     this.saveToStorage();
     return saved;
@@ -402,8 +449,12 @@ class AIGateway {
     }
     // Приложения (Windows и Android): облачный запрос делает нативная часть, ключ в JavaScript не попадает.
     // Прокси в приложениях не используется: иначе переписка ушла бы мимо окна подтверждения.
+    // Свой ИИ — тоже только так: адрес берётся из хранилища телефона, а не со страницы.
     if (provider.type === 'online' && isNativeApp()) {
       return this.callNative(provider, messages, options);
+    }
+    if (provider.id === CUSTOM_AI_ID) {
+      throw new Error(CUSTOM_AI_ANDROID_ONLY);
     }
     // GigaChat — только через нативную часть приложения (ключ не уходит ни в прокси, ни в браузерный запрос).
     if (provider.id === 'gigachat') {
