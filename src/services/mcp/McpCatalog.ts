@@ -1,6 +1,8 @@
 // Каталог внешних сервисов (MCP и Vercel API), к которым Светлана может подключиться по токену.
 // Адреса зашиты в код и совпадают с официальной документацией каждого сервиса: подменить сервер
 // нельзя ни из модели, ни из настроек. Те же адреса разрешены в CSP (csp.mjs и tauri.conf.json).
+// Российские облака: Timeweb Cloud и Yandex Cloud (официальные удалённые MCP). Selectel, REG.RU и Beget
+// своего удалённого MCP не имеют.
 // Сервисы, которые пускают только по OAuth для одобренных приложений (Notion, Cloudflare,
 // официальный Vercel MCP), подключить токеном нельзя; Vercel работает напрямую через его API.
 
@@ -31,6 +33,18 @@ export const MCP_SERVERS: readonly McpServerInfo[] = Object.freeze([
     tokenUrl: 'https://vercel.com/account/settings/tokens',
     tokenHint: 'Токен Vercel. Официальный Vercel MCP пускает только по OAuth, поэтому Светлана работает через API Vercel.',
     description: 'Проекты, деплои, логи сборки, домены (только чтение).',
+  },
+  {
+    id: 'timeweb', name: 'Timeweb Cloud', kind: 'mcp', url: 'https://api.timeweb.cloud/api/v1/mcp/search', auth: 'bearer', tokenRequired: true,
+    tokenUrl: 'https://timeweb.cloud/my/api-keys',
+    tokenHint: 'API-токен из раздела «API и Terraform». Лучше с ограниченными правами и сроком: полный токен может создавать платные ресурсы.',
+    description: 'Российское облако: серверы, App Platform (деплой сайтов из Git), базы, Kubernetes, S3, домены.',
+  },
+  {
+    id: 'yandex', name: 'Yandex Cloud', kind: 'mcp', url: 'https://toolkit.mcp.cloud.yandex.net/mcp', auth: 'bearer', tokenRequired: true,
+    tokenUrl: 'https://yandex.cloud/ru/docs/iam/operations/iam-token/create',
+    tokenHint: 'IAM-токен (команда yc iam create-token). Живёт до 12 часов, потом вставьте новый.',
+    description: 'Деплой простых приложений: Compute (ВМ), сети, IAM, Object Storage (S3), YDB.',
   },
   {
     id: 'supabase', name: 'Supabase', kind: 'mcp', url: 'https://mcp.supabase.com/mcp', auth: 'bearer', tokenRequired: true,
