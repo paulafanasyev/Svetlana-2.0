@@ -80,7 +80,7 @@ function ServerCard({ s }: { s: ServerStatus }) {
       )}
 
       {s.connected && s.enabled && !s.verified && (
-        <p role="status" className={`text-xs ${s.error ? 'text-red-400' : 'text-sv-muted'}`}>
+        <p role={s.error ? 'alert' : 'status'} aria-live={s.error ? 'assertive' : 'polite'} className={`text-xs ${s.error ? 'text-red-400' : 'text-sv-muted'}`}>
           {s.error
             ? `Не удалось проверить подключение. ${s.error}${/Сменить токен|Обновить/.test(s.error) ? '' : ' Нажмите «Обновить», чтобы попробовать снова.'}`
             : 'Проверяю подключение…'}
@@ -162,7 +162,9 @@ export default function McpPanel({ onClose }: { onClose?: () => void }) {
         <li>Пишите Светлане в чат. Каждое действие она покажет вам на подтверждение, изменения помечены ⚠️. Без окна может идти только просмотр в Vercel, если вы включите там галочку «чтение без подтверждения».</li>
       </ol>
       <p className="text-xs text-sv-muted">
-        {storageMode === 'memory'
+        {storageMode === null
+          ? 'Проверяю защищённое хранилище…'
+          : storageMode === 'memory'
           ? 'Защищённое хранилище на этом устройстве недоступно: токен хранится только до закрытия приложения, потом его нужно вставить снова.'
           : 'Токен хранится зашифрованно на этом устройстве и повторно не показывается.'}
       </p>

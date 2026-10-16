@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
   McpManager, mcpManager, runMcpActions, parseMcpActions, stripActionBlocks, findMcpBlocks, scrubSecret, scrubDeep, isSmallArgs,
-  __setMcpFactoryForTests, MCP_REJECTED_TEXT,
+  __setMcpFactoryForTests, __setMcpTokenStoreForTests, MCP_REJECTED_TEXT,
 } from '../services/mcp/McpManager';
 import { McpClient, McpError, parseRpcResponse, resultText } from '../services/mcp/McpClient';
 import { mcpServer } from '../services/mcp/McpCatalog';
@@ -24,7 +24,7 @@ function memoryKv() {
 }
 
 describe('MCP hardening: confirmation and trust', () => {
-  afterEach(() => { __setMcpFactoryForTests(null); mcpManager.reset(); resetActionGate(); });
+  afterEach(() => { __setMcpFactoryForTests(null); __setMcpTokenStoreForTests(null); mcpManager.reset(); resetActionGate(); });
 
   it('asks for every call by default; only the built-in adapter can read without a dialog', async () => {
     __setMcpFactoryForTests(() => conn([listIssues, createIssue, listProjects]));
@@ -130,6 +130,35 @@ describe('MCP hardening: confirmation and trust', () => {
     expect(mcpManager.activeTools()).toEqual([]);
   });
 
+  it('disconnect during a slow token write leaves no token behind', async () => {
+    const saved = new Map<string, string>();
+    let release: () => void = () => {};
+    let slow = true;
+    __setMcpTokenStoreForTests({
+      get: async n => saved.get(n) ?? null,
+      set: async (n, v) => { if (slow) { slow = false; await new Promise<void>(r => { release = r; }); } if (v) saved.set(n, v); else saved.delete(n); },
+      del: async n => { saved.delete(n); },
+    });
+    __setMcpFactoryForTests(() => conn([listIssues]));
+    const pending = mcpManager.connect('github', TOKEN);
+    await new Promise(r => setTimeout(r, 0));
+    const removing = mcpManager.disconnect('github'); // удаление ждёт записи в очереди
+    release();
+    await removing;
+    await expect(pending).rejects.toThrow(/подключение отменено/);
+    expect(saved.size).toBe(0);
+  });
+
+  it('does not run an approved call if the token was replaced while the dialog was open', async () => {
+    const calls: string[] = [];
+    __setMcpFactoryForTests(() => conn([createIssue], n => { calls.push(n); return 'ok'; }));
+    await mcpManager.connect('github', TOKEN);
+    setActionConfirmer(async () => { await mcpManager.connect('github', 'ghp_NEW_TOKEN_999'); return true; });
+    const r = await runMcpActions([{ tool: 'mcp_github__create_issue', args: { title: 't' }, source: 'llm' }]);
+    expect(r.lines[0]).toMatch(/подключение сервиса изменилось/);
+    expect(calls).toEqual([]);
+  });
+
   it('does not run an approved call if the service changed the tool while the dialog was open', async () => {
     let version = 1;
     const calls: string[] = [];
@@ -141,7 +170,7 @@ describe('MCP hardening: confirmation and trust', () => {
     await mcpManager.connect('github', TOKEN);
     setActionConfirmer(async () => { version = 2; await mcpManager.refresh('github'); return true; });
     const r = await runMcpActions([{ tool: 'mcp_github__create_issue', args: { title: 't' }, source: 'llm' }]);
-    expect(r.lines[0]).toMatch(/сервис изменил это действие/);
+    expect(r.lines[0]).toMatch(/сервис изменил это действие|подключение сервиса изменилось/);
     expect(calls).toEqual([]);
   });
 
@@ -215,6 +244,18 @@ describe('MCP hardening: confirmation and trust', () => {
     await runMcpActions([{ tool: 'mcp_timeweb__execute_tool', args: { tool_id: 'x', confirm_token: tok }, source: 'llm' }]);
     expect(dialogs[1].lines[0]).toBe('Что будет: Timeweb Cloud: Переименовать сеть');
     expect(dialogs[1].warning).toMatch(/изменит ресурсы/);
+  });
+
+  it('a paid change says both: money and resources', async () => {
+    __setMcpFactoryForTests(() => conn([{ name: 'execute_tool', readOnly: false, inputSchema: { type: 'object', properties: { tool_id: { type: 'string' }, confirm_token: { type: 'string' } } } }],
+      (_n, a) => a.confirm_token ? 'done' : JSON.stringify({ status: 'confirmation_required', confirm_token: 'k', operation_summary: '[WRITE] [BILLABLE] Создать сервер' })));
+    await mcpManager.connect('timeweb', 'tw_token_123');
+    const dialogs: ActionSummary[] = [];
+    setActionConfirmer(async (_r, s) => { dialogs.push(s); return true; });
+    await runMcpActions([{ tool: 'mcp_timeweb__execute_tool', args: { tool_id: 'x' }, source: 'llm' }]);
+    await runMcpActions([{ tool: 'mcp_timeweb__execute_tool', args: { tool_id: 'x', confirm_token: 'k' }, source: 'llm' }]);
+    expect(dialogs[1].warning).toMatch(/спишет деньги с баланса и изменит ресурсы/);
+    expect(dialogs[1].lines[0]).toBe('Что будет: Timeweb Cloud: Создать сервер');
   });
 });
 
