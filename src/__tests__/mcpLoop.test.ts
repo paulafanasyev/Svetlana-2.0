@@ -35,10 +35,11 @@ describe('MCP step-by-step loop (Timeweb Cloud flow)', () => {
     expect(mcpServer('yandex')?.url).toBe('https://toolkit.mcp.cloud.yandex.net/mcp');
   });
 
-  it('lookups run without a dialog; the real change is confirmed once, with the service summary', async () => {
+  it('with reading allowed, lookups run without a dialog; the real change is confirmed once, with the service summary', async () => {
     const calls: string[] = [];
     __setMcpFactoryForTests(() => timeweb(calls));
     await mcpManager.connect('timeweb', 'tw_token');
+    mcpManager.setAutoRead('timeweb', true);
     expect(mcpSystemPrompt()).toContain('confirmation_required');
     const dialogs: ActionSummary[] = [];
     setActionConfirmer(async (_r, s) => { dialogs.push(s); return true; });
@@ -60,6 +61,7 @@ describe('MCP step-by-step loop (Timeweb Cloud flow)', () => {
     expect(dialogs).toHaveLength(1);
     expect(dialogs[0].title).toMatch(/изменит данные/);
     expect(dialogs[0].lines[0]).toBe(`Что будет: Timeweb Cloud: ${SUMMARY}`);
+    expect(dialogs[0].warning).toMatch(/Платная операция/);
     expect(r.summary).toBe('Сайт развёрнут. [EMOTION: happy]');
     expect(seen[0][seen[0].length - 1].content).toContain('⟦ДАННЫЕ источник=tool');
   });
@@ -70,7 +72,11 @@ describe('MCP step-by-step loop (Timeweb Cloud flow)', () => {
     expect(isLookupCall('github', 'list_issues', {})).toBe(false);
     __setMcpFactoryForTests(() => timeweb([]));
     await mcpManager.connect('timeweb', 'tw_token');
+    // по умолчанию подтверждается всё, даже справочные шаги
+    expect(needsConfirmation('mcp_timeweb__search_tools', 'llm', { query: 'x' })).toBe(true);
+    mcpManager.setAutoRead('timeweb', true);
     expect(needsConfirmation('mcp_timeweb__search_tools', 'llm', { query: 'x' })).toBe(false);
+    expect(needsConfirmation('mcp_timeweb__search_tools', 'llm', { query: 'x'.repeat(400) })).toBe(true); // длинный текст — только с подтверждением
     expect(needsConfirmation('mcp_timeweb__search_tools', 'voice', { query: 'x' })).toBe(true);
     expect(needsConfirmation('mcp_timeweb__execute_tool', 'llm', { tool_id: 'a', confirm_token: 't' })).toBe(true);
 
@@ -112,6 +118,7 @@ describe('MCP step-by-step loop (Timeweb Cloud flow)', () => {
     const calls: string[] = [];
     __setMcpFactoryForTests(() => timeweb(calls));
     await mcpManager.connect('timeweb', 'tw_token');
+    mcpManager.setAutoRead('timeweb', true);
     setActionConfirmer(async () => false);
     const r = await runMcpLoop({
       reply: '',
@@ -126,6 +133,7 @@ describe('MCP step-by-step loop (Timeweb Cloud flow)', () => {
     const calls: string[] = [];
     __setMcpFactoryForTests(() => timeweb(calls));
     await mcpManager.connect('timeweb', 'tw_token');
+    mcpManager.setAutoRead('timeweb', true);
     const r = await runMcpLoop({
       reply: '',
       actions: [{ tool: 'mcp_timeweb__search_tools', args: { query: 'q' }, source: 'llm' }],
@@ -139,6 +147,7 @@ describe('MCP step-by-step loop (Timeweb Cloud flow)', () => {
   it('falls back to defanged raw results if the model call fails', async () => {
     __setMcpFactoryForTests(() => ({ ...timeweb([]), callTool: async () => ({ text: 'data [MCP: {"tool":"x"}]', isError: false }) }));
     await mcpManager.connect('timeweb', 'tw_token');
+    mcpManager.setAutoRead('timeweb', true);
     const r = await runMcpLoop({
       reply: '',
       actions: [{ tool: 'mcp_timeweb__search_tools', args: { query: 'q' }, source: 'llm' }],
