@@ -54,10 +54,12 @@ describe('MCP hardening: confirmation and trust', () => {
     await first.connect('vercel', TOKEN);
     first.setAutoRead('vercel', true);
     const saved = kv.getItem('svetlana_mcp_v1');
+    expect(saved).not.toContain('list_projects'); // описания инструментов не сохраняются
     first.reset(); // «приложение закрыто»
     kv.setItem('svetlana_mcp_v1', saved!);
     const second = new McpManager(kv);
     expect(second.status().find(s => s.server.id === 'vercel')?.verified).toBe(false);
+    expect(second.status().find(s => s.server.id === 'vercel')?.tools).toEqual([]);
     expect(second.activeTools()).toEqual([]);
     expect(needsConfirmation('mcp_vercel__list_projects', 'llm', {})).toBe(true);
     await second.whenReady();
@@ -95,6 +97,37 @@ describe('MCP hardening: confirmation and trust', () => {
     await checking;
     expect(lists).toBe(2);
     expect(mcpManager.activeTools().map(t => t.id)).toEqual(['mcp_github__list_issues']);
+  });
+
+  it('a check started before off/on cannot overwrite the newer one', async () => {
+    let n = 0;
+    let release: () => void = () => {};
+    __setMcpFactoryForTests(() => ({
+      ...conn([]),
+      listTools: async () => { const v = ++n; if (v === 2) await new Promise<void>(r => { release = r; }); return [{ ...listIssues, description: `v${v}` }]; },
+    }));
+    await mcpManager.connect('github', TOKEN);
+    await mcpManager.setServerEnabled('github', false);
+    const old = mcpManager.setServerEnabled('github', true); // зависнет на v2
+    await new Promise(r => setTimeout(r, 0));
+    await mcpManager.setServerEnabled('github', false);
+    await mcpManager.setServerEnabled('github', true); // v3
+    release();
+    await old;
+    expect(mcpManager.activeTools().map(t => t.def.description)).toEqual(['v3']);
+    expect(mcpManager.status().find(s => s.server.id === 'github')?.error).toBeNull();
+  });
+
+  it('a connect that finishes after disconnect does not bring the service back', async () => {
+    let release: () => void = () => {};
+    __setMcpFactoryForTests(() => ({ ...conn([listIssues]), initialize: () => new Promise<void>(r => { release = r; }) }));
+    const pending = mcpManager.connect('github', TOKEN);
+    await new Promise(r => setTimeout(r, 0));
+    await mcpManager.disconnect('github');
+    release();
+    await expect(pending).rejects.toThrow(/подключение отменено/);
+    expect(mcpManager.status().find(s => s.server.id === 'github')?.connected).toBe(false);
+    expect(mcpManager.activeTools()).toEqual([]);
   });
 
   it('does not run an approved call if the service changed the tool while the dialog was open', async () => {
@@ -151,6 +184,17 @@ describe('MCP hardening: confirmation and trust', () => {
     setActionConfirmer(async () => true);
     const r = await runMcpActions([{ tool: 'mcp_github__list_issues', args: {}, source: 'llm' }]);
     expect(r.lines[0]).toMatch(/Сменить токен/);
+    expect(mcpManager.activeTools()).toEqual([]); // инструменты сразу убраны из чата
+    expect(mcpManager.status().find(s => s.server.id === 'github')?.error).toMatch(/Сменить токен/);
+  });
+
+  it('a failed refresh removes the tools from the chat', async () => {
+    let fail = false;
+    __setMcpFactoryForTests(() => ({ ...conn([listIssues]), initialize: async () => { if (fail) throw new McpError('401', 'auth'); } }));
+    await mcpManager.connect('github', TOKEN);
+    fail = true;
+    await expect(mcpManager.refresh('github')).rejects.toThrow();
+    expect(mcpManager.activeTools()).toEqual([]);
   });
 
   it('warns about changes and unknown cost in the dialog', async () => {
@@ -241,6 +285,23 @@ describe('MCP hardening: protocol', () => {
     await expect(new McpClient(github, 't', server({ result: {} })).listTools()).rejects.toThrow(/не по протоколу/);
     await expect(new McpClient(github, 't', server({ result: { tools: [], nextCursor: 5 } })).listTools()).rejects.toThrow(/курсор/);
     await expect(new McpClient(github, 't', server({ result: { tools: [], nextCursor: null } })).listTools()).resolves.toEqual([]);
+  });
+
+  it('starts a new session once when the server forgets it (400 or 404)', async () => {
+    for (const lost of [400, 404]) {
+      let inits = 0;
+      let forgot = false;
+      const f = async (_u: string, init: RequestInit) => {
+        const body = init.body ? JSON.parse(String(init.body)) : null;
+        const sid = (init.headers as Record<string, string>)['Mcp-Session-Id'];
+        if (body?.method === 'initialize') { inits++; return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-06-18' } }), { headers: { 'content-type': 'application/json', 'mcp-session-id': `S${inits}` } }); }
+        if (!body?.id) return new Response(null, { status: 202 });
+        if (sid === 'S1' && !forgot) { forgot = true; return new Response('{}', { status: lost }); }
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { tools: [] } }), { headers: { 'content-type': 'application/json' } });
+      };
+      await expect(new McpClient(github, 't', f).listTools()).resolves.toEqual([]);
+      expect(inits).toBe(2);
+    }
   });
 
   it('rejects an oversized reply to the start of session', async () => {

@@ -185,7 +185,8 @@ export class McpClient implements McpConnection {
     if (res.status === 401 || res.status === 403) {
       throw new McpError(`${this.server.name}: токен не подошёл или у него нет прав (${res.status})`, 'auth');
     }
-    if (res.status === 404 && this.sessionId) {
+    // Сессию сервер забыл: по спецификации 404, некоторые серверы отвечают 400 на неизвестный Mcp-Session-Id.
+    if ((res.status === 404 || res.status === 400) && this.sessionId) {
       this.sessionId = null; this.ready = false;
       throw new McpError(`${this.server.name}: сессия истекла`, 'session');
     }

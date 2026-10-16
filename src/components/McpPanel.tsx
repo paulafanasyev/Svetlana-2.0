@@ -1,7 +1,8 @@
 // «Сервисы»: подключение GitHub, Vercel, Timeweb Cloud, Yandex Cloud, Supabase, Linear, Stripe, Sentry, Neon, Context7 и Hugging Face по токену.
 // Токен уходит в зашифрованное хранилище и обратно в интерфейс не показывается.
 // Каждый вызов сервиса из чата Светлана выполняет только после подтверждения на экране
-// (кроме чтения, если пользователь сам разрешил его галочкой).
+// (кроме просмотра в Vercel, если пользователь сам разрешил его галочкой).
+// Список инструментов показывается только после того, как сервис в этом сеансе заново ответил по токену.
 import { useEffect, useId, useState } from 'react';
 import { Plug, ExternalLink, RefreshCw, Trash2, Loader2, X, Key, Eye, EyeOff } from 'lucide-react';
 import { mcpManager, type ServerStatus } from '../services/mcp/McpManager';
@@ -88,10 +89,10 @@ function ServerCard({ s }: { s: ServerStatus }) {
 
       {s.connected && (
         <div className="flex flex-wrap items-center gap-2">
-          <button onClick={() => setOpen(!open)} aria-expanded={open} aria-controls={listId} className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs">
+          {s.verified && <button onClick={() => setOpen(!open)} aria-expanded={open} aria-controls={listId} className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs">
             Инструменты: {onCount} из {s.tools.length}
-          </button>
-          {s.canAutoRead && (
+          </button>}
+          {s.verified && s.canAutoRead && (
             <label className="flex items-center gap-1.5 text-xs" title="Просмотр проектов, деплоев, логов и доменов выполняется без окна подтверждения. Голосовые команды подтверждаются всегда.">
               <input type="checkbox" checked={s.autoRead} onChange={e => mcpManager.setAutoRead(s.server.id, e.target.checked)} aria-label={`Чтение без подтверждения: ${s.server.name}`} />
               чтение без подтверждения
@@ -117,7 +118,7 @@ function ServerCard({ s }: { s: ServerStatus }) {
         </div>
       )}
 
-      {s.connected && open && (
+      {s.connected && s.verified && open && (
         <ul id={listId} className="max-h-60 overflow-y-auto space-y-1 pr-1">
           {s.tools.map(t => (
             <li key={t.id} className="flex items-start gap-2 text-xs">
