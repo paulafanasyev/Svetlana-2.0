@@ -1,4 +1,4 @@
-// «Сервисы»: подключение GitHub, Vercel, Timeweb Cloud, Yandex Cloud, Supabase, Linear, Stripe, Sentry, Neon, Context7 и Hugging Face по токену.
+// «Сервисы»: подключение GitHub, Vercel, Timeweb Cloud, Yandex Cloud, Beget, Supabase, Linear, Stripe, Sentry, Neon, Context7 и Hugging Face по токену.
 // Токен уходит в зашифрованное хранилище и обратно в интерфейс не показывается.
 // Каждый вызов сервиса из чата Светлана выполняет только после подтверждения на экране
 // (кроме просмотра в Vercel, если пользователь сам разрешил его галочкой).
@@ -21,6 +21,8 @@ function ServerCard({ s }: { s: ServerStatus }) {
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [replace, setReplace] = useState(false);
   const listId = useId();
+  // У сервисов с логином и паролем (Beget) вместо «токена» говорим «данные для входа».
+  const creds = !!s.server.tokenLabel;
 
   const run = async (fn: () => Promise<string>) => {
     setBusy(true); setMsg(null);
@@ -31,7 +33,7 @@ function ServerCard({ s }: { s: ServerStatus }) {
   };
   const connect = () => run(async () => { const n = await mcpManager.connect(s.server.id, token); setToken(''); setReplace(false); return `Подключено, инструментов: ${n}`; });
   const refresh = () => run(async () => `Обновлено, инструментов: ${await mcpManager.refresh(s.server.id)}`);
-  const remove = () => { setConfirmRemove(false); return run(async () => { await mcpManager.disconnect(s.server.id); return 'Отключено, токен удалён'; }); };
+  const remove = () => { setConfirmRemove(false); return run(async () => { await mcpManager.disconnect(s.server.id); return creds ? 'Отключено, данные доступа удалены' : 'Отключено, токен удалён'; }); };
   const onCount = s.tools.filter(t => t.on).length;
 
   return (
@@ -57,11 +59,11 @@ function ServerCard({ s }: { s: ServerStatus }) {
               autoComplete="off"
               value={token}
               onChange={e => setToken(e.target.value)}
-              placeholder={s.server.tokenRequired ? 'токен' : 'токен (необязательно)'}
-              aria-label={`Токен ${s.server.name}`}
+              placeholder={s.server.tokenLabel ?? (s.server.tokenRequired ? 'токен' : 'токен (необязательно)')}
+              aria-label={creds ? `Логин и пароль API ${s.server.name} в формате ${s.server.tokenLabel}` : `Токен ${s.server.name}`}
               className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-xs focus:outline-none focus:border-indigo-500/50"
             />
-            <button type="button" onClick={() => setShow(!show)} aria-pressed={show} aria-label={show ? 'Скрыть токен' : 'Показать токен'} title={show ? 'Скрыть токен' : 'Показать токен'} className="p-2 rounded-lg bg-white/5 hover:bg-white/10">
+            <button type="button" onClick={() => setShow(!show)} aria-pressed={show} aria-label={show ? (creds ? 'Скрыть данные доступа' : 'Скрыть токен') : (creds ? 'Показать данные доступа' : 'Показать токен')} title={show ? (creds ? 'Скрыть данные доступа' : 'Скрыть токен') : (creds ? 'Показать данные доступа' : 'Показать токен')} className="p-2 rounded-lg bg-white/5 hover:bg-white/10">
               {show ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
             </button>
             <button
@@ -74,7 +76,7 @@ function ServerCard({ s }: { s: ServerStatus }) {
           </div>
           <p className="text-xs text-sv-muted flex items-start gap-1">
             <Key className="w-3 h-3 mt-0.5 shrink-0" />
-            <span>{s.server.tokenHint} <a href={s.server.tokenUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline inline-flex items-center gap-0.5">Как получить токен <ExternalLink className="w-3 h-3" /></a></span>
+            <span>{s.server.tokenHint} <a href={s.server.tokenUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline inline-flex items-center gap-0.5">{creds ? 'Как настроить API' : 'Как получить токен'} <ExternalLink className="w-3 h-3" /></a></span>
           </p>
         </>
       )}
@@ -82,7 +84,7 @@ function ServerCard({ s }: { s: ServerStatus }) {
       {s.connected && s.enabled && !s.verified && (
         <p role={s.error ? 'alert' : 'status'} aria-live={s.error ? 'assertive' : 'polite'} className={`text-xs ${s.error ? 'text-red-400' : 'text-sv-muted'}`}>
           {s.error
-            ? `Не удалось проверить подключение. ${s.error}${/Сменить токен|Обновить|Подключить/.test(s.error) ? '' : ' Нажмите «Обновить», чтобы попробовать снова.'}`
+            ? `Не удалось проверить подключение. ${s.error}${/Сменить токен|Сменить данные|Обновить|Подключить/.test(s.error) ? '' : ' Нажмите «Обновить», чтобы попробовать снова.'}`
             : 'Проверяю подключение…'}
         </p>
       )}
@@ -102,15 +104,15 @@ function ServerCard({ s }: { s: ServerStatus }) {
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
           </button>
           <button onClick={() => setReplace(!replace)} aria-expanded={replace} className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs">
-            {replace ? 'Отмена' : 'Сменить токен'}
+            {replace ? 'Отмена' : creds ? 'Сменить данные для входа' : 'Сменить токен'}
           </button>
           {!confirmRemove ? (
-            <button onClick={() => setConfirmRemove(true)} disabled={busy} title="Отключить и удалить токен" aria-label={`Отключить ${s.server.name}`} className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 disabled:opacity-50">
+            <button onClick={() => setConfirmRemove(true)} disabled={busy} title={creds ? 'Отключить и удалить данные доступа' : 'Отключить и удалить токен'} aria-label={`Отключить ${s.server.name}`} className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 disabled:opacity-50">
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           ) : (
             <span className="flex items-center gap-1.5 text-xs" role="group" aria-label="Подтвердите отключение">
-              Удалить токен?
+              {creds ? 'Удалить данные доступа?' : 'Удалить токен?'}
               <button onClick={remove} disabled={busy} className="px-2 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white">Да, отключить</button>
               <button onClick={() => setConfirmRemove(false)} className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20">Нет</button>
             </span>
@@ -157,16 +159,16 @@ export default function McpPanel({ onClose }: { onClose?: () => void }) {
         Подключите сервис, и Светлана сможет работать с ним из чата: «разверни мой сайт на Timeweb», «покажи открытые задачи в GitHub», «почему упал последний деплой».
       </p>
       <ol className="text-sm text-sv-muted list-decimal pl-5 space-y-0.5">
-        <li>Нажмите «Как получить токен» у нужного сервиса и создайте токен с минимальными правами и сроком.</li>
-        <li>Скопируйте токен, вставьте в поле и нажмите «Подключить».</li>
+        <li>Откройте ссылку под нужным сервисом: «Как получить токен» для сервисов с токеном (создайте его с минимальными правами и сроком), «Как настроить API» для Beget (включите доступ к API и задайте отдельный пароль API).</li>
+        <li>Скопируйте токен, вставьте в поле и нажмите «Подключить». Для Beget вставьте логин и пароль API через двоеточие: логин:пароль.</li>
         <li>Пишите Светлане в чат. Каждое действие она покажет вам на подтверждение, изменения помечены ⚠️. Без окна может идти только просмотр в Vercel, если вы включите там галочку «чтение без подтверждения».</li>
       </ol>
       <p className="text-xs text-sv-muted">
         {storageMode === null
           ? 'Проверяю защищённое хранилище…'
           : storageMode === 'memory'
-          ? 'Защищённое хранилище на этом устройстве недоступно: токен хранится только до закрытия приложения, потом его нужно вставить снова.'
-          : 'Токен хранится зашифрованно на этом устройстве и повторно не показывается.'}
+          ? 'Защищённое хранилище на этом устройстве недоступно: токены и пароли API хранятся только до закрытия приложения, потом их нужно вставить снова.'
+          : 'Токены и пароли API хранятся зашифрованно на этом устройстве и повторно не показываются.'}
       </p>
       {web && <p data-testid="mcp-web-note" className="text-xs text-yellow-300">{MCP_WEB_NOTE}</p>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

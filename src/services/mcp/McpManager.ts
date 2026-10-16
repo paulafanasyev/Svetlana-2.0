@@ -11,6 +11,7 @@ import { defang, stripUntrusted, wrapUntrusted, UNTRUSTED_RULE } from '../securi
 import { MCP_SERVERS, mcpServer, type McpServerInfo } from './McpCatalog';
 import { McpClient, McpError, type McpConnection, type McpToolDef } from './McpClient';
 import { VercelConnection } from './VercelTools';
+import { BegetConnection, begetDnsRecords } from './BegetTools';
 
 const STATE_KEY = 'svetlana_mcp_v1';
 const MAX_ACTIONS = 3;
@@ -118,7 +119,11 @@ interface KV { getItem(k: string): string | null; setItem(k: string, v: string):
 function storage(): KV | null { try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; } }
 
 export type ConnectionFactory = (server: McpServerInfo, token: string | null) => McpConnection;
-const defaultFactory: ConnectionFactory = (s, t) => (s.kind === 'rest' ? new VercelConnection(t ?? '') : new McpClient(s, t));
+const defaultFactory: ConnectionFactory = (s, t) => {
+  if (s.kind !== 'rest') return new McpClient(s, t);
+  if (s.id === 'beget') return new BegetConnection(t ?? '');
+  return new VercelConnection(t ?? '');
+};
 let factory: ConnectionFactory = defaultFactory;
 /** Для тестов: подменить создание подключений. */
 export function __setMcpFactoryForTests(f: ConnectionFactory | null): void { factory = f ?? defaultFactory; }
@@ -140,6 +145,7 @@ const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,40}$/;
 /** Понятный пользователю текст ошибки сервиса, без токена. */
 function friendlyError(server: McpServerInfo, e: unknown, secret: string | null): string {
   if (e instanceof McpError) {
+    if (e.code === 'auth' && server.id === 'beget') return `${scrubSecret(stripControl(e.message, false), secret).slice(0, 300)} Затем откройте «Сервисы», нажмите «Сменить данные для входа», вставьте логин и пароль API через двоеточие и нажмите «Подключить».`;
     if (e.code === 'auth') return `${server.name}: токен не подошёл, истёк или у него мало прав. Откройте «Сервисы», нажмите «Сменить токен» у этого сервиса, вставьте новый и нажмите «Подключить».`;
     if (e.code === 'network' || e.code === 'timeout') return `${server.name}: нет связи или сервис не ответил. Проверьте интернет, откройте «Сервисы» и нажмите «Обновить», затем повторите запрос.`;
     const detail = scrubSecret(stripControl(e.message, false), secret).slice(0, 200);
@@ -181,6 +187,19 @@ function sameDef(a: McpToolDef, b: McpToolDef): boolean {
       && (a.description ?? '') === (b.description ?? '')
       && JSON.stringify(a.inputSchema ?? {}) === JSON.stringify(b.inputSchema ?? {});
   } catch { return false; }
+}
+
+/** Понятное описание изменения Beget для окна подтверждения: какие записи останутся у домена. */
+function describeBeget(name: string, args: Record<string, unknown>): string | null {
+  const str = (v: unknown) => stripControl(String(v ?? ''), false).slice(0, 120);
+  if (name === 'link_domain') return `Beget: привязать домен №${str(args.domain_id)} к сайту №${str(args.site_id)}`;
+  if (name !== 'change_dns') return null;
+  try {
+    const r = begetDnsRecords(args);
+    const fmt = (k: string, label: string) => r[k] ? `${label}: ${r[k].length ? r[k].map(x => (k === 'MX' ? `${x.priority} ${x.value}` : x.value)).join(', ') : 'нет (будут удалены)'}` : null;
+    const parts = [fmt('A', 'A (IP сайта)'), fmt('MX', 'MX (почта)'), fmt('TXT', 'TXT'), fmt('NS', 'NS'), fmt('CNAME', 'CNAME')].filter(Boolean);
+    return `Beget: у домена ${str(args.fqdn)} останутся только эти записи. ${parts.join('; ')}`;
+  } catch { return null; }
 }
 
 export interface ActiveTool { id: string; server: McpServerInfo; def: McpToolDef; /** номер намерения, при котором инструмент получен */ epoch: number }
@@ -339,6 +358,7 @@ export class McpManager {
 
   /** Для окна подтверждения: что именно сделает вызов (сводка операции, которую сервис прислал на первом шаге). */
   private describe(server: McpServerInfo, def: McpToolDef, args: Record<string, unknown>): string | null {
+    if (server.id === 'beget') return describeBeget(def.name, args);
     if (server.id !== 'timeweb' || def.name !== 'execute_tool' || typeof args.confirm_token !== 'string') return null;
     const s = this.rawSummary(args);
     const text = s ? s.replace(/\[(?:BILLABLE|WRITE)\]\s*/g, '').trim() : '';
@@ -364,8 +384,13 @@ export class McpManager {
       if (s.includes('[WRITE]')) return 'Операция изменит ресурсы в Timeweb Cloud.';
       return 'Сводку операции сервис не прислал. Действие может изменить ресурсы или списать деньги, проверьте параметры.';
     }
+    if (server.id === 'beget' && def.name === 'change_dns') {
+      return 'Beget заменит ВСЕ DNS-записи этого домена списком ниже. Записей, которых нет в списке, не останется: проверьте, что почта (MX) и проверочные TXT на месте.';
+    }
     if (server.id === 'timeweb' || server.id === 'context7') return null; // справочные шаги
     if (knownRead) return null;
+    // Встроенный адаптер: запросы чтения зашиты в код приложения, поэтому пометка «чтение» здесь достоверна.
+    if (server.kind === 'rest' && def.readOnly) return null;
     if (def.readOnly) return `Сервис пометил действие как чтение, но Светлана не может это проверить. Если сомневаетесь, нажмите «Отмена».`;
     return `Действие может изменить данные в ${server.name}. Сервис не сообщил стоимость — перед подтверждением проверьте тариф ${server.name}, если у него есть платные операции.`;
   }
@@ -470,6 +495,7 @@ export class McpManager {
       return { c: conn, tools: cleanTools(await conn.listTools(), t) };
     };
     const { c, tools } = await open().catch((e: unknown) => {
+      if (e instanceof McpError && e.code === 'auth' && server.id === 'beget') throw new McpError(scrubSecret(e.message, t), 'auth');
       if (e instanceof McpError && e.code === 'auth') throw new McpError(`${server.name}: токен не подошёл, истёк или у него недостаточно прав. Проверьте токен и нажмите «Подключить» ещё раз.`, 'auth');
       if (e instanceof McpError) throw new McpError(scrubSecret(e.message, t), e.code);
       if (e instanceof Error && /недопустимые символы/.test(e.message)) throw new McpError(e.message, 'auth');
