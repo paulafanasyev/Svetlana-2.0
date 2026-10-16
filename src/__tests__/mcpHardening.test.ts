@@ -168,14 +168,59 @@ describe('MCP hardening: confirmation and trust', () => {
       initialize: t === NEW ? () => new Promise<void>(r => { release = r; }) : async () => {},
     }));
     await mcpManager.connect('github', TOKEN);
-    const replacing = mcpManager.connect('github', NEW);
     setActionConfirmer(async () => true);
+    const replacing = mcpManager.connect('github', NEW);
+    expect(mcpManager.activeTools()).toEqual([]); // старые инструменты сразу убраны из чата
     const r = await runMcpActions([{ tool: 'mcp_github__create_issue', args: { title: 't' }, source: 'llm' }]);
-    expect(r.lines[0]).toMatch(/подключение сервиса изменилось/);
+    expect(r.lines[0]).not.toMatch(/^✅/);
     expect(calls).toEqual([]);
     release();
     await replacing;
     expect(mcpManager.activeTools().map(t => t.id)).toEqual(['mcp_github__create_issue']);
+  });
+
+  it('a failed token replacement keeps the service out of the chat and says why', async () => {
+    let bad = false;
+    __setMcpFactoryForTests(() => ({ ...conn([createIssue]), initialize: async () => { if (bad) throw new McpError('401', 'auth'); } }));
+    await mcpManager.connect('github', TOKEN);
+    bad = true;
+    await expect(mcpManager.connect('github', 'ghp_BAD')).rejects.toThrow(/Проверьте токен/);
+    const st = mcpManager.status().find(s => s.server.id === 'github')!;
+    expect(st.verified).toBe(false);
+    expect(st.error).toMatch(/Подключить/);
+    expect(mcpManager.activeTools()).toEqual([]);
+  });
+
+  it('a lost session during an action is not retried and the service is checked again', async () => {
+    let toolCalls = 0;
+    const f = async (_u: string, init: RequestInit) => {
+      const body = init.body ? JSON.parse(String(init.body)) : null;
+      if (body?.method === 'initialize') return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-06-18' } }), { headers: { 'content-type': 'application/json', 'mcp-session-id': 'S1' } });
+      if (!body?.id) return new Response(null, { status: 202 });
+      if (body.method === 'tools/list') return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { tools: [{ name: 'create_issue', inputSchema: { type: 'object', properties: {} } }] } }), { headers: { 'content-type': 'application/json' } });
+      toolCalls++;
+      return new Response('{}', { status: 404 });
+    };
+    __setMcpFactoryForTests((s, t) => new McpClient(s, t, f));
+    await mcpManager.connect('github', TOKEN);
+    setActionConfirmer(async () => true);
+    const r = await runMcpActions([{ tool: 'mcp_github__create_issue', args: {}, source: 'llm' }]);
+    expect(toolCalls).toBe(1);
+    expect(r.lines[0]).toMatch(/действие не выполнено/);
+    expect(mcpManager.activeTools()).toEqual([]);
+  });
+
+  it('Timeweb summaries are forgotten when the connection is checked again', async () => {
+    __setMcpFactoryForTests(() => conn([{ name: 'execute_tool', readOnly: false, inputSchema: { type: 'object', properties: { tool_id: { type: 'string' }, confirm_token: { type: 'string' } } } }],
+      (_n, a) => a.confirm_token ? 'done' : JSON.stringify({ status: 'confirmation_required', confirm_token: 'k', operation_summary: '[WRITE] Старое действие' })));
+    await mcpManager.connect('timeweb', 'tw_token_123');
+    const dialogs: ActionSummary[] = [];
+    setActionConfirmer(async (_r, s) => { dialogs.push(s); return true; });
+    await runMcpActions([{ tool: 'mcp_timeweb__execute_tool', args: { tool_id: 'x' }, source: 'llm' }]);
+    await mcpManager.refresh('timeweb');
+    await runMcpActions([{ tool: 'mcp_timeweb__execute_tool', args: { tool_id: 'x', confirm_token: 'k' }, source: 'llm' }]);
+    expect(dialogs[1].lines.join(' ')).not.toContain('Старое действие');
+    expect(dialogs[1].warning).toMatch(/Сводку операции сервис не прислал/);
   });
 
   it('a failed check after restart never shows the token from the error', async () => {

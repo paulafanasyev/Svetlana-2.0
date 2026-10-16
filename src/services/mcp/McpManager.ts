@@ -141,6 +141,9 @@ const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,40}$/;
 function friendlyError(server: McpServerInfo, e: unknown, secret: string | null): string {
   if (e instanceof McpError) {
     if (e.code === 'auth') return `${server.name}: токен не подошёл, истёк или у него мало прав. Откройте «Сервисы», нажмите «Сменить токен» у этого сервиса, вставьте новый и нажмите «Подключить».`;
+    if (e.code === 'network' || e.code === 'timeout') return `${server.name}: нет связи или сервис не ответил. Проверьте интернет, откройте «Сервисы» и нажмите «Обновить», затем повторите запрос.`;
+    const detail = scrubSecret(stripControl(e.message, false), secret).slice(0, 200);
+    if (e.code === 'protocol') return `${server.name}: сервис прислал непонятный ответ. Откройте «Сервисы» и нажмите «Обновить», затем повторите запрос. Подробности: ${detail}`;
     return scrubSecret(stripControl(e.message, false), secret).slice(0, 400);
   }
   return `${server.name}: не получилось выполнить запрос. Попробуйте ещё раз; если повторится, откройте «Сервисы» и нажмите «Обновить».`;
@@ -202,6 +205,8 @@ export class McpManager {
   private epochs = new Map<string, number>();
   /** Очередь записи токенов по сервису: запись и удаление идут строго друг за другом. */
   private tokenOps = new Map<string, Promise<unknown>>();
+  /** Идёт подключение нового токена: старым токеном в это время ничего не проверяется и не вызывается. */
+  private connecting = new Map<string, number>();
   private startup: Promise<void> = Promise.resolve();
 
   constructor(private readonly kv: KV | null = storage()) {
@@ -243,6 +248,7 @@ export class McpManager {
   /** Сервис больше не считается проверенным: его инструменты сразу убираются из чата, начатые проверки устаревают. */
   private invalidate(id: string, error?: string): void {
     this.bump(id);
+    if (id === 'timeweb') this.summaries.clear(); // сводки привязаны к прежнему подключению
     this.conns.delete(id);
     this.verified.delete(id);
     if (error) this.errors.set(id, error);
@@ -388,6 +394,7 @@ export class McpManager {
     const g = this.gen;
     const ep = this.epoch(server.id);
     const stale = () => g !== this.gen || ep !== this.epoch(server.id) || !this.state[server.id]?.enabled;
+    if (this.connecting.has(server.id)) throw new McpError(`${server.name}: сейчас подключается новый токен, поэтому Светлана ничего не выполнила. Повторите запрос, когда подключение завершится.`, 'denied');
     const token = await store.get(secretName(server.id));
     if (stale()) throw new McpError(`${server.name}: проверка прервана, потому что сервис выключили или изменили его настройки. Попробуйте ещё раз.`, 'denied');
     if (server.tokenRequired && !token) throw new McpError(`${server.name}: токен не найден. Откройте «Сервисы», нажмите «Сменить токен» у этого сервиса, вставьте токен и нажмите «Подключить».`, 'auth');
@@ -440,9 +447,22 @@ export class McpManager {
     if (!server) throw new McpError('Неизвестный сервис', 'denied');
     const t = token.trim();
     if (server.tokenRequired && !t) throw new McpError(`${server.name}: вставьте токен`, 'auth');
+    // Старое подключение сразу перестаёт действовать: его инструменты уходят из чата до конца проверки нового токена.
+    if (this.state[server.id]) this.invalidate(server.id);
     const g = this.gen;
     const ep = this.bump(server.id);
     const stale = () => g !== this.gen || ep !== this.epoch(server.id);
+    this.connecting.set(server.id, ep);
+    try { return await this.connectWith(server, t, stale); } catch (e) {
+      // Замена токена не удалась: сервис остаётся непроверенным, причина видна в «Сервисы».
+      if (!stale() && this.state[server.id] && e instanceof McpError) this.invalidate(server.id, e.message);
+      throw e;
+    } finally {
+      if (this.connecting.get(server.id) === ep) this.connecting.delete(server.id);
+    }
+  }
+
+  private async connectWith(server: McpServerInfo, t: string, stale: () => boolean): Promise<number> {
     const cancelled = () => new McpError(`${server.name}: подключение отменено, потому что настройки сервиса изменились. Нажмите «Подключить» ещё раз.`, 'denied');
     const open = async (): Promise<{ c: McpConnection; tools: McpToolDef[] }> => {
       const conn = factory(server, t || null);
@@ -502,6 +522,7 @@ export class McpManager {
     if (!st) return Promise.resolve();
     st.enabled = on;
     this.bump(serverId);
+    if (serverId === 'timeweb') this.summaries.clear();
     this.errors.delete(serverId);
     // Выключение забывает подключение; при включении сервис снова проверяется по токену, и только потом
     // его инструменты появляются в чате.
@@ -540,7 +561,7 @@ export class McpManager {
   isMcpTool(id: string): boolean { return this.registered.has(id); }
 
   /** Для тестов и «Удалить все данные»: забыть всё в памяти. */
-  reset(): void { this.gen++; this.epochs.clear(); this.conns.clear(); this.summaries.clear(); this.secrets.clear(); this.verified.clear(); this.errors.clear(); this.state = {}; try { this.kv?.removeItem(STATE_KEY); } catch { /* noop */ } this.sync(); }
+  reset(): void { this.gen++; this.epochs.clear(); this.connecting.clear(); this.conns.clear(); this.summaries.clear(); this.secrets.clear(); this.verified.clear(); this.errors.clear(); this.state = {}; try { this.kv?.removeItem(STATE_KEY); } catch { /* noop */ } this.sync(); }
 }
 
 export const mcpManager = new McpManager();
