@@ -25,7 +25,7 @@ class SecureAiTest {
     @Test
     fun providersMatchWindowsOrder() {
         assertEquals(
-            listOf("openai", "groq", "openrouter", "deepseek", "mistral", "anthropic", "google", "svetlana", "gigachat"),
+            listOf("openai", "groq", "openrouter", "deepseek", "mistral", "anthropic", "google", "svetlana", "gigachat", "anymodel", "opencode"),
             SecureAi.PROVIDERS,
         )
     }
@@ -34,10 +34,20 @@ class SecureAiTest {
     fun secretNamesOnlyForKnownProviders() {
         assertEquals("gigachat", SecureAi.providerOfSecret("ai.gigachat"))
         assertEquals("openai", SecureAi.providerOfSecret("ai.openai"))
+        assertEquals("anymodel", SecureAi.providerOfSecret("ai.anymodel"))
+        assertEquals("opencode", SecureAi.providerOfSecret("ai.opencode"))
         assertNull(SecureAi.providerOfSecret("ai.evil"))
         assertNull(SecureAi.providerOfSecret("ai."))
         assertNull(SecureAi.providerOfSecret("gigachat"))
         assertNull(SecureAi.providerOfSecret("native.ai.openai"))
+    }
+
+    @Test
+    fun gatewaysUseFixedAddresses() {
+        assertEquals("https://anymodel.org/v1/chat/completions", SecureAi.ANYMODEL_CHAT)
+        assertEquals("https://opencode.ai/zen/v1/chat/completions", SecureAi.OPENCODE_CHAT)
+        accepts("anymodel", "claude-sonnet-4.5", """{"model":"claude-sonnet-4.5","messages":[{"role":"system","content":"s"},{"role":"user","content":"a"}]}""")
+        accepts("opencode", "kimi-k2.5", """{"model":"kimi-k2.5","messages":[{"role":"user","content":"a"}],"temperature":0.7}""")
     }
 
     @Test
