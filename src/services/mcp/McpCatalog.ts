@@ -2,7 +2,8 @@
 // Адреса зашиты в код и совпадают с официальной документацией каждого сервиса: подменить сервер
 // нельзя ни из модели, ни из настроек. Те же адреса разрешены в CSP (csp.mjs и tauri.conf.json).
 // Российские облака: Timeweb Cloud и Yandex Cloud (официальные удалённые MCP). У Beget удалённого MCP нет,
-// поэтому он работает через встроенный набор запросов к Beget API (BegetTools.ts). Selectel и REG.RU пока не подключены.
+// поэтому он работает через встроенный набор запросов к Beget API (BegetTools.ts); REG.RU так же, через Рег.API 2
+// (RegruTools.ts). Selectel пока не подключён.
 // Сервисы, которые пускают только по OAuth для одобренных приложений (Notion, Cloudflare,
 // официальный Vercel MCP), подключить токеном нельзя; Vercel работает напрямую через его API.
 
@@ -54,6 +55,13 @@ export const MCP_SERVERS: readonly McpServerInfo[] = Object.freeze([
     tokenUrl: 'https://beget.com/ru/kb/api/obshhij-princzip-raboty-s-api',
     tokenHint: 'Панель Beget → «Настройки» → «Доступ к API»: включите доступ и задайте отдельный пароль для API (не пароль входа). Вставьте логин и этот пароль через двоеточие: mylogin:пароль. Если в панели включён доступ только с определённых IP, добавьте туда свой адрес.',
     description: 'Российский хостинг: сайты, домены, DNS-записи, привязка домена к сайту. Файлы сайта через API Beget не загружаются.',
+  },
+  {
+    id: 'regru', name: 'REG.RU', kind: 'rest', url: 'https://api.reg.ru/api/regru2', auth: 'bearer', tokenRequired: true,
+    tokenLabel: 'логин:пароль API',
+    tokenUrl: 'https://help.reg.ru/support/partneram/reg-api/',
+    tokenHint: 'Личный кабинет REG.RU → «Настройки API»: задайте альтернативный пароль для API и добавьте свой внешний IP-адрес в список разрешённых (без этого REG.RU отклонит запросы; если провайдер меняет IP, адрес придётся обновлять). Вставьте логин и пароль API через двоеточие: mylogin:пароль.',
+    description: 'Российский регистратор: домены, баланс, DNS-серверы, добавление и удаление DNS-записей (по одной, остальные не меняются).',
   },
   {
     id: 'supabase', name: 'Supabase', kind: 'mcp', url: 'https://mcp.supabase.com/mcp', auth: 'bearer', tokenRequired: true,
