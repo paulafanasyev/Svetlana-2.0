@@ -81,7 +81,7 @@ describe('MCP client (Streamable HTTP)', () => {
     expect(parseRpcResponse('{"jsonrpc":"2.0","id":1,"result":{"a":1}}', 'application/json', 1)).toEqual({ a: 1 });
     expect(parseRpcResponse('[{"jsonrpc":"2.0","id":2,"result":"x"}]', 'application/json', 2)).toBe('x');
     expect(parseRpcResponse('data: {"jsonrpc":"2.0","method":"note"}\n\ndata: {"jsonrpc":"2.0","id":3,"result":7}\n\n', 'text/event-stream', 3)).toBe(7);
-    expect(() => parseRpcResponse('{"jsonrpc":"2.0","id":4,"error":{"message":"nope"}}', 'application/json', 4)).toThrow(/nope/);
+    expect(() => parseRpcResponse('{"jsonrpc":"2.0","id":4,"error":{"code":-32000,"message":"nope"}}', 'application/json', 4)).toThrow(/nope/);
     expect(() => parseRpcResponse('{"jsonrpc":"2.0","id":9,"result":1}', 'application/json', 5)).toThrow(McpError);
   });
 
@@ -183,7 +183,7 @@ describe('MCP in the chat', () => {
     const seen: string[] = [];
     setActionConfirmer(async (_r, s) => { seen.push(s.title); return false; });
     const denied = await runMcpActions([{ tool: 'mcp_github__list_issues', args: { owner: 'a', repo: 'b' }, source: 'llm' }]);
-    expect(denied.lines[0]).toMatch(/не выполнено без вашего подтверждения/);
+    expect(denied.lines[0]).toMatch(/действие не выполнено, данные не изменены/);
     expect(denied.data).toEqual([]);
     expect(srv.calls.some(c => c.body?.method === 'tools/call')).toBe(false);
 
