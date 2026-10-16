@@ -159,6 +159,42 @@ describe('MCP hardening: confirmation and trust', () => {
     expect(calls).toEqual([]);
   });
 
+  it('an approved call does not use the old token while a new one is being checked', async () => {
+    const NEW = 'ghp_NEW_TOKEN_999';
+    const calls: string[] = [];
+    let release: () => void = () => {};
+    __setMcpFactoryForTests((_s, t) => ({
+      ...conn([createIssue], n => { calls.push(`${t}:${n}`); return 'ok'; }),
+      initialize: t === NEW ? () => new Promise<void>(r => { release = r; }) : async () => {},
+    }));
+    await mcpManager.connect('github', TOKEN);
+    const replacing = mcpManager.connect('github', NEW);
+    setActionConfirmer(async () => true);
+    const r = await runMcpActions([{ tool: 'mcp_github__create_issue', args: { title: 't' }, source: 'llm' }]);
+    expect(r.lines[0]).toMatch(/подключение сервиса изменилось/);
+    expect(calls).toEqual([]);
+    release();
+    await replacing;
+    expect(mcpManager.activeTools().map(t => t.id)).toEqual(['mcp_github__create_issue']);
+  });
+
+  it('a failed check after restart never shows the token from the error', async () => {
+    const kv = memoryKv();
+    __setMcpFactoryForTests(() => conn([listIssues]));
+    const first = new McpManager(kv);
+    await first.connect('github', TOKEN);
+    const saved = kv.getItem('svetlana_mcp_v1');
+    first.reset();
+    kv.setItem('svetlana_mcp_v1', saved!);
+    __setMcpFactoryForTests(() => ({ ...conn([listIssues]), initialize: async () => { throw new McpError(`Ошибка сервера: bad ${TOKEN}`, 'protocol'); } }));
+    const second = new McpManager(kv);
+    await second.whenReady();
+    const st = second.status().find(s => s.server.id === 'github')!;
+    expect(st.error).toContain('[токен скрыт]');
+    expect(JSON.stringify(second.status())).not.toContain(TOKEN);
+    second.reset();
+  });
+
   it('does not run an approved call if the service changed the tool while the dialog was open', async () => {
     let version = 1;
     const calls: string[] = [];
