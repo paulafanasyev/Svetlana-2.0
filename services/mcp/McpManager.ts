@@ -141,6 +141,9 @@ const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,40}$/;
 function friendlyError(server: McpServerInfo, e: unknown, secret: string | null): string {
   if (e instanceof McpError) {
     if (e.code === 'auth') return `${server.name}: токен не подошёл, истёк или у него мало прав. Откройте «Сервисы», нажмите «Сменить токен» у этого сервиса, вставьте новый и нажмите «Подключить».`;
+    if (e.code === 'network' || e.code === 'timeout') return `${server.name}: нет связи или сервис не ответил. Проверьте интернет, откройте «Сервисы» и нажмите «Обновить», затем повторите запрос.`;
+    const detail = scrubSecret(stripControl(e.message, false), secret).slice(0, 200);
+    if (e.code === 'protocol') return `${server.name}: сервис прислал непонятный ответ. Откройте «Сервисы» и нажмите «Обновить», затем повторите запрос. Подробности: ${detail}`;
     return scrubSecret(stripControl(e.message, false), secret).slice(0, 400);
   }
   return `${server.name}: не получилось выполнить запрос. Попробуйте ещё раз; если повторится, откройте «Сервисы» и нажмите «Обновить».`;
