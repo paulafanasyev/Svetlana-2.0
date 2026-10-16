@@ -42,7 +42,7 @@ function ServerCard({ s }: { s: ServerStatus }) {
         </div>
         {s.connected && (
           <label className="flex items-center gap-1.5 text-xs shrink-0">
-            <input type="checkbox" checked={s.enabled} onChange={e => mcpManager.setServerEnabled(s.server.id, e.target.checked)} aria-label={`Включить ${s.server.name}`} />
+            <input type="checkbox" checked={s.enabled} onChange={e => { void mcpManager.setServerEnabled(s.server.id, e.target.checked); }} aria-label={`Включить ${s.server.name}`} />
             {s.enabled ? 'включён' : 'выключен'}
           </label>
         )}
@@ -78,13 +78,21 @@ function ServerCard({ s }: { s: ServerStatus }) {
         </>
       )}
 
+      {s.connected && s.enabled && !s.verified && (
+        <p role="status" className={`text-xs ${s.error ? 'text-red-400' : 'text-sv-muted'}`}>
+          {s.error
+            ? `Не удалось проверить подключение. ${s.error}${/Сменить токен|Обновить/.test(s.error) ? '' : ' Нажмите «Обновить», чтобы попробовать снова.'}`
+            : 'Проверяю подключение…'}
+        </p>
+      )}
+
       {s.connected && (
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => setOpen(!open)} aria-expanded={open} aria-controls={listId} className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs">
             Инструменты: {onCount} из {s.tools.length}
           </button>
           {s.canAutoRead && (
-            <label className="flex items-center gap-1.5 text-xs" title="Просмотр и поиск выполняются без окна подтверждения. Изменения, платные действия и голосовые команды подтверждаются всегда.">
+            <label className="flex items-center gap-1.5 text-xs" title="Просмотр проектов, деплоев, логов и доменов выполняется без окна подтверждения. Голосовые команды подтверждаются всегда.">
               <input type="checkbox" checked={s.autoRead} onChange={e => mcpManager.setAutoRead(s.server.id, e.target.checked)} aria-label={`Чтение без подтверждения: ${s.server.name}`} />
               чтение без подтверждения
             </label>
@@ -150,13 +158,12 @@ export default function McpPanel({ onClose }: { onClose?: () => void }) {
       <ol className="text-sm text-sv-muted list-decimal pl-5 space-y-0.5">
         <li>Нажмите «Как получить токен» у нужного сервиса и создайте токен с минимальными правами и сроком.</li>
         <li>Скопируйте токен, вставьте в поле и нажмите «Подключить».</li>
-        <li>Пишите Светлане в чат. Каждое действие она покажет вам на подтверждение; изменения помечены ⚠️.</li>
+        <li>Пишите Светлане в чат. Каждое действие она покажет вам на подтверждение, изменения помечены ⚠️. Без окна может идти только просмотр в Vercel, если вы включите там галочку «чтение без подтверждения».</li>
       </ol>
       <p className="text-xs text-sv-muted">
         {storageMode === 'memory'
           ? 'Защищённое хранилище на этом устройстве недоступно: токен хранится только до закрытия приложения, потом его нужно вставить снова.'
           : 'Токен хранится зашифрованно на этом устройстве и повторно не показывается.'}
-        {' '}Галочка «чтение без подтверждения» убирает окна только для просмотра и поиска.
       </p>
       {web && <p data-testid="mcp-web-note" className="text-xs text-yellow-300">{MCP_WEB_NOTE}</p>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

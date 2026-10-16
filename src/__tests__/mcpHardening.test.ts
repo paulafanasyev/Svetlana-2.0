@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
-  McpManager, mcpManager, runMcpActions, parseMcpActions, stripActionBlocks, findMcpBlocks, scrubSecret, isSmallArgs,
+  McpManager, mcpManager, runMcpActions, parseMcpActions, stripActionBlocks, findMcpBlocks, scrubSecret, scrubDeep, isSmallArgs,
   __setMcpFactoryForTests, MCP_REJECTED_TEXT,
 } from '../services/mcp/McpManager';
 import { McpClient, McpError, parseRpcResponse, resultText } from '../services/mcp/McpClient';
@@ -16,6 +16,7 @@ function conn(tools: McpToolDef[], call: (name: string, args: Record<string, unk
 }
 const listIssues: McpToolDef = { name: 'list_issues', readOnly: true, inputSchema: { type: 'object', properties: { q: { type: 'string' } } } };
 const createIssue: McpToolDef = { name: 'create_issue', readOnly: false, inputSchema: { type: 'object', properties: { title: { type: 'string' } } } };
+const listProjects: McpToolDef = { name: 'list_projects', readOnly: true, inputSchema: { type: 'object', properties: { q: { type: 'string' } } } };
 
 function memoryKv() {
   const m = new Map<string, string>();
@@ -25,58 +26,90 @@ function memoryKv() {
 describe('MCP hardening: confirmation and trust', () => {
   afterEach(() => { __setMcpFactoryForTests(null); mcpManager.reset(); resetActionGate(); });
 
-  it('asks for every call by default, even reads the app knows', async () => {
-    __setMcpFactoryForTests(() => conn([listIssues, createIssue]));
+  it('asks for every call by default; only the built-in adapter can read without a dialog', async () => {
+    __setMcpFactoryForTests(() => conn([listIssues, createIssue, listProjects]));
     await mcpManager.connect('github', TOKEN);
-    expect(needsConfirmation('mcp_github__list_issues', 'llm', {})).toBe(true);
     mcpManager.setAutoRead('github', true);
-    expect(needsConfirmation('mcp_github__list_issues', 'llm', {})).toBe(false);
-    expect(needsConfirmation('mcp_github__list_issues', 'llm', { q: 'x'.repeat(301) })).toBe(true);
-    expect(needsConfirmation('mcp_github__create_issue', 'llm', {})).toBe(true);
+    expect(needsConfirmation('mcp_github__list_issues', 'llm', {})).toBe(true);
+    await mcpManager.connect('vercel', TOKEN);
+    expect(needsConfirmation('mcp_vercel__list_projects', 'llm', {})).toBe(true);
+    mcpManager.setAutoRead('vercel', true);
+    expect(needsConfirmation('mcp_vercel__list_projects', 'llm', {})).toBe(false);
+    expect(needsConfirmation('mcp_vercel__list_projects', 'llm', { q: 'x'.repeat(301) })).toBe(true);
+    expect(needsConfirmation('mcp_vercel__create_issue', 'llm', {})).toBe(true);
   });
 
   it('keeps the reading setting on reconnect', async () => {
-    __setMcpFactoryForTests(() => conn([listIssues]));
-    await mcpManager.connect('github', TOKEN);
-    mcpManager.setAutoRead('github', true);
-    await mcpManager.connect('github', TOKEN);
-    expect(mcpManager.status().find(s => s.server.id === 'github')?.autoRead).toBe(true);
+    __setMcpFactoryForTests(() => conn([listProjects]));
+    await mcpManager.connect('vercel', TOKEN);
+    mcpManager.setAutoRead('vercel', true);
+    await mcpManager.connect('vercel', TOKEN);
+    expect(mcpManager.status().find(s => s.server.id === 'vercel')?.autoRead).toBe(true);
   });
 
-  it('does not trust a saved tool list after restart until the service answers again', async () => {
+  it('after restart, saved tools reach the chat only after the service answers again', async () => {
+    const kv = memoryKv();
+    __setMcpFactoryForTests(() => conn([listProjects]));
+    const first = new McpManager(kv);
+    await first.connect('vercel', TOKEN);
+    first.setAutoRead('vercel', true);
+    const saved = kv.getItem('svetlana_mcp_v1');
+    first.reset(); // «приложение закрыто»
+    kv.setItem('svetlana_mcp_v1', saved!);
+    const second = new McpManager(kv);
+    expect(second.status().find(s => s.server.id === 'vercel')?.verified).toBe(false);
+    expect(second.activeTools()).toEqual([]);
+    expect(needsConfirmation('mcp_vercel__list_projects', 'llm', {})).toBe(true);
+    await second.whenReady();
+    expect(second.status().find(s => s.server.id === 'vercel')?.verified).toBe(true);
+    expect(second.activeTools().map(t => t.id)).toEqual(['mcp_vercel__list_projects']);
+    second.reset();
+  });
+
+  it('a service that fails the check after restart stays out of the chat and shows why', async () => {
     const kv = memoryKv();
     __setMcpFactoryForTests(() => conn([listIssues]));
     const first = new McpManager(kv);
     await first.connect('github', TOKEN);
-    first.setAutoRead('github', true);
-    expect(needsConfirmation('mcp_github__list_issues', 'llm', {})).toBe(false);
-    const second = new McpManager(kv); // «перезапуск приложения»: тот же сохранённый список
-    expect(second.status().find(s => s.server.id === 'github')?.verified).toBe(false);
-    expect(needsConfirmation('mcp_github__list_issues', 'llm', {})).toBe(true);
-    second.reset();
+    const saved = kv.getItem('svetlana_mcp_v1');
     first.reset();
+    kv.setItem('svetlana_mcp_v1', saved!);
+    __setMcpFactoryForTests(() => ({ ...conn([listIssues]), initialize: async () => { throw new McpError('401', 'auth'); } }));
+    const second = new McpManager(kv);
+    await second.whenReady();
+    const st = second.status().find(s => s.server.id === 'github')!;
+    expect(st.verified).toBe(false);
+    expect(st.error).toMatch(/Сменить токен/);
+    expect(second.activeTools()).toEqual([]);
+    second.reset();
   });
 
-  it('does not run an approved call if the service changed the tool meanwhile', async () => {
+  it('turning a service off forgets the check; turning it on checks again', async () => {
+    let lists = 0;
+    __setMcpFactoryForTests(() => ({ ...conn([listIssues]), listTools: async () => { lists++; return [listIssues]; } }));
+    await mcpManager.connect('github', TOKEN);
+    mcpManager.setServerEnabled('github', false);
+    expect(mcpManager.activeTools()).toEqual([]);
+    const checking = mcpManager.setServerEnabled('github', true);
+    expect(mcpManager.activeTools()).toEqual([]); // ещё не проверен
+    await checking;
+    expect(lists).toBe(2);
+    expect(mcpManager.activeTools().map(t => t.id)).toEqual(['mcp_github__list_issues']);
+  });
+
+  it('does not run an approved call if the service changed the tool while the dialog was open', async () => {
     let version = 1;
     const calls: string[] = [];
     __setMcpFactoryForTests(() => ({
       initialize: async () => {},
-      listTools: async () => [{ ...createIssue, description: `v${version}`, inputSchema: version === 1 ? createIssue.inputSchema : { type: 'object', properties: { title: { type: 'string' }, force: { type: 'boolean' } } } }],
+      listTools: async () => [{ ...createIssue, description: `v${version}` }],
       callTool: async n => { calls.push(n); return { text: 'ok', isError: false }; },
     }));
-    const kv = memoryKv();
-    const first = new McpManager(kv);
-    await first.connect('github', TOKEN);
-    first.reset();
-    kv.setItem('svetlana_mcp_v1', JSON.stringify({ github: { enabled: true, tools: [createIssue], off: [], connectedAt: 1 } }));
-    const restarted = new McpManager(kv);
-    version = 2; // сервис поменял схему, пока приложение было закрыто
-    setActionConfirmer(async () => true);
-    const r = await runMcpActions([{ tool: 'mcp_github__create_issue', args: { title: 't' }, source: 'llm' }], 'unknown', restarted);
+    await mcpManager.connect('github', TOKEN);
+    setActionConfirmer(async () => { version = 2; await mcpManager.refresh('github'); return true; });
+    const r = await runMcpActions([{ tool: 'mcp_github__create_issue', args: { title: 't' }, source: 'llm' }]);
     expect(r.lines[0]).toMatch(/сервис изменил это действие/);
     expect(calls).toEqual([]);
-    restarted.reset();
   });
 
   it('removes the token from the tool schema too', async () => {
@@ -84,6 +117,9 @@ describe('MCP hardening: confirmation and trust', () => {
     await mcpManager.connect('github', TOKEN);
     expect(JSON.stringify(mcpManager.status())).not.toContain(TOKEN);
     expect(scrubSecret('abc', 'b')).toBe('a[токен скрыт]c');
+    let deep: Record<string, unknown> = { leak: TOKEN };
+    for (let i = 0; i < 30; i++) deep = { d: deep };
+    expect(JSON.stringify(scrubDeep(deep, TOKEN))).not.toContain(TOKEN);
   });
 
   it('removes the token if a service sends it back', async () => {
@@ -102,6 +138,11 @@ describe('MCP hardening: confirmation and trust', () => {
     await expect(mcpManager.connect('github', TOKEN)).rejects.toThrow(/\[токен скрыт\]/);
     __setMcpFactoryForTests(() => ({ ...conn([listIssues]), initialize: async () => { throw new TypeError(`x ${TOKEN}`); } }));
     await expect(mcpManager.connect('github', TOKEN)).rejects.toThrow(/Проверьте токен и интернет/);
+  });
+
+  it('explains a bad token on first connect without pointing to a button that is not there', async () => {
+    __setMcpFactoryForTests(() => ({ ...conn([listIssues]), initialize: async () => { throw new McpError('401', 'auth'); } }));
+    await expect(mcpManager.connect('github', TOKEN)).rejects.toThrow(/Проверьте токен и нажмите «Подключить» ещё раз/);
   });
 
   it('explains an expired token with the next step', async () => {
@@ -128,7 +169,7 @@ describe('MCP hardening: confirmation and trust', () => {
     setActionConfirmer(async (_r, s) => { dialogs.push(s); return true; });
     await runMcpActions([{ tool: 'mcp_timeweb__execute_tool', args: { tool_id: 'x' }, source: 'llm' }]);
     await runMcpActions([{ tool: 'mcp_timeweb__execute_tool', args: { tool_id: 'x', confirm_token: tok }, source: 'llm' }]);
-    expect(dialogs[1].lines[0]).toBe('Что будет: Timeweb Cloud: [WRITE] Переименовать сеть');
+    expect(dialogs[1].lines[0]).toBe('Что будет: Timeweb Cloud: Переименовать сеть');
     expect(dialogs[1].warning).toMatch(/изменит ресурсы/);
   });
 });
@@ -172,13 +213,14 @@ describe('MCP hardening: parsing', () => {
 
 describe('MCP hardening: protocol', () => {
   const github = mcpServer('github')!;
-  function server(opts: { version?: string; notifyStatus?: number; pages?: number; loop?: boolean } = {}) {
+  function server(opts: { version?: string; notifyStatus?: number; pages?: number; loop?: boolean; result?: unknown; notifyBody?: string } = {}) {
     return async (_u: string, init: RequestInit) => {
       const body = init.body ? JSON.parse(String(init.body)) : null;
       if (body?.method === 'initialize') {
         return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: opts.version ?? '2025-06-18', capabilities: {} } }), { headers: { 'content-type': 'application/json' } });
       }
-      if (!body?.id) return new Response(null, { status: opts.notifyStatus ?? 202 });
+      if (!body?.id) return new Response(opts.notifyBody ?? null, { status: opts.notifyStatus ?? 202 });
+      if (opts.result !== undefined) return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: opts.result }), { headers: { 'content-type': 'application/json' } });
       const page = Number(body.params?.cursor ?? 0);
       const pages = opts.pages ?? 1;
       const next = opts.loop ? 'same' : page + 1 < pages ? String(page + 1) : undefined;
@@ -196,5 +238,12 @@ describe('MCP hardening: protocol', () => {
     const tools = await new McpClient(github, 't', server({ pages: 15 })).listTools();
     expect(tools).toHaveLength(15);
     await expect(new McpClient(github, 't', server({ loop: true })).listTools()).rejects.toThrow(/зациклил/);
+    await expect(new McpClient(github, 't', server({ result: {} })).listTools()).rejects.toThrow(/не по протоколу/);
+    await expect(new McpClient(github, 't', server({ result: { tools: [], nextCursor: 5 } })).listTools()).rejects.toThrow(/курсор/);
+    await expect(new McpClient(github, 't', server({ result: { tools: [], nextCursor: null } })).listTools()).resolves.toEqual([]);
+  });
+
+  it('rejects an oversized reply to the start of session', async () => {
+    await expect(new McpClient(github, 't', server({ notifyBody: 'x'.repeat(4_000_001) })).initialize()).rejects.toThrow(/слишком большой/);
   });
 });
