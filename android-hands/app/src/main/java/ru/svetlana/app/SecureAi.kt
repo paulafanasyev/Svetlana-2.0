@@ -49,7 +49,7 @@ object SecureAi {
     const val MAX_RESPONSE = 8 * 1024 * 1024
     const val MAX_MESSAGES = 200
     const val MAX_TEXT = 200_000
-    val PROVIDERS = listOf("openai", "groq", "openrouter", "deepseek", "mistral", "anthropic", "google", "svetlana", "gigachat")
+    val PROVIDERS = listOf("openai", "groq", "openrouter", "deepseek", "mistral", "anthropic", "google", "svetlana", "gigachat", "anymodel", "opencode")
     /** «Свой ИИ»: только в приложении для Android (в Windows его нет, поэтому он не в PROVIDERS). */
     const val CUSTOM = "custom"
     const val MAX_CUSTOM_URL = 200
@@ -59,6 +59,9 @@ object SecureAi {
     const val SVETLANA_CORE = "https://xn----8sba1acxdkgqms3b9euc.xn--p1ai/api/v1/assistant/svetlana2/chat"
     const val SVETLANA_MODEL = "svetlana2"
     const val SVETLANA_MAX_HISTORY = 10
+    /** AnyModel и OpenCode Zen: фиксированные OpenAI-совместимые адреса (как в secure_ai.rs). */
+    const val ANYMODEL_CHAT = "https://anymodel.org/v1/chat/completions"
+    const val OPENCODE_CHAT = "https://opencode.ai/zen/v1/chat/completions"
     /** GigaChat: вход по ключу авторизации и запрос (как в secure_ai.rs). */
     const val GIGACHAT_OAUTH = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
     const val GIGACHAT_CHAT = "https://api.giga.chat/v1/chat/completions"
@@ -423,6 +426,8 @@ object SecureAi {
         "openrouter" -> "https://openrouter.ai/api/v1/chat/completions"
         "deepseek" -> "https://api.deepseek.com/v1/chat/completions"
         "mistral" -> "https://api.mistral.ai/v1/chat/completions"
+        "anymodel" -> ANYMODEL_CHAT
+        "opencode" -> OPENCODE_CHAT
         "anthropic" -> "https://api.anthropic.com/v1/messages"
         "google" -> "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
         "svetlana" -> SVETLANA_CORE

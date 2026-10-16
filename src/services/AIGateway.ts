@@ -7,6 +7,8 @@
 // ТОЛЬКО через нативную часть (сторонний прокси не используется): окно подтверждения не обойти.
 // GigaChat (Сбер, бесплатный тариф) — только в приложениях: его сервер подписан сертификатом Минцифры и не отвечает
 // браузеру (CORS), поэтому вход по ключу авторизации и запрос делает нативная часть (secure_ai.rs / SecureAi.kt).
+// AnyModel (anymodel.org) и OpenCode Zen (opencode.ai/zen) — шлюзы ко многим моделям с одним ключом,
+// OpenAI-совместимый /chat/completions на фиксированном официальном адресе (сайт, Windows и Android).
 // Локальные модели (Ollama, LM Studio и др.): на компьютере и сайте — только 127.0.0.1/localhost; в приложении
 // для Android — ещё и компьютер в домашней сети (10.x, 172.16–31.x, 192.168.x): запрос делает телефон
 // (команда lan_http, первая отправка на новый адрес — после нативного подтверждения, см. AndroidFiles).
@@ -132,6 +134,13 @@ const OFFICIAL_ENDPOINTS: Record<string, string[]> = {
   google: ['https://generativelanguage.googleapis.com/v1beta', 'https://generativelanguage.googleapis.com/v1'],
   svetlana: [SVETLANA_CORE_ORIGIN],
   gigachat: ['https://api.giga.chat/v1'],
+  anymodel: ['https://anymodel.org/v1'],
+  opencode: ['https://opencode.ai/zen/v1'],
+};
+/** Шлюзы с OpenAI-совместимым /chat/completions (как ANYMODEL_CHAT/OPENCODE_CHAT в secure_ai.rs и SecureAi.kt). */
+export const GATEWAY_CHAT_URLS: Record<string, { url: string; label: string }> = {
+  anymodel: { url: 'https://anymodel.org/v1/chat/completions', label: 'AnyModel' },
+  opencode: { url: 'https://opencode.ai/zen/v1/chat/completions', label: 'OpenCode Zen' },
 };
 const LOCAL_RE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?(\/[A-Za-z0-9._~-]+)*$/;
 /** Телефон: ещё и компьютер в домашней сети (только IP, без имён). */
@@ -170,7 +179,7 @@ export function validateProxyUrl(url: string): string {
   throw new Error('Прокси может быть только на своём сервере (/api/...) или на этом компьютере');
 }
 
-const FALLBACK_ORDER = ['ollama', 'lmstudio', 'svetlana', 'groq', 'openai', 'anthropic', 'deepseek', 'gigachat'];
+const FALLBACK_ORDER = ['ollama', 'lmstudio', 'svetlana', 'groq', 'openai', 'anthropic', 'deepseek', 'gigachat', 'anymodel', 'opencode'];
 
 /**
  * Запасные провайдеры при ошибке [failed]. Только включённые и только ТОГО ЖЕ типа:
@@ -463,6 +472,11 @@ class AIGateway {
     const proxy = this.getProxyUrl();
     if ((proxy || provider.useProxy) && provider.type === 'online') {
       return this.callViaProxy(proxy || '/api/ai-proxy', provider, messages, options);
+    }
+
+    const gateway = GATEWAY_CHAT_URLS[provider.id];
+    if (gateway && provider.type === 'online') {
+      return this.callOpenAICompatible(gateway.url, gateway.label, provider, messages, options);
     }
 
     switch (provider.id) {

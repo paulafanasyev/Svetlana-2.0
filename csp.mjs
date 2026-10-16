@@ -7,6 +7,8 @@
 export const CLOUD_ORIGINS = [
   'https://api.openai.com', 'https://api.anthropic.com', 'https://api.groq.com', 'https://openrouter.ai',
   'https://api.deepseek.com', 'https://generativelanguage.googleapis.com', 'https://api.mistral.ai',
+  // Шлюзы к многим моделям с одним ключом: AnyModel и OpenCode Zen.
+  'https://anymodel.org', 'https://opencode.ai',
   'https://suggestions.dadata.ru', 'https://statusnpd.nalog.ru',
   // Личный кабинет «Мир Самозанятых» (мир-самозанятых.рф и резервный API).
   'https://xn----8sba1acxdkgqms3b9euc.xn--p1ai', 'https://mir-samozanyatykh-api-frankfurt.onrender.com',
