@@ -6,6 +6,9 @@ import { safeJsonParse, stripControl } from '../security/SafeData';
 import { authHeader, isCatalogUrl, type McpServerInfo } from './McpCatalog';
 
 export const MCP_PROTOCOL_VERSION = '2025-06-18';
+/** Версии протокола, с которыми клиент умеет работать. Другую версию от сервера не принимаем. */
+export const SUPPORTED_PROTOCOL_VERSIONS: readonly string[] = Object.freeze(['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']);
+const MAX_TOOL_PAGES = 100;
 const TIMEOUT_MS = 30_000;
 const MAX_RESPONSE_CHARS = 4_000_000;
 const MAX_TOOLS = 300;
@@ -53,12 +56,48 @@ export async function guardedFetch(fetchImpl: FetchLike, url: string, init: Requ
   }
 }
 
+/** Читает тело ответа потоком и прерывает чтение, как только превышен лимит (большой ответ не попадает в память целиком). */
 export async function readLimited(res: Response, serverName: string): Promise<string> {
+  const tooBig = () => new McpError(`${serverName}: слишком большой ответ`, 'protocol');
   const len = Number(res.headers.get('content-length') ?? '0');
-  if (len > MAX_RESPONSE_CHARS) throw new McpError(`${serverName}: слишком большой ответ`, 'protocol');
-  const text = await res.text();
-  if (text.length > MAX_RESPONSE_CHARS) throw new McpError(`${serverName}: слишком большой ответ`, 'protocol');
+  if (len > MAX_RESPONSE_CHARS) throw tooBig();
+  const body = res.body as ReadableStream<Uint8Array> | null;
+  if (!body || typeof body.getReader !== 'function' || typeof TextDecoder !== 'function') {
+    const text = await res.text();
+    if (text.length > MAX_RESPONSE_CHARS) throw tooBig();
+    return text;
+  }
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let bytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > MAX_RESPONSE_CHARS * 4) { try { await reader.cancel(); } catch { /* noop */ } throw tooBig(); }
+    text += decoder.decode(value, { stream: true });
+    if (text.length > MAX_RESPONSE_CHARS) { try { await reader.cancel(); } catch { /* noop */ } throw tooBig(); }
+  }
+  text += decoder.decode();
+  if (text.length > MAX_RESPONSE_CHARS) throw tooBig();
   return text;
+}
+
+/** Строгая проверка ответа JSON-RPC 2.0: версия, тот же id и ровно одно из result / error. */
+function isRpcResponse(m: unknown, id: number): m is { jsonrpc: '2.0'; id: number; result?: unknown; error?: { code?: unknown; message?: unknown } } {
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return false;
+  const o = m as Record<string, unknown>;
+  if (o.jsonrpc !== '2.0' || o.id !== id) return false;
+  const hasResult = Object.prototype.hasOwnProperty.call(o, 'result');
+  const hasError = Object.prototype.hasOwnProperty.call(o, 'error');
+  if (hasResult === hasError) return false;
+  if (hasError) {
+    const err = o.error as Record<string, unknown> | null;
+    if (!err || typeof err !== 'object' || Array.isArray(err)) return false;
+    if (typeof err.code !== 'number' || !Number.isInteger(err.code) || typeof err.message !== 'string') return false;
+  }
+  return true;
 }
 
 /** Достаёт из ответа (JSON, пакет JSON или поток SSE) сообщение JSON-RPC с нужным id. */
@@ -75,10 +114,12 @@ export function parseRpcResponse(text: string, contentType: string | null, id: n
     try { parsed = safeJsonParse(text, MAX_RESPONSE_CHARS); } catch { throw new McpError('Сервер вернул не JSON', 'protocol'); }
     if (Array.isArray(parsed)) candidates.push(...parsed); else candidates.push(parsed);
   }
-  const msg = candidates.find(m => !!m && typeof m === 'object' && (m as any).id === id) as any;
-  if (!msg) throw new McpError('Сервер не прислал ответ на запрос', 'protocol');
-  if (msg.error) {
-    const m = stripControl(typeof msg.error.message === 'string' ? msg.error.message : 'ошибка', false).slice(0, 300);
+  const sameId = candidates.filter(m => !!m && typeof m === 'object' && (m as any).id === id);
+  if (!sameId.length) throw new McpError('Сервер не прислал ответ на запрос', 'protocol');
+  const msg = sameId.find(m => isRpcResponse(m, id)) as any;
+  if (!msg) throw new McpError('Сервер прислал ответ не по протоколу JSON-RPC 2.0', 'protocol');
+  if (Object.prototype.hasOwnProperty.call(msg, 'error')) {
+    const m = stripControl(msg.error.message, false).slice(0, 300);
     throw new McpError(`Ошибка сервера: ${m}`, 'protocol');
   }
   return msg.result;
@@ -86,6 +127,9 @@ export function parseRpcResponse(text: string, contentType: string | null, id: n
 
 /** Текст результата tools/call: текстовые части, остальное — пометкой; не длиннее 20 000 символов. */
 export function resultText(result: any): McpCallResult {
+  if (!result || typeof result !== 'object' || Array.isArray(result) || (!Array.isArray(result.content) && result.structuredContent === undefined)) {
+    return { text: 'Сервис прислал ответ без содержимого', isError: true };
+  }
   const parts: string[] = [];
   const content = Array.isArray(result?.content) ? result.content : [];
   for (const c of content.slice(0, 50)) {
@@ -141,7 +185,8 @@ export class McpClient implements McpConnection {
     if (res.status === 401 || res.status === 403) {
       throw new McpError(`${this.server.name}: токен не подошёл или у него нет прав (${res.status})`, 'auth');
     }
-    if (res.status === 404 && this.sessionId) {
+    // Сессию сервер забыл: по спецификации 404, некоторые серверы отвечают 400 на неизвестный Mcp-Session-Id.
+    if ((res.status === 404 || res.status === 400) && this.sessionId) {
       this.sessionId = null; this.ready = false;
       throw new McpError(`${this.server.name}: сессия истекла`, 'session');
     }
@@ -159,16 +204,23 @@ export class McpClient implements McpConnection {
   }
 
   async initialize(): Promise<void> {
-    this.sessionId = null; this.protocolVersion = null;
+    this.ready = false; this.sessionId = null; this.protocolVersion = null;
     const result = await this.rpc('initialize', {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {},
       clientInfo: { name: 'svetlana', title: 'Светлана 2.0', version: '2.1.0' },
     });
-    this.protocolVersion = typeof result?.protocolVersion === 'string' && /^[0-9-]{4,20}$/.test(result.protocolVersion) ? result.protocolVersion : MCP_PROTOCOL_VERSION;
-    // Уведомление без id: сервер отвечает 202 без тела, ответ не разбираем.
+    const version = result?.protocolVersion;
+    if (typeof version !== 'string' || !SUPPORTED_PROTOCOL_VERSIONS.includes(version)) {
+      throw new McpError(`${this.server.name}: сервер работает по неподдерживаемой версии протокола MCP`, 'protocol');
+    }
+    this.protocolVersion = version;
+    // Уведомление без id: сервер отвечает 202 (или 200/204). Любой другой ответ — подключение не готово.
     const res = await this.post({ jsonrpc: '2.0', method: 'notifications/initialized' });
-    try { await res.text(); } catch { /* noop */ }
+    if (res.status !== 200 && res.status !== 202 && res.status !== 204) {
+      throw new McpError(`${this.server.name}: сервер не принял начало сессии (${res.status})`, 'protocol');
+    }
+    await readLimited(res, this.server.name); // тело не нужно, но слишком большой ответ — ошибка
     this.ready = true;
   }
 
@@ -186,15 +238,26 @@ export class McpClient implements McpConnection {
   async listTools(): Promise<McpToolDef[]> {
     return this.withSession(async () => {
       const tools: McpToolDef[] = [];
+      const seen = new Set<string>();
       let cursor: string | undefined;
-      for (let page = 0; page < 10 && tools.length < MAX_TOOLS; page++) {
+      for (let page = 0; ; page++) {
+        if (page >= MAX_TOOL_PAGES) throw new McpError(`${this.server.name}: слишком длинный список инструментов`, 'protocol');
         const r = await this.rpc('tools/list', cursor ? { cursor } : undefined);
-        for (const t of Array.isArray(r?.tools) ? r.tools : []) {
+        if (!r || typeof r !== 'object' || Array.isArray(r) || !Array.isArray(r.tools)) {
+          throw new McpError(`${this.server.name}: сервер прислал список инструментов не по протоколу`, 'protocol');
+        }
+        if (r.nextCursor !== undefined && r.nextCursor !== null && (typeof r.nextCursor !== 'string' || !r.nextCursor)) {
+          throw new McpError(`${this.server.name}: сервер прислал неверный курсор списка инструментов`, 'protocol');
+        }
+        for (const t of r.tools) {
           const c = cleanTool(t);
           if (c && !tools.some(x => x.name === c.name) && tools.length < MAX_TOOLS) tools.push(c);
         }
+        if (tools.length >= MAX_TOOLS) break; // больше 300 инструментов не показываем
         cursor = typeof r?.nextCursor === 'string' && r.nextCursor ? r.nextCursor : undefined;
         if (!cursor) break;
+        if (seen.has(cursor)) throw new McpError(`${this.server.name}: сервер зациклил список инструментов`, 'protocol');
+        seen.add(cursor);
       }
       return tools;
     });

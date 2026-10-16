@@ -103,25 +103,31 @@ const LABELS: Record<string, string> = {
  */
 const DYNAMIC_LABELS = new Map<string, string>();
 export function registerActionLabel(tool: string, label: string | null): void {
-  if (label === null) { DYNAMIC_LABELS.delete(tool); AUTO.delete(tool); DESCRIBE.delete(tool); return; }
+  if (label === null) { DYNAMIC_LABELS.delete(tool); AUTO.delete(tool); DESCRIBE.delete(tool); WARN.delete(tool); return; }
   DYNAMIC_LABELS.set(tool, stripControl(label, false).slice(0, 160));
 }
 
 /**
  * Правила для инструментов внешних сервисов (MCP):
- * auto — вызов с этими аргументами ничего не меняет и не раскрывает чужого (поиск по справочнику операций,
- *   документация, первый шаг двухшагового подтверждения Timeweb) или пользователь сам разрешил чтение без подтверждения.
+ * auto — вызов с этими аргументами можно выполнить без окна (пользователь сам разрешил чтение без подтверждения).
  *   Голос всё равно подтверждается всегда. Ошибка в правиле — значит «нужно подтверждение».
  * describe — строка «что именно произойдёт» для окна подтверждения (например, сводка операции от сервиса).
+ * warn — предупреждение о последствиях: изменит ли действие данные, может ли списать деньги.
  */
-export interface ActionPolicy { auto?: (args: Record<string, unknown>) => boolean; describe?: (args: Record<string, unknown>) => string | null }
+export interface ActionPolicy {
+  auto?: (args: Record<string, unknown>) => boolean;
+  describe?: (args: Record<string, unknown>) => string | null;
+  warn?: (args: Record<string, unknown>) => string | null;
+}
 const AUTO = new Map<string, NonNullable<ActionPolicy['auto']>>();
 const DESCRIBE = new Map<string, NonNullable<ActionPolicy['describe']>>();
+const WARN = new Map<string, NonNullable<ActionPolicy['warn']>>();
 export function registerActionPolicy(tool: string, policy: ActionPolicy | null): void {
-  AUTO.delete(tool); DESCRIBE.delete(tool);
+  AUTO.delete(tool); DESCRIBE.delete(tool); WARN.delete(tool);
   if (!policy) return;
   if (policy.auto) AUTO.set(tool, policy.auto);
   if (policy.describe) DESCRIBE.set(tool, policy.describe);
+  if (policy.warn) WARN.set(tool, policy.warn);
 }
 function autoAllowed(tool: string, args: Record<string, unknown> | undefined): boolean {
   const fn = AUTO.get(tool);
@@ -141,7 +147,8 @@ export function isReadOnlyTool(tool: string): boolean {
 
 /**
  * Нужно ли явное подтверждение. Команда пользователя (настоящий жест) — нет. Голос — всегда, даже для чтения
- * (запись голоса можно воспроизвести). Остальные источники — для всего, что меняет данные.
+ * (запись голоса можно воспроизвести). Остальные источники — для всего, что меняет данные,
+ * если правило инструмента (registerActionPolicy) явно не разрешило вызов без окна.
  */
 export function needsConfirmation(tool: string, source: ActionSource, args?: Record<string, unknown>): boolean {
   if (source === 'user') return false;
@@ -151,7 +158,7 @@ export function needsConfirmation(tool: string, source: ActionSource, args?: Rec
 }
 
 export interface ActionRequest { tool: string; args: Record<string, unknown>; source: ActionSource; gesture?: UserGesture }
-export interface ActionSummary { title: string; lines: string[]; sourceLabel: string }
+export interface ActionSummary { title: string; lines: string[]; sourceLabel: string; warning?: string }
 
 export function summarizeAction(req: ActionRequest): ActionSummary {
   // Показываем ВСЕ параметры, которые будут выполнены, без обрезки (строки уже ограничены 2000 символами),
@@ -162,7 +169,10 @@ export function summarizeAction(req: ActionRequest): ActionSummary {
   let what: string | null = null;
   try { what = DESCRIBE.get(req.tool)?.(req.args) ?? null; } catch { what = null; }
   if (what) lines.unshift(`Что будет: ${stripControl(what, false).slice(0, 400)}`);
+  let warning: string | null = null;
+  try { warning = WARN.get(req.tool)?.(req.args) ?? null; } catch { warning = null; }
   return {
+    ...(warning ? { warning: stripControl(warning, false).slice(0, 400) } : {}),
     title: LABELS[req.tool] ?? DYNAMIC_LABELS.get(req.tool) ?? stripControl(req.tool, false),
     lines,
     sourceLabel: req.source === 'llm' ? 'Предложено нейросетью' : req.source === 'voice' ? 'Распознано голосом'
@@ -174,7 +184,7 @@ export type Confirmer = (req: ActionRequest, summary: ActionSummary) => Promise<
 
 const defaultConfirmer: Confirmer = async (_req, s) => {
   if (typeof window === 'undefined' || typeof window.confirm !== 'function') return false; // нет интерфейса — запрещаем
-  return window.confirm(`${s.sourceLabel}: ${s.title}\n${s.lines.join('\n')}\n\nВыполнить?`);
+  return window.confirm(`${s.sourceLabel}: ${s.title}\n${s.lines.join('\n')}${s.warning ? `\n\n${s.warning}` : ''}\n\nВыполнить?`);
 };
 
 let confirmer: Confirmer = defaultConfirmer;
