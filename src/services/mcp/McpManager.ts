@@ -308,7 +308,7 @@ export async function runMcpActions(actions: McpAction[], source: ActionSource =
     if (result.denied) { lines.push(`⏸ ${label}: не выполнено без вашего подтверждения.`); continue; }
     const text = typeof result.data?.text === 'string' ? result.data.text : '';
     if (!result.success) {
-      lines.push(`⚠️ ${label}: ${stripControl(result.error ?? 'не получилось', false).slice(0, 300)}`);
+      lines.push(`⚠️ ${label}: ${defang(stripControl(result.error ?? 'не получилось', false)).slice(0, 300)}`);
       if (text) data.push(`${label} (ошибка):\n${defang(text)}`);
       continue;
     }
