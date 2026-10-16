@@ -188,7 +188,7 @@ export class McpClient implements McpConnection {
     // Сессию сервер забыл: по спецификации 404, некоторые серверы отвечают 400 на неизвестный Mcp-Session-Id.
     if ((res.status === 404 || res.status === 400) && this.sessionId) {
       this.sessionId = null; this.ready = false;
-      throw new McpError(`${this.server.name}: сессия истекла`, 'session');
+      throw new McpError(`${this.server.name}: сервис завершил сессию, действие не выполнено. Повторите запрос и подтвердите его ещё раз.`, 'session');
     }
     return res;
   }
@@ -226,11 +226,15 @@ export class McpClient implements McpConnection {
 
   private async ensureReady(): Promise<void> { if (!this.ready) await this.initialize(); }
 
-  /** Повтор один раз, если сервер забыл сессию. */
-  private async withSession<T>(fn: () => Promise<T>): Promise<T> {
+  /**
+   * Если сервер забыл сессию, чтение (список инструментов) повторяется один раз в новой сессии.
+   * Вызов инструмента не повторяется никогда: подтверждение относилось к прежней сессии, поэтому
+   * ошибка уходит наверх, подключение проверяется заново, а действие пользователь подтверждает снова.
+   */
+  private async withSession<T>(fn: () => Promise<T>, retry: boolean): Promise<T> {
     await this.ensureReady();
     try { return await fn(); } catch (e) {
-      if (e instanceof McpError && e.code === 'session') { await this.initialize(); return fn(); }
+      if (retry && e instanceof McpError && e.code === 'session') { await this.initialize(); return fn(); }
       throw e;
     }
   }
@@ -260,10 +264,10 @@ export class McpClient implements McpConnection {
         seen.add(cursor);
       }
       return tools;
-    });
+    }, true);
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<McpCallResult> {
-    return this.withSession(async () => resultText(await this.rpc('tools/call', { name, arguments: args })));
+    return this.withSession(async () => resultText(await this.rpc('tools/call', { name, arguments: args })), false);
   }
 }
