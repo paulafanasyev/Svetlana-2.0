@@ -23,7 +23,10 @@ describe('every cloud AI has a fixed official address', () => {
       expect(validateEndpoint({ id, type: 'online', endpoint: `${url}/` })).toBe(url);
       expect(() => validateEndpoint({ id, type: 'online', endpoint: 'https://evil.example/v1' }), id).toThrow();
     }
-    expect(() => validateEndpoint({ id: 'custom', type: 'online', endpoint: 'https://api.openai.com/v1' })).toThrow(/не поддерживается/);
+    // Свой ИИ есть только в приложении Android; здесь (не Android) он отклоняется.
+    expect(() => validateEndpoint({ id: 'custom', type: 'online', endpoint: 'https://api.openai.com/v1' })).toThrow(/только в приложении для Android/);
+    // Неизвестный облачный провайдер по-прежнему запрещён.
+    expect(() => validateEndpoint({ id: 'evil-provider', type: 'online', endpoint: 'https://evil.example/v1' })).toThrow();
   });
 });
 
