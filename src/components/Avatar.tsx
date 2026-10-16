@@ -29,8 +29,9 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
   const isTalking = talking;
   const isListening = listening;
   const [showControls, setShowControls] = useState(false);
-  // В системе включено «Уменьшить движение»: индикаторы стоят на месте, без пульсации.
+  // В системе включено «Уменьшить движение»: индикаторы стоят на месте, без пульсации и переходов.
   const still = useReducedMotion() ?? false;
+  const ease = still ? '' : 'transition-all';
   const overlay = getAvatarStateOverlay(getAvatarStateFromEmotion(currentEmotion));
   const pulse = !still && overlay.animation === 'pulse';
 
@@ -67,7 +68,7 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
         <motion.img
           src={MASTER_AVATAR}
           alt="Svetlana"
-          className={`w-full h-full object-cover transition-all duration-300 ${overlay.overlay || ''}`}
+          className={`w-full h-full object-cover ${still ? '' : 'transition-all duration-300'} ${overlay.overlay || ''}`}
           animate={pulse ? { scale: [1, 1.02, 1] } : {}}
           transition={pulse ? { duration: 2, repeat: Infinity } : {}}
         />
@@ -108,7 +109,7 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
             <button
               key={emotion}
               onClick={() => setEmotion(emotion)}
-              className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition-all ${
+              className={`w-8 h-8 rounded-full flex items-center justify-center text-sm ${ease} ${
                 currentEmotion === emotion ? 'bg-indigo-500 text-white' : 'bg-white/10 text-sv-muted hover:bg-white/20'
               }`}
               title={emotion}
@@ -163,6 +164,7 @@ export function VoiceControl({ onCommand, onListeningChange }: { onCommand?: (co
   const onCommandRef = useRef(onCommand);
   const onListeningRef = useRef(onListeningChange);
   const still = useReducedMotion() ?? false;
+  const ease = still ? '' : 'transition-all';
   const support = sttSupport();
   const android = isAndroidApp();
   // Телефон с записанным голосом и распознаванием записи слушает как компьютер (в том числе «без рук»).
@@ -229,7 +231,7 @@ export function VoiceControl({ onCommand, onListeningChange }: { onCommand?: (co
     <div className="flex flex-col items-center gap-4">
       <button
         onClick={toggleListening}
-        className={`relative w-20 h-20 rounded-full flex items-center justify-center transition-all ${
+        className={`relative w-20 h-20 rounded-full flex items-center justify-center ${ease} ${
           isListening
             ? 'bg-red-500/20 border-2 border-red-500 shadow-lg shadow-red-500/30'
             : 'bg-indigo-500/20 border-2 border-indigo-500/50 hover:bg-indigo-500/30'
