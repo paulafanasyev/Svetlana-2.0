@@ -192,6 +192,8 @@ export class McpManager {
   private errors = new Map<string, string>();
   /** Номер «поколения»: reset() его увеличивает, и запоздавшие проверки ничего не меняют. */
   private gen = 0;
+  /** Номер намерения по каждому сервису: включение, выключение, подключение, обновление, отключение. */
+  private epochs = new Map<string, number>();
   private startup: Promise<void> = Promise.resolve();
 
   constructor(private readonly kv: KV | null = storage()) {
@@ -209,11 +211,26 @@ export class McpManager {
   }
 
   private async revalidate(server: McpServerInfo): Promise<void> {
+    const epoch = this.epoch(server.id);
     try { await this.connection(server); this.errors.delete(server.id); } catch (e) {
-      if (!this.state[server.id]) return;
-      this.errors.set(server.id, friendlyError(server, e, this.secrets.get(server.id) ?? null));
-      this.listeners.forEach(fn => { try { fn(); } catch { /* noop */ } });
+      if (!this.state[server.id] || epoch !== this.epoch(server.id)) return; // уже не актуально
+      this.invalidate(server.id, friendlyError(server, e, this.secrets.get(server.id) ?? null));
     }
+  }
+
+  private epoch(id: string): number { return this.epochs.get(id) ?? 0; }
+  /** Новое намерение по сервису: все начатые раньше проверки и подключения больше ничего не запишут. */
+  private bump(id: string): number { const n = this.epoch(id) + 1; this.epochs.set(id, n); return n; }
+
+  private notify(): void { this.listeners.forEach(fn => { try { fn(); } catch { /* noop */ } }); }
+
+  /** Сервис больше не считается проверенным: его инструменты сразу убираются из чата. */
+  private invalidate(id: string, error?: string): void {
+    this.conns.delete(id);
+    this.verified.delete(id);
+    if (error) this.errors.set(id, error);
+    this.sync();
+    this.notify();
   }
 
   private load(): State {
@@ -224,10 +241,10 @@ export class McpManager {
       const out: State = {};
       for (const s of MCP_SERVERS) {
         const e = v?.[s.id];
-        if (!e || typeof e !== 'object' || !Array.isArray(e.tools)) continue;
+        if (!e || typeof e !== 'object') continue;
         out[s.id] = {
           enabled: e.enabled !== false,
-          tools: e.tools.filter((t: any) => t && typeof t.name === 'string').slice(0, 300),
+          tools: [], // сохранённым описаниям не доверяем: список придёт заново после проверки по токену
           off: Array.isArray(e.off) ? e.off.filter((x: unknown) => typeof x === 'string') : [],
           connectedAt: typeof e.connectedAt === 'number' ? e.connectedAt : 0,
           autoRead: e.autoRead === true,
@@ -238,9 +255,12 @@ export class McpManager {
   }
 
   private save(): void {
-    try { this.kv?.setItem(STATE_KEY, JSON.stringify(this.state)); } catch { /* хранилище заполнено */ }
+    // Описания инструментов не сохраняются: после перезапуска их заново присылает проверенный сервис.
+    const persisted: State = {};
+    for (const [id, st] of Object.entries(this.state)) persisted[id] = { ...st, tools: [] };
+    try { this.kv?.setItem(STATE_KEY, JSON.stringify(persisted)); } catch { /* хранилище заполнено */ }
     this.sync();
-    this.listeners.forEach(fn => { try { fn(); } catch { /* noop */ } });
+    this.notify();
   }
 
   subscribe(fn: () => void): () => void { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
@@ -348,16 +368,17 @@ export class McpManager {
     const cached = this.conns.get(server.id);
     if (cached) return cached;
     const g = this.gen;
-    const stale = () => g !== this.gen || !this.state[server.id]?.enabled;
+    const ep = this.epoch(server.id);
+    const stale = () => g !== this.gen || ep !== this.epoch(server.id) || !this.state[server.id]?.enabled;
     const token = await getSecret(secretName(server.id));
-    if (stale()) throw new McpError(`${server.name}: сервис выключен`, 'denied');
+    if (stale()) throw new McpError(`${server.name}: проверка прервана, потому что сервис выключили или изменили его настройки. Попробуйте ещё раз.`, 'denied');
     if (server.tokenRequired && !token) throw new McpError(`${server.name}: токен не найден. Откройте «Сервисы», нажмите «Сменить токен» у этого сервиса, вставьте токен и нажмите «Подключить».`, 'auth');
     if (token) this.secrets.set(server.id, token);
     const c = factory(server, token);
     // Сохранённому списку инструментов не доверяем: в новом сеансе сервис заново отвечает по токену.
     await c.initialize();
     const tools = cleanTools(await c.listTools(), token);
-    if (stale()) throw new McpError(`${server.name}: сервис выключен`, 'denied');
+    if (stale()) throw new McpError(`${server.name}: проверка прервана, потому что сервис выключили или изменили его настройки. Попробуйте ещё раз.`, 'denied');
     this.conns.set(server.id, c);
     this.verified.add(server.id);
     this.errors.delete(server.id);
@@ -380,8 +401,9 @@ export class McpManager {
       this.rememberSummary(a.server, text);
       return r.isError ? { success: false, error: `${a.server.name}: ${text.slice(0, 500)}`, data: { text } } : { success: true, data: { text } };
     } catch (e) {
-      if (e instanceof McpError && (e.code === 'auth' || e.code === 'protocol')) { this.conns.delete(a.server.id); this.verified.delete(a.server.id); }
-      return { success: false, error: friendlyError(a.server, e, secret()) };
+      const error = friendlyError(a.server, e, secret());
+      if (e instanceof McpError && (e.code === 'auth' || e.code === 'protocol' || e.code === 'session')) this.invalidate(a.server.id, error);
+      return { success: false, error };
     }
   }
 
@@ -391,6 +413,10 @@ export class McpManager {
     if (!server) throw new McpError('Неизвестный сервис', 'denied');
     const t = token.trim();
     if (server.tokenRequired && !t) throw new McpError(`${server.name}: вставьте токен`, 'auth');
+    const g = this.gen;
+    const ep = this.bump(server.id);
+    const stale = () => g !== this.gen || ep !== this.epoch(server.id);
+    const cancelled = () => new McpError(`${server.name}: подключение отменено, потому что настройки сервиса изменились. Нажмите «Подключить» ещё раз.`, 'denied');
     const open = async (): Promise<{ c: McpConnection; tools: McpToolDef[] }> => {
       const conn = factory(server, t || null);
       await conn.initialize();
@@ -402,7 +428,9 @@ export class McpManager {
       if (e instanceof Error && /недопустимые символы/.test(e.message)) throw new McpError(e.message, 'auth');
       throw new McpError(`${server.name}: не получилось подключиться. Проверьте токен и интернет.`, 'network');
     });
+    if (stale()) throw cancelled();
     await setSecret(secretName(server.id), t || null);
+    if (stale()) throw cancelled();
     if (t) this.secrets.set(server.id, t); else this.secrets.delete(server.id);
     this.conns.set(server.id, c);
     this.verified.add(server.id);
@@ -418,17 +446,20 @@ export class McpManager {
     const server = mcpServer(serverId);
     const st = this.state[serverId];
     if (!server || !st) throw new McpError('Сервис не подключён', 'denied');
-    this.conns.delete(serverId);
-    this.verified.delete(serverId);
+    this.bump(serverId);
+    this.invalidate(serverId);
+    const ep = this.epoch(serverId);
     try {
       await this.connection(server); // заново initialize + tools/list, список сохраняется там же
     } catch (e) {
+      if (ep === this.epoch(serverId) && this.state[serverId]) this.invalidate(serverId, friendlyError(server, e, this.secrets.get(serverId) ?? null));
       throw new McpError(e instanceof McpError ? scrubSecret(e.message, this.secrets.get(serverId)) : `${server.name}: не получилось обновить список. Проверьте токен и интернет.`, e instanceof McpError ? e.code : 'network');
     }
     return this.state[serverId]?.tools.length ?? 0;
   }
 
   async disconnect(serverId: string): Promise<void> {
+    this.bump(serverId);
     this.conns.delete(serverId);
     this.secrets.delete(serverId);
     this.verified.delete(serverId);
@@ -444,6 +475,8 @@ export class McpManager {
     const st = this.state[serverId];
     if (!st) return Promise.resolve();
     st.enabled = on;
+    this.bump(serverId);
+    this.errors.delete(serverId);
     // Выключение забывает подключение; при включении сервис снова проверяется по токену, и только потом
     // его инструменты появляются в чате.
     this.conns.delete(serverId);
@@ -472,7 +505,7 @@ export class McpManager {
   status(): ServerStatus[] {
     return MCP_SERVERS.map(server => {
       const st = this.state[server.id];
-      const tools = st ? Array.from(this.ids(server.id, st.tools)).map(([id, def]) => ({ id, def, on: !st.off.includes(def.name) })) : [];
+      const tools = st && this.verified.has(server.id) ? Array.from(this.ids(server.id, st.tools)).map(([id, def]) => ({ id, def, on: !st.off.includes(def.name) })) : [];
       return { server, connected: !!st, enabled: !!st?.enabled, autoRead: st?.autoRead === true && canAutoRead(server), canAutoRead: canAutoRead(server), verified: this.verified.has(server.id), error: this.errors.get(server.id) ?? null, tools };
     });
   }
@@ -481,7 +514,7 @@ export class McpManager {
   isMcpTool(id: string): boolean { return this.registered.has(id); }
 
   /** Для тестов и «Удалить все данные»: забыть всё в памяти. */
-  reset(): void { this.gen++; this.conns.clear(); this.summaries.clear(); this.secrets.clear(); this.verified.clear(); this.errors.clear(); this.state = {}; try { this.kv?.removeItem(STATE_KEY); } catch { /* noop */ } this.sync(); }
+  reset(): void { this.gen++; this.epochs.clear(); this.conns.clear(); this.summaries.clear(); this.secrets.clear(); this.verified.clear(); this.errors.clear(); this.state = {}; try { this.kv?.removeItem(STATE_KEY); } catch { /* noop */ } this.sync(); }
 }
 
 export const mcpManager = new McpManager();
@@ -697,4 +730,4 @@ export async function runMcpLoop(opts: { reply: string; actions: McpAction[]; so
   return { notes, summary, lastReply };
 }
 
-export const MCP_REJECTED_TEXT = 'Действие пропущено: запрос получился слишком длинным или сложным, и Светлана не смогла бы показать его вам целиком. Попросите сделать это по частям.';
+export const MCP_REJECTED_TEXT = 'Действие пропускается: запрос получился слишком длинным или сложным, и Светлана не смогла бы показать его вам целиком. Попросите сделать это по частям.';
