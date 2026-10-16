@@ -1,10 +1,12 @@
-# Светлана для Android (голова + руки)
+# Светлана 2.0 для Android
 
-Нативное приложение без WebView и сторонних библиотек. Исходник тот же, что в репозитории
-Svetlana-App (`android/app/src/v2`); здесь он собирается в APK бесплатно (публичный репозиторий,
-workflow `svetlana-android.yml`, артефакт `svetlana-hands-debug`).
+Тот же интерфейс, что у сайта и Windows: при сборке корень репозитория собирается (`npm run build`)
+и кладётся в APK, WebView открывает его через WebViewAssetLoader. Нативная часть даёт голос,
+распознавание речи на телефоне (GigaAM), защищённое хранение ключей (Android Keystore) и печать.
 
-- **Голова** — единая Светлана на сервере (тот же ключ, что у сайта и Windows-версии), ключ зашифрован Android Keystore.
-- **Голос** — системное распознавание речи (ru-RU) и озвучка ответов.
-- **Руки** — AccessibilityService: открыть приложение, нажать, напечатать, пролистать, назад/домой, прочитать экран.
-  Шаги, которые предложила Светлана, выполняются только после «Выполнить».
+- **Сборка:** `gradle testDebugUnitTest assembleDebug` (нужен Node.js 22+ для интерфейса).
+- **CI:** `svetlana-android.yml` (тесты, APK, публикация в Releases как `Svetlana-2.0-Android.apk`)
+  и `svetlana-android-emulator.yml` (запуск на эмуляторе, скрипт `scripts/emulator-smoke.sh`).
+- **Подпись:** если в секретах репозитория заданы `SVETLANA_KEYSTORE_B64`, `SVETLANA_KEYSTORE_PASSWORD`,
+  `SVETLANA_KEY_ALIAS` и `SVETLANA_KEY_PASSWORD`, в Releases уходит подписанный релизный APK. Ключ в git не лежит
+  (см. `ci/workflows/README.md`).
