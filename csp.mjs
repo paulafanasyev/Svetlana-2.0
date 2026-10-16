@@ -11,11 +11,11 @@ export const CLOUD_ORIGINS = [
   // Шлюзы к многим моделям с одним ключом: AnyModel и OpenCode Zen.
   'https://anymodel.org', 'https://opencode.ai',
   // Внешние сервисы (src/services/mcp/McpCatalog.ts): GitHub MCP, Vercel API, Supabase, Linear, Stripe, Sentry, Neon, Context7, Hugging Face,
-  // Timeweb Cloud, Yandex Cloud, Beget.
+  // Timeweb Cloud, Yandex Cloud, Beget, REG.RU.
   'https://api.githubcopilot.com', 'https://api.vercel.com', 'https://mcp.supabase.com', 'https://mcp.linear.app',
   'https://mcp.stripe.com', 'https://mcp.sentry.dev', 'https://mcp.neon.tech', 'https://mcp.context7.com', 'https://huggingface.co',
-  // Российские облака и хостинг: Timeweb Cloud MCP, Yandex Cloud Toolkit MCP, Beget API.
-  'https://api.timeweb.cloud', 'https://toolkit.mcp.cloud.yandex.net', 'https://api.beget.com',
+  // Российские облака, хостинг и регистратор: Timeweb Cloud MCP, Yandex Cloud Toolkit MCP, Beget API, Рег.API.
+  'https://api.timeweb.cloud', 'https://toolkit.mcp.cloud.yandex.net', 'https://api.beget.com', 'https://api.reg.ru',
   'https://suggestions.dadata.ru', 'https://statusnpd.nalog.ru',
   // Личный кабинет «Мир Самозанятых» (мир-самозанятых.рф и резервный API).
   'https://xn----8sba1acxdkgqms3b9euc.xn--p1ai', 'https://mir-samozanyatykh-api-frankfurt.onrender.com',
