@@ -45,6 +45,9 @@ const PRESET_PROVIDERS: Omit<AIProvider, 'enabled' | 'apiKey'>[] = [
   { id: 'svetlana', name: '★ Светлана Сервер (единая)', type: 'online', endpoint: SVETLANA_CORE_ORIGIN, model: SVETLANA_CORE_MODEL },
   // Свой внешний ИИ: любой OpenAI-совместимый https-сервер. Только в приложении Android.
   { id: CUSTOM_AI_ID, name: 'Свой ИИ (OpenAI-совместимый)', type: 'online', endpoint: 'https://', model: '' },
+  // Шлюзы ко многим моделям с одним ключом (GPT, Claude, Gemini, DeepSeek, Kimi, Qwen, GLM…).
+  { id: 'anymodel', name: 'AnyModel (GPT, Claude, Gemini дёшево)', type: 'online', endpoint: 'https://anymodel.org/v1', model: 'gpt-5' },
+  { id: 'opencode', name: 'OpenCode Zen (модели для кода, есть бесплатные)', type: 'online', endpoint: 'https://opencode.ai/zen/v1', model: 'kimi-k2.5' },
   // GigaChat от Сбера: бесплатный тариф для физлиц, хорошо знает русский. Работает в приложениях Windows и Android.
   { id: 'gigachat', name: 'GigaChat (Сбер, бесплатно)', type: 'online', endpoint: 'https://api.giga.chat/v1', model: 'GigaChat-2' },
   { id: 'openai', name: 'OpenAI (GPT-4o)', type: 'online', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
@@ -67,6 +70,8 @@ const POPULAR_OFFLINE_MODELS = [
 
 const MODEL_OPTIONS: Record<string, string[]> = {
   svetlana: [SVETLANA_CORE_MODEL],
+  anymodel: ['gpt-5', 'gpt-5.5', 'claude-sonnet-4.5', 'gemini-2.5-pro', 'deepseek-v3', 'kimi-k2', 'qwen3-coder', 'grok-4'],
+  opencode: ['kimi-k2.5', 'glm-5', 'qwen3-coder', 'minimax-m2.5', 'big-pickle', 'kimi-k2.5-free', 'minimax-m2.5-free'],
   gigachat: ['GigaChat-2', 'GigaChat-2-Pro', 'GigaChat-2-Max'],
   openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
   anthropic: ['claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307', 'claude-3-opus-20240229'],
