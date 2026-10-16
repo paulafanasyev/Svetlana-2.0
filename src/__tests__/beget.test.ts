@@ -108,7 +108,7 @@ describe('Beget in the chat', () => {
   async function connect(answer: (path: string, data: any) => unknown = path => path === 'user/getAccountInfo' ? ok({}) : ok(true)) {
     const srv = fakeBeget(answer);
     __setMcpFactoryForTests((_s, t) => new BegetConnection(t ?? '', srv.fetchImpl));
-    expect(await mcpManager.connect('beget', CREDS)).toBe(6);
+    expect(await mcpManager.connect('beget', CREDS)).toBe(8);
     return srv;
   }
 
@@ -173,7 +173,7 @@ describe('Beget mistakes do not break the connection', () => {
     expect(r1.lines[0]).toMatch(/все три списка/);
     const r2 = await runMcpActions([{ tool: 'mcp_beget__get_dns', args: { fqdn: 'site.ru' }, source: 'llm' }]);
     expect(r2.lines[0]).toMatch(/INCORRECT_REQUEST/);
-    expect(mcpManager.activeTools().length).toBe(6);
+    expect(mcpManager.activeTools().length).toBe(8);
     expect(mcpManager.status().find(s => s.server.id === 'beget')?.verified).toBe(true);
   });
 });
