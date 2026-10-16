@@ -310,7 +310,7 @@ export class McpManager {
         const knownRead = def.readOnly === true && isKnownReadTool(server.id, def.name);
         const autoRead = st.autoRead === true && canAutoRead(server) && knownRead;
         registerActionPolicy(id, {
-          auto: args => autoRead && this.verified.has(server.id) && isSmallArgs(args),
+          auto: args => autoRead && this.verified.has(server.id) && this.epoch(server.id) === active.epoch && isSmallArgs(args),
           describe: args => this.describe(server, def, args),
           warn: args => this.warning(server, def, args, knownRead),
         });
@@ -391,10 +391,17 @@ export class McpManager {
     const token = await store.get(secretName(server.id));
     if (stale()) throw new McpError(`${server.name}: проверка прервана, потому что сервис выключили или изменили его настройки. Попробуйте ещё раз.`, 'denied');
     if (server.tokenRequired && !token) throw new McpError(`${server.name}: токен не найден. Откройте «Сервисы», нажмите «Сменить токен» у этого сервиса, вставьте токен и нажмите «Подключить».`, 'auth');
-    const c = factory(server, token);
     // Сохранённому списку инструментов не доверяем: в новом сеансе сервис заново отвечает по токену.
-    await c.initialize();
-    const tools = cleanTools(await c.listTools(), token);
+    // Ошибки сервиса очищаются от токена здесь же: в памяти он появится только после успешной проверки.
+    const check = async (): Promise<{ c: McpConnection; tools: McpToolDef[] }> => {
+      const conn = factory(server, token);
+      await conn.initialize();
+      return { c: conn, tools: cleanTools(await conn.listTools(), token) };
+    };
+    const { c, tools } = await check().catch((e: unknown): never => {
+      if (e instanceof McpError) throw new McpError(scrubSecret(e.message, token), e.code);
+      throw new McpError(`${server.name}: не получилось проверить подключение. Проверьте интернет и нажмите «Обновить».`, 'network');
+    });
     if (stale()) throw new McpError(`${server.name}: проверка прервана, потому что сервис выключили или изменили его настройки. Попробуйте ещё раз.`, 'denied');
     if (token) this.secrets.set(server.id, token); else this.secrets.delete(server.id);
     this.conns.set(server.id, c);
@@ -413,7 +420,8 @@ export class McpManager {
       // изменилось (или инструмент пропал), ничего не выполняем: модель предложит действие заново.
       const current = this.registered.get(a.id);
       if (!current) return { success: false, error: `${a.server.name}: этого действия больше нет. Откройте «Сервисы» и нажмите «Обновить».` };
-      if (current.epoch !== a.epoch || this.conns.get(a.server.id) !== c) return { success: false, error: `${a.server.name}: пока открывалось подтверждение, подключение сервиса изменилось, поэтому Светлана ничего не выполнила. Повторите запрос.` };
+      // Номер намерения сверяется с текущим: если прямо сейчас идёт смена токена, старое подключение не используется.
+      if (current.epoch !== a.epoch || this.epoch(a.server.id) !== a.epoch || this.conns.get(a.server.id) !== c) return { success: false, error: `${a.server.name}: пока открывалось подтверждение, подключение сервиса изменилось, поэтому Светлана ничего не выполнила. Повторите запрос.` };
       if (!sameDef(current.def, a.def)) return { success: false, error: `${a.server.name}: сервис изменил это действие, поэтому Светлана его не выполнила. Повторите запрос, чтобы подтвердить новую версию.` };
       const r = await c.callTool(a.def.name, params);
       const text = scrubSecret(r.text, secret());
