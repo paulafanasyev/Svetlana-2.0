@@ -103,8 +103,30 @@ const LABELS: Record<string, string> = {
  */
 const DYNAMIC_LABELS = new Map<string, string>();
 export function registerActionLabel(tool: string, label: string | null): void {
-  if (label === null) { DYNAMIC_LABELS.delete(tool); return; }
+  if (label === null) { DYNAMIC_LABELS.delete(tool); AUTO.delete(tool); DESCRIBE.delete(tool); return; }
   DYNAMIC_LABELS.set(tool, stripControl(label, false).slice(0, 160));
+}
+
+/**
+ * Правила для инструментов внешних сервисов (MCP):
+ * auto — вызов с этими аргументами ничего не меняет и не раскрывает чужого (поиск по справочнику операций,
+ *   документация, первый шаг двухшагового подтверждения Timeweb) или пользователь сам разрешил чтение без подтверждения.
+ *   Голос всё равно подтверждается всегда. Ошибка в правиле — значит «нужно подтверждение».
+ * describe — строка «что именно произойдёт» для окна подтверждения (например, сводка операции от сервиса).
+ */
+export interface ActionPolicy { auto?: (args: Record<string, unknown>) => boolean; describe?: (args: Record<string, unknown>) => string | null }
+const AUTO = new Map<string, NonNullable<ActionPolicy['auto']>>();
+const DESCRIBE = new Map<string, NonNullable<ActionPolicy['describe']>>();
+export function registerActionPolicy(tool: string, policy: ActionPolicy | null): void {
+  AUTO.delete(tool); DESCRIBE.delete(tool);
+  if (!policy) return;
+  if (policy.auto) AUTO.set(tool, policy.auto);
+  if (policy.describe) DESCRIBE.set(tool, policy.describe);
+}
+function autoAllowed(tool: string, args: Record<string, unknown> | undefined): boolean {
+  const fn = AUTO.get(tool);
+  if (!fn || !args) return false;
+  try { return fn(args) === true; } catch { return false; }
 }
 
 const ARG_LABELS: Record<string, string> = {
@@ -121,10 +143,11 @@ export function isReadOnlyTool(tool: string): boolean {
  * Нужно ли явное подтверждение. Команда пользователя (настоящий жест) — нет. Голос — всегда, даже для чтения
  * (запись голоса можно воспроизвести). Остальные источники — для всего, что меняет данные.
  */
-export function needsConfirmation(tool: string, source: ActionSource): boolean {
+export function needsConfirmation(tool: string, source: ActionSource, args?: Record<string, unknown>): boolean {
   if (source === 'user') return false;
   if (source === 'voice') return true;
-  return !READ_ONLY.has(tool);
+  if (READ_ONLY.has(tool)) return false;
+  return !autoAllowed(tool, args);
 }
 
 export interface ActionRequest { tool: string; args: Record<string, unknown>; source: ActionSource; gesture?: UserGesture }
@@ -136,6 +159,9 @@ export function summarizeAction(req: ActionRequest): ActionSummary {
   const lines = Object.entries(req.args)
     .filter(([, v]) => v !== undefined && v !== '')
     .map(([k, v]) => `${ARG_LABELS[k] ?? stripControl(k, false)}: ${stripControl(typeof v === 'object' ? JSON.stringify(v) : String(v), false)}`);
+  let what: string | null = null;
+  try { what = DESCRIBE.get(req.tool)?.(req.args) ?? null; } catch { what = null; }
+  if (what) lines.unshift(`Что будет: ${stripControl(what, false).slice(0, 400)}`);
   return {
     title: LABELS[req.tool] ?? DYNAMIC_LABELS.get(req.tool) ?? stripControl(req.tool, false),
     lines,
@@ -194,7 +220,7 @@ export async function authorizeAction(input: ActionRequest, now: number = Date.n
   // 'user' без настоящего жеста, привязанного именно к этому действию с этими параметрами, понижаем до 'unknown'.
   const source: ActionSource = input.source === 'user' && !validGesture(input.gesture, now, input.tool, input.args) ? 'unknown' : input.source;
   const req: ActionRequest = { tool: input.tool, args: deepFreeze(input.args), source };
-  if (!needsConfirmation(req.tool, req.source)) {
+  if (!needsConfirmation(req.tool, req.source, req.args)) {
     record({ t: now, tool: req.tool, source: req.source, decision: 'auto' });
     return true;
   }
