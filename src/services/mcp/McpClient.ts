@@ -92,7 +92,11 @@ function isRpcResponse(m: unknown, id: number): m is { jsonrpc: '2.0'; id: numbe
   const hasResult = Object.prototype.hasOwnProperty.call(o, 'result');
   const hasError = Object.prototype.hasOwnProperty.call(o, 'error');
   if (hasResult === hasError) return false;
-  if (hasError && (!o.error || typeof o.error !== 'object' || Array.isArray(o.error))) return false;
+  if (hasError) {
+    const err = o.error as Record<string, unknown> | null;
+    if (!err || typeof err !== 'object' || Array.isArray(err)) return false;
+    if (typeof err.code !== 'number' || !Number.isInteger(err.code) || typeof err.message !== 'string') return false;
+  }
   return true;
 }
 
@@ -115,7 +119,7 @@ export function parseRpcResponse(text: string, contentType: string | null, id: n
   const msg = sameId.find(m => isRpcResponse(m, id)) as any;
   if (!msg) throw new McpError('Сервер прислал ответ не по протоколу JSON-RPC 2.0', 'protocol');
   if (Object.prototype.hasOwnProperty.call(msg, 'error')) {
-    const m = stripControl(typeof msg.error.message === 'string' ? msg.error.message : 'ошибка', false).slice(0, 300);
+    const m = stripControl(msg.error.message, false).slice(0, 300);
     throw new McpError(`Ошибка сервера: ${m}`, 'protocol');
   }
   return msg.result;
@@ -199,7 +203,7 @@ export class McpClient implements McpConnection {
   }
 
   async initialize(): Promise<void> {
-    this.sessionId = null; this.protocolVersion = null;
+    this.ready = false; this.sessionId = null; this.protocolVersion = null;
     const result = await this.rpc('initialize', {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {},

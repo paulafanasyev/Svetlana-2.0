@@ -6,6 +6,7 @@ import { useEffect, useId, useState } from 'react';
 import { Plug, ExternalLink, RefreshCw, Trash2, Loader2, X, Key, Eye, EyeOff } from 'lucide-react';
 import { mcpManager, type ServerStatus } from '../services/mcp/McpManager';
 import { McpError } from '../services/mcp/McpClient';
+import { secretStorageMode } from '../services/security/SecretStore';
 import { appPlatform } from '../platform';
 
 export const MCP_WEB_NOTE = 'На сайте часть сервисов может не пустить браузер (CORS). В приложениях для Windows и Android такого ограничения меньше.';
@@ -17,6 +18,7 @@ function ServerCard({ s }: { s: ServerStatus }) {
   const [open, setOpen] = useState(false);
   const [show, setShow] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [replace, setReplace] = useState(false);
   const listId = useId();
 
   const run = async (fn: () => Promise<string>) => {
@@ -26,7 +28,7 @@ function ServerCard({ s }: { s: ServerStatus }) {
       setMsg({ ok: false, text: e instanceof McpError ? e.message : 'Не получилось. Проверьте токен и интернет и попробуйте ещё раз.' });
     } finally { setBusy(false); }
   };
-  const connect = () => run(async () => { const n = await mcpManager.connect(s.server.id, token); setToken(''); return `Подключено, инструментов: ${n}`; });
+  const connect = () => run(async () => { const n = await mcpManager.connect(s.server.id, token); setToken(''); setReplace(false); return `Подключено, инструментов: ${n}`; });
   const refresh = () => run(async () => `Обновлено, инструментов: ${await mcpManager.refresh(s.server.id)}`);
   const remove = () => { setConfirmRemove(false); return run(async () => { await mcpManager.disconnect(s.server.id); return 'Отключено, токен удалён'; }); };
   const onCount = s.tools.filter(t => t.on).length;
@@ -46,7 +48,7 @@ function ServerCard({ s }: { s: ServerStatus }) {
         )}
       </div>
 
-      {!s.connected && (
+      {(!s.connected || replace) && (
         <>
           <div className="flex gap-2">
             <input
@@ -90,6 +92,9 @@ function ServerCard({ s }: { s: ServerStatus }) {
           <button onClick={refresh} disabled={busy} title="Обновить список" aria-label={`Обновить ${s.server.name}`} className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
           </button>
+          <button onClick={() => setReplace(!replace)} aria-expanded={replace} className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs">
+            {replace ? 'Отмена' : 'Сменить токен'}
+          </button>
           {!confirmRemove ? (
             <button onClick={() => setConfirmRemove(true)} disabled={busy} title="Отключить и удалить токен" aria-label={`Отключить ${s.server.name}`} className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 disabled:opacity-50">
               <Trash2 className="w-3.5 h-3.5" />
@@ -126,7 +131,9 @@ function ServerCard({ s }: { s: ServerStatus }) {
 
 export default function McpPanel({ onClose }: { onClose?: () => void }) {
   const [list, setList] = useState<ServerStatus[]>(() => mcpManager.status());
+  const [storageMode, setStorageMode] = useState<'encrypted' | 'memory' | null>(null);
   useEffect(() => mcpManager.subscribe(() => setList(mcpManager.status())), []);
+  useEffect(() => { let alive = true; secretStorageMode().then(m => { if (alive) setStorageMode(m); }).catch(() => {}); return () => { alive = false; }; }, []);
   const web = appPlatform() === 'web';
 
   return (
@@ -145,7 +152,12 @@ export default function McpPanel({ onClose }: { onClose?: () => void }) {
         <li>Скопируйте токен, вставьте в поле и нажмите «Подключить».</li>
         <li>Пишите Светлане в чат. Каждое действие она покажет вам на подтверждение; изменения помечены ⚠️.</li>
       </ol>
-      <p className="text-xs text-sv-muted">Токен хранится зашифрованно на этом устройстве и больше не показывается. Галочка «чтение без подтверждения» убирает окна только для просмотра и поиска.</p>
+      <p className="text-xs text-sv-muted">
+        {storageMode === 'memory'
+          ? 'Защищённое хранилище на этом устройстве недоступно: токен хранится только до закрытия приложения, потом его нужно вставить снова.'
+          : 'Токен хранится зашифрованно на этом устройстве и повторно не показывается.'}
+        {' '}Галочка «чтение без подтверждения» убирает окна только для просмотра и поиска.
+      </p>
       {web && <p data-testid="mcp-web-note" className="text-xs text-yellow-300">{MCP_WEB_NOTE}</p>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {list.map(s => <ServerCard key={s.server.id} s={s} />)}
