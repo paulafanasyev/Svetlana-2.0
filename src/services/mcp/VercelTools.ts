@@ -1,7 +1,7 @@
 // Vercel: официальный Vercel MCP пускает только по OAuth и только одобренные приложения, поэтому
 // Светлана работает с Vercel напрямую через REST API по токену. Набор инструментов — только чтение:
 // проекты, деплои, логи сборки, домены. Адрес фиксирован (https://api.vercel.com), без редиректов.
-import { stripControl } from '../security/SafeData';
+import { safeJsonParse, stripControl } from '../security/SafeData';
 import { authHeader, mcpServer } from './McpCatalog';
 import { guardedFetch, readLimited, McpError, type FetchLike, type McpCallResult, type McpConnection, type McpToolDef } from './McpClient';
 
@@ -52,6 +52,15 @@ export function vercelRequestUrl(name: string, args: Record<string, unknown>): s
   return `${BASE}${path}${qs ? `?${qs}` : ''}`;
 }
 
+/** true — Vercel вернул ошибку в теле ответа ({"error": {...}}), даже при коде 2xx. */
+export function isVercelErrorBody(text: string): boolean {
+  if (!text.trimStart().startsWith('{') || !text.includes('"error"')) return false;
+  try {
+    const o = safeJsonParse(text, 4_000_000) as Record<string, unknown> | null;
+    return !!o && typeof o === 'object' && !Array.isArray(o) && !!o.error && typeof o.error === 'object';
+  } catch { return false; }
+}
+
 export class VercelConnection implements McpConnection {
   constructor(private readonly token: string, private readonly fetchImpl: FetchLike = (u, i) => globalThis.fetch(u, i)) {
     if (!token.trim()) throw new McpError('Vercel: нужен токен', 'auth');
@@ -68,14 +77,16 @@ export class VercelConnection implements McpConnection {
 
   async initialize(): Promise<void> {
     // Проверка токена: кто владелец.
-    await this.get(`${BASE}/v2/user`);
+    const text = await this.get(`${BASE}/v2/user`);
+    if (isVercelErrorBody(text)) throw new McpError('Vercel: токен не подошёл или у него нет прав', 'auth');
   }
 
   async listTools(): Promise<McpToolDef[]> { return VERCEL_TOOLS.map(t => ({ ...t })); }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<McpCallResult> {
     let text = stripControl(await this.get(vercelRequestUrl(name, args)));
+    const isError = isVercelErrorBody(text);
     if (text.length > MAX_RESULT_CHARS) text = `${text.slice(0, MAX_RESULT_CHARS)}\n…(обрезано)`;
-    return { text, isError: false };
+    return { text, isError };
   }
 }
