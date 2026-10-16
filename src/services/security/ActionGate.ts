@@ -96,6 +96,17 @@ const LABELS: Record<string, string> = {
   biz_book: 'Записать клиента', biz_cancel_booking: 'Отменить запись', biz_complete_booking: 'Отметить визит',
 };
 
+/**
+ * Названия для инструментов, которые появляются во время работы (внешние сервисы MCP).
+ * Название только для показа: в список «только чтение» такие инструменты не попадают никогда,
+ * поэтому любое действие модели с ними подтверждается человеком.
+ */
+const DYNAMIC_LABELS = new Map<string, string>();
+export function registerActionLabel(tool: string, label: string | null): void {
+  if (label === null) { DYNAMIC_LABELS.delete(tool); return; }
+  DYNAMIC_LABELS.set(tool, stripControl(label, false).slice(0, 160));
+}
+
 const ARG_LABELS: Record<string, string> = {
   amount: 'Сумма', client: 'Клиент', name: 'Имя', description: 'Описание', service: 'Услуга', type: 'Тип',
   invoice: 'Счёт', when: 'Когда', date: 'Дата', phone: 'Телефон', text: 'Текст', stage: 'Этап', regime: 'Режим',
@@ -126,7 +137,7 @@ export function summarizeAction(req: ActionRequest): ActionSummary {
     .filter(([, v]) => v !== undefined && v !== '')
     .map(([k, v]) => `${ARG_LABELS[k] ?? stripControl(k, false)}: ${stripControl(typeof v === 'object' ? JSON.stringify(v) : String(v), false)}`);
   return {
-    title: LABELS[req.tool] ?? stripControl(req.tool, false),
+    title: LABELS[req.tool] ?? DYNAMIC_LABELS.get(req.tool) ?? stripControl(req.tool, false),
     lines,
     sourceLabel: req.source === 'llm' ? 'Предложено нейросетью' : req.source === 'voice' ? 'Распознано голосом'
       : req.source === 'user' ? 'Команда пользователя' : 'Автоматическое действие',

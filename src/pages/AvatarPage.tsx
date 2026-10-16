@@ -1,17 +1,20 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Avatar, { VoiceControl, useSpeech } from '../components/Avatar';
+import McpPanel from '../components/McpPanel';
 import { aiGateway, type ChatMessage } from '../services/AIGateway';
 import { explainAiError } from '../services/AiErrors';
 import { crmSystemPrompt, detectCRMIntent, parseCRMActions, runCRMActions } from '../services/crm/CRMTools';
+import { mcpSystemPrompt, parseMcpActions, runMcpActions, mcpFollowUp, stripActionBlocks, MCP_REJECTED_TEXT } from '../services/mcp/McpManager';
 import { toModelHistory } from '../services/security/History';
+import { defang } from '../services/security/Untrusted';
 import { resetNativeConversation } from '../services/security/NativeBridge';
 import type { ActionSource } from '../services/security/ActionGate';
 import { appPlatform } from '../platform';
 import {
   Mic, Volume2, VolumeX, MessageCircle, Send,
   Sparkles, Heart, Smile, Frown, Laugh, AlertCircle,
-  Settings, Wifi, WifiOff, Zap, Loader2, RotateCcw
+  Settings, Wifi, WifiOff, Zap, Loader2, RotateCcw, Plug
 } from 'lucide-react';
 
 type Emotion = 'neutral' | 'happy' | 'sad' | 'laughing' | 'crying' | 'surprised' | 'talking';
@@ -22,7 +25,7 @@ interface Message {
   emotion?: Emotion;
   timestamp: number;
   provider?: string;
-  /** В реплике есть результаты инструментов (CRM): модели она вернётся только как данные. */
+  /** В реплике есть результаты инструментов (CRM, внешние сервисы): модели она вернётся только как данные. */
   hasData?: boolean;
 }
 
@@ -94,6 +97,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showServices, setShowServices] = useState(false);
   // Микрофон включён: на аватаре пульсирует кольцо (озвучка показывается по isSpeaking).
   const [listening, setListening] = useState(false);
   const [activeProvider, setActiveProvider] = useState(aiGateway.getActiveProvider());
@@ -172,21 +176,48 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
 
       // История для модели: результаты инструментов — только как данные, блоки действий обезврежены.
       // По голосу модель не получает данных CRM и бизнеса — ни текущих, ни из прошлых реплик.
+      // Подключённые внешние сервисы (MCP) модель видит списком инструментов; каждый вызов подтверждает человек.
       const voice = source === 'voice';
       const history: ChatMessage[] = [
-        { role: 'system', content: SYSTEM_PROMPT + crmSystemPrompt(undefined, !voice) },
+        { role: 'system', content: SYSTEM_PROMPT + crmSystemPrompt(undefined, !voice) + mcpSystemPrompt() },
         ...toModelHistory(messages.slice(-10), { hideData: voice }),
         { role: 'user', content: text },
       ];
 
       const response = await aiGateway.chat(history, { temperature: 0.8, max_tokens: 1024 });
 
-      const detectedEmotion = detectEmotion(response.content);
+      let detectedEmotion = detectEmotion(response.content);
       const { clean, actions } = parseCRMActions(response.content);
-      let cleanContent = cleanEmotionTag(clean);
+      const mcp = parseMcpActions(clean);
+      let cleanContent = cleanEmotionTag(mcp.clean);
       if (actions.length > 0) {
         const results = await runCRMActions(actions, source);
         cleanContent = [cleanContent, ...results].filter(Boolean).join('\n');
+      }
+
+      // Внешние сервисы: каждый вызов — после подтверждения; результат модель получает только как данные
+      // и пересказывает его вторым ответом. Действия из пересказа не выполняются.
+      const usedMcp = mcp.actions.length > 0 || mcp.rejected.length > 0;
+      if (usedMcp) {
+        const run = await runMcpActions(mcp.actions, source);
+        const notes = [...run.lines, ...mcp.rejected.map(() => `⚠️ ${MCP_REJECTED_TEXT}`)];
+        cleanContent = [cleanContent, ...notes].filter(Boolean).join('\n');
+        if (run.data.length > 0) {
+          try {
+            const follow = await aiGateway.chat([
+              ...history,
+              { role: 'assistant', content: defang(cleanContent) },
+              { role: 'user', content: mcpFollowUp(run.data) },
+            ], { temperature: 0.4, max_tokens: 1024 });
+            const summary = cleanEmotionTag(stripActionBlocks(follow.content));
+            if (summary) {
+              cleanContent = `${cleanContent}\n\n${summary}`;
+              detectedEmotion = detectEmotion(follow.content);
+            }
+          } catch {
+            cleanContent = [cleanContent, ...run.data.map(d => d.slice(0, 1500))].join('\n\n');
+          }
+        }
       }
 
       const assistantMessage: Message = {
@@ -195,7 +226,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
         emotion: detectedEmotion,
         timestamp: Date.now(),
         provider: `${response.provider} (${response.model})`,
-        hasData: actions.length > 0,
+        hasData: actions.length > 0 || usedMcp,
       };
 
       setMessages(prev => [...prev, assistantMessage]);
@@ -254,6 +285,16 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
             </div>
           )}
           <button
+            onClick={() => setShowServices(!showServices)}
+            title="Сервисы (MCP): GitHub, Vercel и другие"
+            aria-label="Сервисы (MCP)"
+            aria-pressed={showServices}
+            className="flex items-center gap-1.5 p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted text-xs"
+          >
+            <Plug className="w-4 h-4" />
+            <span className="hidden sm:inline">Сервисы</span>
+          </button>
+          <button
             onClick={() => setShowSettings(!showSettings)}
             title="Настройки голоса"
             aria-label="Настройки голоса"
@@ -289,6 +330,8 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
           {error}
         </motion.div>
       )}
+
+      {showServices && <McpPanel onClose={() => setShowServices(false)} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Chat Interface — на телефоне первым, чтобы сразу можно было писать */}
