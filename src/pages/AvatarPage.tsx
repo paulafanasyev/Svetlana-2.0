@@ -5,9 +5,8 @@ import McpPanel from '../components/McpPanel';
 import { aiGateway, type ChatMessage } from '../services/AIGateway';
 import { explainAiError } from '../services/AiErrors';
 import { crmSystemPrompt, detectCRMIntent, parseCRMActions, runCRMActions } from '../services/crm/CRMTools';
-import { mcpSystemPrompt, parseMcpActions, runMcpActions, mcpFollowUp, stripActionBlocks, MCP_REJECTED_TEXT } from '../services/mcp/McpManager';
+import { mcpSystemPrompt, parseMcpActions, runMcpLoop, MCP_REJECTED_TEXT } from '../services/mcp/McpManager';
 import { toModelHistory } from '../services/security/History';
-import { defang } from '../services/security/Untrusted';
 import { resetNativeConversation } from '../services/security/NativeBridge';
 import type { ActionSource } from '../services/security/ActionGate';
 import { appPlatform } from '../platform';
@@ -195,29 +194,23 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
         cleanContent = [cleanContent, ...results].filter(Boolean).join('\n');
       }
 
-      // Внешние сервисы: каждый вызов — после подтверждения; результат модель получает только как данные
-      // и пересказывает его вторым ответом. Действия из пересказа не выполняются.
+      // Внешние сервисы: каждый вызов — после подтверждения; результаты модель получает только как данные.
+      // Если модель просит следующий шаг (Timeweb Cloud: найти операцию → выполнить), человек снова подтверждает.
       const usedMcp = mcp.actions.length > 0 || mcp.rejected.length > 0;
-      if (usedMcp) {
-        const run = await runMcpActions(mcp.actions, source);
-        const notes = [...run.lines, ...mcp.rejected.map(() => `⚠️ ${MCP_REJECTED_TEXT}`)];
-        cleanContent = [cleanContent, ...notes].filter(Boolean).join('\n');
-        if (run.data.length > 0) {
-          try {
-            const follow = await aiGateway.chat([
-              ...history,
-              { role: 'assistant', content: defang(cleanContent) },
-              { role: 'user', content: mcpFollowUp(run.data) },
-            ], { temperature: 0.4, max_tokens: 1024 });
-            const summary = cleanEmotionTag(stripActionBlocks(follow.content));
-            if (summary) {
-              cleanContent = `${cleanContent}\n\n${summary}`;
-              detectedEmotion = detectEmotion(follow.content);
-            }
-          } catch {
-            cleanContent = [cleanContent, ...run.data.map(d => d.slice(0, 1500))].join('\n\n');
-          }
-        }
+      if (mcp.rejected.length > 0) {
+        cleanContent = [cleanContent, ...mcp.rejected.map(() => `⚠️ ${MCP_REJECTED_TEXT}`)].filter(Boolean).join('\n');
+      }
+      if (mcp.actions.length > 0) {
+        const loop = await runMcpLoop({
+          reply: cleanContent,
+          actions: mcp.actions,
+          source,
+          chat: async extra => (await aiGateway.chat([...history, ...extra], { temperature: 0.4, max_tokens: 1024 })).content,
+        });
+        cleanContent = [cleanContent, ...loop.notes].filter(Boolean).join('\n');
+        const summary = cleanEmotionTag(loop.summary);
+        if (summary) cleanContent = `${cleanContent}\n\n${summary}`;
+        if (loop.lastReply) detectedEmotion = detectEmotion(loop.lastReply);
       }
 
       const assistantMessage: Message = {
@@ -286,7 +279,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
           )}
           <button
             onClick={() => setShowServices(!showServices)}
-            title="Сервисы (MCP): GitHub, Vercel и другие"
+            title="Сервисы (MCP): GitHub, Vercel, Timeweb Cloud, Yandex Cloud и другие"
             aria-label="Сервисы (MCP)"
             aria-pressed={showServices}
             className="flex items-center gap-1.5 p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted text-xs"

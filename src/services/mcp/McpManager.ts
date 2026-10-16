@@ -320,9 +320,69 @@ export async function runMcpActions(actions: McpAction[], source: ActionSource =
   return { lines, data };
 }
 
-/** Сообщение для второго шага: модель пересказывает результаты (только как данные). */
-export function mcpFollowUp(data: string[]): string {
-  return `Результаты вызовов внешних сервисов:\n${wrapUntrusted('tool', data.join('\n\n'), 30_000)}\n\nКратко перескажи пользователю результат по-русски. В этом ответе не вызывай инструменты. ${UNTRUSTED_RULE}`;
+/**
+ * Сообщение со следующим шагом: модель получает результаты только как данные.
+ * allowMore — можно предложить следующий вызов (например, у Timeweb Cloud: найти операцию → схема → выполнить);
+ * его снова подтверждает человек.
+ */
+export function mcpFollowUp(data: string[], allowMore = false): string {
+  const next = allowMore
+    ? 'Если для задачи пользователя нужен следующий шаг, вызови инструмент тем же форматом [MCP: …] (пользователь снова подтвердит). Иначе кратко перескажи пользователю результат по-русски.'
+    : 'Кратко перескажи пользователю результат по-русски. В этом ответе не вызывай инструменты.';
+  return `Результаты вызовов внешних сервисов:\n${wrapUntrusted('tool', data.join('\n\n'), 30_000)}\n\n${next} ${UNTRUSTED_RULE}`;
+}
+
+/** Сколько раз подряд модель может вызвать инструменты в одном ответе (каждый вызов подтверждается). */
+export const MAX_MCP_ROUNDS = 4;
+export const MCP_LIMIT_TEXT = `⏸ Остановилась после ${MAX_MCP_ROUNDS} шагов. Напишите «продолжай», если нужно дальше.`;
+
+export type McpTurn = { role: 'user' | 'assistant'; content: string };
+/** Вызов модели: к истории чата добавляются эти реплики, возвращается текст ответа. */
+export type McpChatFn = (extra: McpTurn[]) => Promise<string>;
+
+export interface McpLoopResult { notes: string[]; summary: string; lastReply: string }
+
+/**
+ * Пошаговая работа с сервисами: выполнить вызовы → отдать результаты модели как данные → если модель просит
+ * следующий шаг, снова спросить человека. Не больше MAX_MCP_ROUNDS шагов; отказ в подтверждении останавливает всё.
+ * Блоки внутри ⟦ДАННЫЕ⟧ (скопированные из ответов сервисов) не выполняются никогда.
+ */
+export async function runMcpLoop(opts: { reply: string; actions: McpAction[]; source?: ActionSource; chat: McpChatFn; manager?: McpManager }): Promise<McpLoopResult> {
+  const manager = opts.manager ?? mcpManager;
+  const notes: string[] = [];
+  let summary = '';
+  let lastReply = '';
+  let convo: McpTurn[] = [{ role: 'assistant', content: defang(opts.reply) }];
+  let actions = opts.actions;
+  for (let round = 0; round < MAX_MCP_ROUNDS && actions.length > 0; round++) {
+    const run = await runMcpActions(actions, opts.source ?? 'unknown', manager);
+    notes.push(...run.lines);
+    actions = [];
+    if (!run.data.length) break; // всё отклонено или без ответа — дальше не идём
+    const more = round < MAX_MCP_ROUNDS - 1;
+    const ask: McpTurn = { role: 'user', content: mcpFollowUp(run.data, more) };
+    let text: string;
+    try {
+      text = await opts.chat([...convo, ask]);
+    } catch {
+      summary = run.data.map(d => d.slice(0, 1500)).join('\n\n'); // уже обезврежено в runMcpActions
+      break;
+    }
+    lastReply = text;
+    convo = [...convo, ask, { role: 'assistant', content: defang(text) }];
+    if (more) {
+      const p = parseMcpActions(text, manager);
+      actions = p.actions;
+      notes.push(...p.rejected.map(() => `⚠️ ${MCP_REJECTED_TEXT}`));
+      const clean = stripActionBlocks(p.clean);
+      if (clean) summary = clean;
+    } else {
+      const clean = stripActionBlocks(text);
+      if (clean) summary = clean;
+      if (new RegExp(MCP_ACTION_RE.source).test(stripUntrusted(text))) notes.push(MCP_LIMIT_TEXT);
+    }
+  }
+  return { notes, summary, lastReply };
 }
 
 export const MCP_REJECTED_TEXT = 'Действие пропущено: параметры слишком длинные или сложные (строки до 2000 символов, без вложенных списков объектов).';
