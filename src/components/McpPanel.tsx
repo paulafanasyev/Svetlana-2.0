@@ -1,6 +1,6 @@
-// «Сервисы (MCP)»: подключение GitHub, Vercel, Supabase, Linear, Stripe, Sentry, Neon, Context7 и Hugging Face по токену.
+// «Сервисы (MCP)»: подключение GitHub, Vercel, Timeweb Cloud, Yandex Cloud, Supabase, Linear, Stripe, Sentry, Neon, Context7 и Hugging Face по токену.
 // Токен уходит в зашифрованное хранилище и обратно в интерфейс не показывается.
-// Каждый вызов инструмента из чата Светлана выполняет только после подтверждения на экране.
+// Изменения из чата Светлана выполняет только после подтверждения на экране.
 import { useEffect, useState } from 'react';
 import { Plug, ExternalLink, RefreshCw, Trash2, Loader2, X, Key } from 'lucide-react';
 import { mcpManager, type ServerStatus } from '../services/mcp/McpManager';
@@ -70,6 +70,10 @@ function ServerCard({ s }: { s: ServerStatus }) {
           <button onClick={() => setOpen(!open)} className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs">
             Инструменты: {onCount} из {s.tools.length}
           </button>
+          <label className="flex items-center gap-1.5 text-xs" title="Инструменты, которые сервис пометил «только чтение», выполняются без окна подтверждения. Изменения и голосовые команды подтверждаются всегда.">
+            <input type="checkbox" checked={s.autoRead} onChange={e => mcpManager.setAutoRead(s.server.id, e.target.checked)} aria-label={`Чтение без подтверждения: ${s.server.name}`} />
+            чтение без подтверждения
+          </label>
           <button onClick={refresh} disabled={busy} title="Обновить список" aria-label={`Обновить ${s.server.name}`} className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
           </button>
@@ -113,7 +117,7 @@ export default function McpPanel({ onClose }: { onClose?: () => void }) {
         )}
       </div>
       <p className="text-sm text-sv-muted">
-        Подключите сервис токеном, и Светлана сможет работать с ним из чата: «покажи открытые issues в моём репозитории», «почему упал последний деплой». Любой вызов вы подтверждаете на экране, действия, которые меняют данные, помечены ⚠️.
+        Подключите сервис токеном, и Светлана сможет работать с ним из чата: «покажи открытые issues в моём репозитории», «разверни сайт на Timeweb». Вызовы вы подтверждаете на экране (изменения помечены ⚠️). Без подтверждения идут только справочные шаги: поиск операций Timeweb и документация Context7, а чтение можно разрешить галочкой.
       </p>
       {web && <p data-testid="mcp-web-note" className="text-xs text-yellow-300">{MCP_WEB_NOTE}</p>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
