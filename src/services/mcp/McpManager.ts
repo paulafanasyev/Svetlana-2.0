@@ -19,10 +19,14 @@ const MAX_PROMPT_CHARS = 14_000;
 const CONFIRM_TTL_MS = 300_000;
 
 /**
- * Список инструментов, которые точно только читают. Он задан здесь, в приложении, а не берётся от сервиса:
- * пометке сервиса «только чтение» (readOnlyHint) для решения о подтверждении не доверяем. Галочка
- * «чтение без подтверждения» работает только для инструментов из этого списка, и только если сервис тоже
- * пометил их как чтение. Всё остальное подтверждается всегда.
+ * Подтверждение по умолчанию нужно для КАЖДОГО вызова внешнего сервиса. Без окна вызов идёт, только если
+ * пользователь сам включил галочку «чтение без подтверждения» для этого сервиса, и одновременно:
+ * - сервис в этом сеансе заново проверен (свежий initialize + tools/list по токену), а не взят из сохранённого списка;
+ * - инструмент из списка ниже (он задан в приложении: пометке сервиса readOnlyHint не доверяем) и сервис тоже
+ *   пометил его как чтение, либо это справочный шаг (isLookupCall);
+ * - аргументы короткие (см. isSmallArgs), чтобы через «чтение» нельзя было незаметно вынести данные;
+ * - команда не голосовая (голос подтверждается всегда, это проверяет ActionGate).
+ * Сам сервис при этом не получает новых возможностей: у него и так есть токен пользователя.
  */
 export const KNOWN_READ_TOOLS: Readonly<Record<string, readonly string[]>> = {
   github: ['get_me', 'get_file_contents', 'list_issues', 'issue_read', 'list_pull_requests', 'pull_request_read', 'search_code',
@@ -49,11 +53,34 @@ export function isKnownReadTool(serverId: string, toolName: string): boolean {
   return Object.prototype.hasOwnProperty.call(KNOWN_READ_TOOLS, serverId) && KNOWN_READ_TOOLS[serverId].includes(toolName);
 }
 
+const AUTO_MAX_STRING = 300;
+const AUTO_MAX_JSON = 1_000;
+/** Короткие аргументы: каждая строка до 300 символов, всё вместе до 1000. Длинный текст — только с подтверждением. */
+export function isSmallArgs(args: Record<string, unknown>): boolean {
+  let json: string;
+  try { json = JSON.stringify(args); } catch { return false; }
+  if (json.length > AUTO_MAX_JSON) return false;
+  const ok = (v: unknown): boolean => typeof v === 'string' ? v.length <= AUTO_MAX_STRING
+    : Array.isArray(v) ? v.every(ok)
+      : v && typeof v === 'object' ? Object.values(v as Record<string, unknown>).every(ok) : true;
+  return ok(args);
+}
+
+/** Убирает из текста токен пользователя, если сервис (по ошибке или злонамеренно) прислал его обратно. */
+export function scrubSecret(text: string, secret: string | null | undefined): string {
+  const t = (secret ?? '').trim();
+  if (t.length < 6 || !text) return text;
+  return text.split(t).join('[токен скрыт]');
+}
+
+const MAX_SUMMARIES = 50;
+const MAX_CONFIRM_TOKEN = 512;
+
 /**
- * Вызовы, которые ничего не меняют и не трогают данные аккаунта, выполняются без окна подтверждения (кроме голоса):
- * справочник операций Timeweb Cloud и документация Context7 (только известные инструменты). У Timeweb первый вызов
- * execute_tool без confirm_token тоже ничего не меняет (сервер возвращает сводку и токен подтверждения), а второй,
- * с confirm_token, подтверждается человеком с показом сводки операции.
+ * Справочные шаги, которые ничего не меняют: справочник операций Timeweb Cloud и документация Context7 (только
+ * известные инструменты). У Timeweb первый вызов execute_tool без confirm_token тоже ничего не меняет (сервер
+ * возвращает сводку и токен подтверждения), а второй, с confirm_token, всегда подтверждается человеком со сводкой.
+ * Без окна такие шаги идут только при включённой галочке «чтение без подтверждения» (см. выше).
  */
 export function isLookupCall(serverId: string, toolName: string, args: Record<string, unknown>): boolean {
   if (serverId === 'context7') return isKnownReadTool('context7', toolName);
@@ -84,6 +111,15 @@ function slug(name: string): string {
 
 const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,40}$/;
 
+/** Понятный пользователю текст ошибки сервиса, без токена. */
+function friendlyError(server: McpServerInfo, e: unknown, secret: string | null): string {
+  if (e instanceof McpError) {
+    if (e.code === 'auth') return `${server.name}: токен не подошёл, истёк или у него мало прав. Откройте «Сервисы», вставьте новый токен и нажмите «Подключить».`;
+    return scrubSecret(stripControl(e.message, false), secret).slice(0, 400);
+  }
+  return `${server.name}: не получилось выполнить запрос. Попробуйте ещё раз; если повторится, откройте «Сервисы» и нажмите «Обновить».`;
+}
+
 /** Схема MCP → схема ToolRegistry: простые типы, enum из строк, обязательные поля только существующие. */
 export function toRegistrySchema(schema: Record<string, unknown> | undefined): ToolInputSchema {
   const props = (schema?.properties && typeof schema.properties === 'object' ? schema.properties : {}) as Record<string, any>;
@@ -99,8 +135,17 @@ export function toRegistrySchema(schema: Record<string, unknown> | undefined): T
   return { type: 'object', properties: out, ...(required.length ? { required } : {}) };
 }
 
+/** Описание инструментов без токена пользователя; инструмент, в имени которого оказался токен, отбрасывается. */
+function cleanTools(tools: McpToolDef[], secret: string | null | undefined): McpToolDef[] {
+  return tools.filter(t => scrubSecret(t.name, secret) === t.name).map(t => ({
+    ...t,
+    ...(t.title !== undefined ? { title: scrubSecret(t.title, secret) } : {}),
+    ...(t.description !== undefined ? { description: scrubSecret(t.description, secret) } : {}),
+  }));
+}
+
 export interface ActiveTool { id: string; server: McpServerInfo; def: McpToolDef }
-export interface ServerStatus { server: McpServerInfo; connected: boolean; enabled: boolean; autoRead: boolean; canAutoRead: boolean; tools: { id: string; def: McpToolDef; on: boolean }[] }
+export interface ServerStatus { server: McpServerInfo; connected: boolean; enabled: boolean; autoRead: boolean; canAutoRead: boolean; verified: boolean; tools: { id: string; def: McpToolDef; on: boolean }[] }
 
 export class McpManager {
   private state: State = {};
@@ -109,6 +154,10 @@ export class McpManager {
   private listeners = new Set<() => void>();
   /** Сводки операций Timeweb по токену подтверждения (живут 5 минут, как и сам токен). */
   private summaries = new Map<string, { text: string; until: number }>();
+  /** Токены в памяти — только чтобы вычищать их из ответов сервисов. */
+  private secrets = new Map<string, string>();
+  /** Сервисы, которые в этом сеансе заново ответили по токену (initialize + tools/list). */
+  private verified = new Set<string>();
 
   constructor(private readonly kv: KV | null = storage()) {
     this.state = this.load();
@@ -169,10 +218,12 @@ export class McpManager {
         toolRegistry.registerTool(this.toTool(active));
         const title = def.title || def.name;
         registerActionLabel(id, def.readOnly ? `${server.name}: ${title}` : `⚠️ ${server.name} (изменит данные): ${title}`);
-        const autoRead = st.autoRead === true && def.readOnly === true && isKnownReadTool(server.id, def.name);
+        const autoRead = st.autoRead === true;
+        const knownRead = def.readOnly === true && isKnownReadTool(server.id, def.name);
         registerActionPolicy(id, {
-          auto: args => autoRead || isLookupCall(server.id, def.name, args),
+          auto: args => autoRead && this.verified.has(server.id) && isSmallArgs(args) && (knownRead || isLookupCall(server.id, def.name, args)),
           describe: args => this.describe(server, def, args),
+          warn: args => this.warning(server, def, args, knownRead),
         });
       }
     }
@@ -198,6 +249,23 @@ export class McpManager {
     return s && s.until > Date.now() ? `${server.name}: ${s.text}` : null;
   }
 
+  /** Предупреждение в окне подтверждения: изменит ли действие данные и может ли оно стоить денег. */
+  private warning(server: McpServerInfo, def: McpToolDef, args: Record<string, unknown>, knownRead: boolean): string | null {
+    if (server.id === 'timeweb' && def.name === 'execute_tool') {
+      if (typeof args.confirm_token !== 'string' || !args.confirm_token) {
+        return 'Подготовка: если операция что-то меняет, Timeweb Cloud пока ничего не сделает, а пришлёт сводку для отдельного подтверждения. Если операция только читает, ответ придёт сразу.';
+      }
+      const s = this.describe(server, def, args) ?? '';
+      if (s.includes('[BILLABLE]')) return 'Платная операция: Timeweb Cloud спишет деньги с баланса. Точную стоимость сервис не сообщил, проверьте тариф в панели Timeweb перед подтверждением.';
+      if (s.includes('[WRITE]')) return 'Операция изменит ресурсы в Timeweb Cloud.';
+      return 'Сводку операции сервис не прислал. Действие может изменить ресурсы или списать деньги, проверьте параметры.';
+    }
+    if (server.id === 'timeweb' || server.id === 'context7') return null; // справочные шаги
+    if (knownRead) return null;
+    if (def.readOnly) return `Сервис пометил действие как чтение, но Светлана не может это проверить. Если сомневаетесь, нажмите «Отмена».`;
+    return `Действие может изменить данные в ${server.name} или создать платный ресурс. Стоимость сервис не сообщает, проверьте тариф.`;
+  }
+
   /** Запоминает сводку операции из ответа «confirmation_required» (Timeweb Cloud). */
   private rememberSummary(server: McpServerInfo, text: string): void {
     if (server.id !== 'timeweb' || !text.includes('confirm_token')) return;
@@ -206,10 +274,12 @@ export class McpManager {
     if (start < 0 || end <= start) return;
     try {
       const o = safeJsonParse(text.slice(start, end + 1), 200_000) as Record<string, unknown> | null;
-      if (o && o.status === 'confirmation_required' && typeof o.confirm_token === 'string' && typeof o.operation_summary === 'string') {
+      if (o && o.status === 'confirmation_required' && typeof o.confirm_token === 'string' && typeof o.operation_summary === 'string'
+        && o.confirm_token.length > 0 && o.confirm_token.length <= MAX_CONFIRM_TOKEN) {
         const now = Date.now();
         for (const [k, v] of this.summaries) if (v.until <= now) this.summaries.delete(k);
-        this.summaries.set(o.confirm_token.slice(0, 200), { text: stripControl(o.operation_summary, false).slice(0, 300), until: now + CONFIRM_TTL_MS });
+        while (this.summaries.size >= MAX_SUMMARIES) this.summaries.delete(this.summaries.keys().next().value as string);
+        this.summaries.set(o.confirm_token, { text: stripControl(o.operation_summary, false).slice(0, 300), until: now + CONFIRM_TTL_MS });
       }
     } catch { /* не JSON — нечего запоминать */ }
   }
@@ -219,20 +289,30 @@ export class McpManager {
     if (cached) return cached;
     const token = await getSecret(secretName(server.id));
     if (server.tokenRequired && !token) throw new McpError(`${server.name}: токен не найден, подключите сервис заново`, 'auth');
+    if (token) this.secrets.set(server.id, token);
     const c = factory(server, token);
+    // Сохранённому списку инструментов не доверяем: в новом сеансе сервис заново отвечает по токену.
+    await c.initialize();
+    const tools = cleanTools(await c.listTools(), token);
     this.conns.set(server.id, c);
+    this.verified.add(server.id);
+    const st = this.state[server.id];
+    if (st) { this.state[server.id] = { ...st, tools, off: st.off.filter(n => tools.some(x => x.name === n)) }; this.save(); }
     return c;
   }
 
   private async call(a: ActiveTool, params: Record<string, unknown>): Promise<ToolResult> {
-    const c = await this.connection(a.server);
+    const secret = () => this.secrets.get(a.server.id) ?? null;
     try {
+      const c = await this.connection(a.server);
+      if (!this.registered.has(a.id)) return { success: false, error: `${a.server.name}: инструмента больше нет, откройте «Сервисы» и нажмите «Обновить»` };
       const r = await c.callTool(a.def.name, params);
-      this.rememberSummary(a.server, r.text);
-      return r.isError ? { success: false, error: `${a.server.name}: ${r.text.slice(0, 500)}`, data: { text: r.text } } : { success: true, data: { text: r.text } };
+      const text = scrubSecret(r.text, secret());
+      this.rememberSummary(a.server, text);
+      return r.isError ? { success: false, error: `${a.server.name}: ${text.slice(0, 500)}`, data: { text } } : { success: true, data: { text } };
     } catch (e) {
-      if (e instanceof McpError && e.code === 'auth') this.conns.delete(a.server.id);
-      throw e;
+      if (e instanceof McpError && (e.code === 'auth' || e.code === 'protocol')) { this.conns.delete(a.server.id); this.verified.delete(a.server.id); }
+      return { success: false, error: friendlyError(a.server, e, secret()) };
     }
   }
 
@@ -242,13 +322,22 @@ export class McpManager {
     if (!server) throw new McpError('Неизвестный сервис', 'denied');
     const t = token.trim();
     if (server.tokenRequired && !t) throw new McpError(`${server.name}: вставьте токен`, 'auth');
-    const c = factory(server, t || null);
-    await c.initialize();
-    const tools = await c.listTools();
+    const open = async (): Promise<{ c: McpConnection; tools: McpToolDef[] }> => {
+      const conn = factory(server, t || null);
+      await conn.initialize();
+      return { c: conn, tools: cleanTools(await conn.listTools(), t) };
+    };
+    const { c, tools } = await open().catch((e: unknown) => {
+      if (e instanceof McpError) throw new McpError(scrubSecret(e.message, t), e.code);
+      if (e instanceof Error && /недопустимые символы/.test(e.message)) throw new McpError(e.message, 'auth');
+      throw new McpError(`${server.name}: не получилось подключиться. Проверьте токен и интернет.`, 'network');
+    });
     await setSecret(secretName(server.id), t || null);
+    if (t) this.secrets.set(server.id, t); else this.secrets.delete(server.id);
     this.conns.set(server.id, c);
+    this.verified.add(server.id);
     const prev = this.state[server.id];
-    this.state[server.id] = { enabled: true, tools, off: prev?.off.filter(n => tools.some(x => x.name === n)) ?? [], connectedAt: Date.now() };
+    this.state[server.id] = { enabled: true, tools, off: prev?.off.filter(n => tools.some(x => x.name === n)) ?? [], connectedAt: Date.now(), autoRead: prev?.autoRead === true };
     this.save();
     return tools.length;
   }
@@ -259,15 +348,20 @@ export class McpManager {
     const st = this.state[serverId];
     if (!server || !st) throw new McpError('Сервис не подключён', 'denied');
     this.conns.delete(serverId);
-    const c = await this.connection(server);
-    const tools = await c.listTools();
-    this.state[serverId] = { ...st, tools, off: st.off.filter(n => tools.some(x => x.name === n)) };
-    this.save();
-    return tools.length;
+    this.verified.delete(serverId);
+    try {
+      await this.connection(server); // заново initialize + tools/list, список сохраняется там же
+    } catch (e) {
+      throw new McpError(e instanceof McpError ? scrubSecret(e.message, this.secrets.get(serverId)) : `${server.name}: не получилось обновить список. Проверьте токен и интернет.`, e instanceof McpError ? e.code : 'network');
+    }
+    return this.state[serverId]?.tools.length ?? 0;
   }
 
   async disconnect(serverId: string): Promise<void> {
     this.conns.delete(serverId);
+    this.secrets.delete(serverId);
+    this.verified.delete(serverId);
+    if (serverId === 'timeweb') this.summaries.clear();
     delete this.state[serverId];
     await deleteSecret(secretName(serverId));
     this.save();
@@ -299,7 +393,8 @@ export class McpManager {
     return MCP_SERVERS.map(server => {
       const st = this.state[server.id];
       const tools = st ? Array.from(this.ids(server.id, st.tools)).map(([id, def]) => ({ id, def, on: !st.off.includes(def.name) })) : [];
-      return { server, connected: !!st, enabled: !!st?.enabled, autoRead: st?.autoRead === true, canAutoRead: (KNOWN_READ_TOOLS[server.id]?.length ?? 0) > 0, tools };
+      const canAutoRead = server.id === 'timeweb' || (KNOWN_READ_TOOLS[server.id]?.length ?? 0) > 0;
+      return { server, connected: !!st, enabled: !!st?.enabled, autoRead: st?.autoRead === true, canAutoRead, verified: this.verified.has(server.id), tools };
     });
   }
 
@@ -307,14 +402,62 @@ export class McpManager {
   isMcpTool(id: string): boolean { return this.registered.has(id); }
 
   /** Для тестов и «Удалить все данные»: забыть всё в памяти. */
-  reset(): void { this.conns.clear(); this.summaries.clear(); this.state = {}; try { this.kv?.removeItem(STATE_KEY); } catch { /* noop */ } this.sync(); }
+  reset(): void { this.conns.clear(); this.summaries.clear(); this.secrets.clear(); this.verified.clear(); this.state = {}; try { this.kv?.removeItem(STATE_KEY); } catch { /* noop */ } this.sync(); }
 }
 
 export const mcpManager = new McpManager();
 
 // ---------------- чат ----------------
 
+/** Для совместимости: простой шаблон блока. Разбор идёт сканером findMcpBlocks (понимает строки JSON со скобками внутри). */
 export const MCP_ACTION_RE = /\[MCP:\s*(\{[\s\S]*?\})\s*\]/g;
+
+export interface McpBlock { start: number; end: number; json: string }
+
+/**
+ * Находит блоки [MCP: {...}]: JSON читается с учётом строк, экранирования и вложенности, поэтому
+ * «}]» внутри строки аргумента не обрывает блок. Незакрытый блок не считается блоком.
+ */
+export function findMcpBlocks(text: string): McpBlock[] {
+  const out: McpBlock[] = [];
+  let from = 0;
+  for (;;) {
+    const start = text.indexOf('[MCP:', from);
+    if (start < 0) break;
+    let i = start + 5;
+    while (i < text.length && /\s/.test(text[i])) i++;
+    if (text[i] !== '{') { from = start + 5; continue; }
+    const jsonStart = i;
+    let depth = 0; let inStr = false; let esc = false; let jsonEnd = -1;
+    for (; i < text.length; i++) {
+      const ch = text[i];
+      if (inStr) {
+        if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === '{') depth++;
+      else if (ch === '}') { depth--; if (depth === 0) { jsonEnd = i + 1; break; } }
+    }
+    if (jsonEnd < 0) break;
+    let j = jsonEnd;
+    while (j < text.length && /\s/.test(text[j])) j++;
+    if (text[j] !== ']') { from = start + 5; continue; }
+    out.push({ start, end: j + 1, json: text.slice(jsonStart, jsonEnd) });
+    from = j + 1;
+  }
+  return out;
+}
+
+/** Заменяет каждый блок [MCP: …] результатом fn (обычно пустой строкой). */
+function replaceMcpBlocks(text: string, fn: (json: string) => string): string {
+  const blocks = findMcpBlocks(text);
+  if (!blocks.length) return text;
+  let out = '';
+  let pos = 0;
+  for (const b of blocks) { out += text.slice(pos, b.start) + fn(b.json); pos = b.end; }
+  return out + text.slice(pos);
+}
 
 export interface McpAction { tool: string; args: Record<string, unknown>; source: ActionSource }
 
@@ -364,7 +507,7 @@ export function parseMcpActions(text: string, manager: McpManager = mcpManager):
   const actions: McpAction[] = [];
   const rejected: string[] = [];
   let invalid = 0;
-  const clean = stripUntrusted(text).replace(MCP_ACTION_RE, (_m, json: string) => {
+  const clean = replaceMcpBlocks(stripUntrusted(text), (json: string) => {
     try {
       const parsed = safeJsonParse(json, 40_000) as { tool?: unknown; args?: unknown } | null;
       const tool = parsed && typeof parsed.tool === 'string' ? parsed.tool : '';
@@ -382,7 +525,7 @@ export function parseMcpActions(text: string, manager: McpManager = mcpManager):
 
 /** Убирает блоки действий из текста без выполнения (для ответа-пересказа). */
 export function stripActionBlocks(text: string): string {
-  return stripUntrusted(text).replace(MCP_ACTION_RE, '').replace(/\[CRM:\s*\{[\s\S]*?\}\s*\]/g, '').replace(/\n{3,}/g, '\n\n').trim();
+  return replaceMcpBlocks(stripUntrusted(text), () => '').replace(/\[CRM:\s*\{[\s\S]*?\}\s*\]/g, '').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 export interface McpRunReport { lines: string[]; data: string[] }
@@ -424,7 +567,7 @@ export function mcpFollowUp(data: string[], allowMore = false): string {
 
 /** Сколько раз подряд модель может вызвать инструменты в одном ответе (каждый вызов подтверждается). */
 export const MAX_MCP_ROUNDS = 8;
-export const MCP_LIMIT_TEXT = `⏸ Остановилась после ${MAX_MCP_ROUNDS} шагов. Напишите «продолжай», если нужно дальше.`;
+export const MCP_LIMIT_TEXT = `⏸ Сделала ${MAX_MCP_ROUNDS} шагов подряд и остановилась. Напишите «продолжай», если нужно дальше: каждое изменение я снова покажу вам на подтверждение.`;
 
 export type McpTurn = { role: 'user' | 'assistant'; content: string };
 /** Вызов модели: к истории чата добавляются эти реплики, возвращается текст ответа. */
@@ -469,10 +612,10 @@ export async function runMcpLoop(opts: { reply: string; actions: McpAction[]; so
     } else {
       const clean = stripActionBlocks(text);
       if (clean) summary = clean;
-      if (new RegExp(MCP_ACTION_RE.source).test(stripUntrusted(text))) notes.push(MCP_LIMIT_TEXT);
+      if (findMcpBlocks(stripUntrusted(text)).length) notes.push(MCP_LIMIT_TEXT);
     }
   }
   return { notes, summary, lastReply };
 }
 
-export const MCP_REJECTED_TEXT = 'Действие пропущено: параметры слишком длинные или сложные (строки до 2000 символов, без вложенных списков объектов).';
+export const MCP_REJECTED_TEXT = 'Действие пропущено: запрос получился слишком длинным или сложным, и Светлана не смогла бы показать его вам целиком. Попросите сделать это по частям.';
