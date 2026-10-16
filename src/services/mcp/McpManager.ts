@@ -439,9 +439,10 @@ export class McpManager {
     this.save();
   }
 
-  setServerEnabled(serverId: string, on: boolean): void {
+  /** Включить или выключить сервис. Промис завершается, когда сервис после включения заново проверен. */
+  setServerEnabled(serverId: string, on: boolean): Promise<void> {
     const st = this.state[serverId];
-    if (!st) return;
+    if (!st) return Promise.resolve();
     st.enabled = on;
     // Выключение забывает подключение; при включении сервис снова проверяется по токену, и только потом
     // его инструменты появляются в чате.
@@ -449,7 +450,7 @@ export class McpManager {
     this.verified.delete(serverId);
     this.save();
     const server = mcpServer(serverId);
-    if (on && server) void this.revalidate(server);
+    return on && server ? this.revalidate(server) : Promise.resolve();
   }
 
   /** Чтение (только известные приложению инструменты чтения) без окна подтверждения. Голос подтверждается всегда. */

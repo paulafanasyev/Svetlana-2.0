@@ -216,10 +216,10 @@ export class McpClient implements McpConnection {
     this.protocolVersion = version;
     // Уведомление без id: сервер отвечает 202 (или 200/204). Любой другой ответ — подключение не готово.
     const res = await this.post({ jsonrpc: '2.0', method: 'notifications/initialized' });
-    try { await readLimited(res, this.server.name); } catch { /* тело не важно */ }
     if (res.status !== 200 && res.status !== 202 && res.status !== 204) {
       throw new McpError(`${this.server.name}: сервер не принял начало сессии (${res.status})`, 'protocol');
     }
+    await readLimited(res, this.server.name); // тело не нужно, но слишком большой ответ — ошибка
     this.ready = true;
   }
 
@@ -242,7 +242,13 @@ export class McpClient implements McpConnection {
       for (let page = 0; ; page++) {
         if (page >= MAX_TOOL_PAGES) throw new McpError(`${this.server.name}: слишком длинный список инструментов`, 'protocol');
         const r = await this.rpc('tools/list', cursor ? { cursor } : undefined);
-        for (const t of Array.isArray(r?.tools) ? r.tools : []) {
+        if (!r || typeof r !== 'object' || Array.isArray(r) || !Array.isArray(r.tools)) {
+          throw new McpError(`${this.server.name}: сервер прислал список инструментов не по протоколу`, 'protocol');
+        }
+        if (r.nextCursor !== undefined && r.nextCursor !== null && (typeof r.nextCursor !== 'string' || !r.nextCursor)) {
+          throw new McpError(`${this.server.name}: сервер прислал неверный курсор списка инструментов`, 'protocol');
+        }
+        for (const t of r.tools) {
           const c = cleanTool(t);
           if (c && !tools.some(x => x.name === c.name) && tools.length < MAX_TOOLS) tools.push(c);
         }
