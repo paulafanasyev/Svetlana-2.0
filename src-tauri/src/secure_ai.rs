@@ -13,6 +13,9 @@
 //! делает запрос. Серверы GigaChat подписаны корневым сертификатом Минцифры: он добавлен
 //! ТОЛЬКО в отдельный клиент для двух фиксированных адресов GigaChat, остальные запросы ему не доверяют.
 //!
+//! «anymodel» (anymodel.org) и «opencode» (OpenCode Zen) — шлюзы к многим моделям с одним ключом,
+//! OpenAI-совместимый /chat/completions на фиксированном адресе.
+//!
 //! Защита от чужого скрипта на странице:
 //! - любое изменение или удаление ключа подтверждается в НАТИВНОМ окне Windows;
 //! - запросы в облако идут только по разрешению из такого же окна. Разрешение привязано к
@@ -42,11 +45,14 @@ const MAX_BODY: usize = 2 * 1024 * 1024;
 const MAX_RESPONSE: usize = 8 * 1024 * 1024;
 const MAX_MESSAGES: usize = 200;
 const MAX_TEXT: usize = 200_000;
-const PROVIDERS: [&str; 9] = ["openai", "groq", "openrouter", "deepseek", "mistral", "anthropic", "google", "svetlana", "gigachat"];
+const PROVIDERS: [&str; 11] = ["openai", "groq", "openrouter", "deepseek", "mistral", "anthropic", "google", "svetlana", "gigachat", "anymodel", "opencode"];
 /// Единая Светлана на своём сервере (мир-самозанятых.рф), профиль полного режима Svetlana 2.0.
 const SVETLANA_CORE: &str = "https://xn----8sba1acxdkgqms3b9euc.xn--p1ai/api/v1/assistant/svetlana2/chat";
 const SVETLANA_MODEL: &str = "svetlana2";
 const SVETLANA_MAX_HISTORY: usize = 10;
+/// AnyModel и OpenCode Zen: фиксированные OpenAI-совместимые адреса.
+const ANYMODEL_CHAT: &str = "https://anymodel.org/v1/chat/completions";
+const OPENCODE_CHAT: &str = "https://opencode.ai/zen/v1/chat/completions";
 /// GigaChat: вход по ключу авторизации и запрос (официальные адреса из документации developers.sber.ru).
 const GIGACHAT_OAUTH: &str = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth";
 const GIGACHAT_CHAT: &str = "https://api.giga.chat/v1/chat/completions";
@@ -620,6 +626,8 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conv
         "openrouter" => client.post("https://openrouter.ai/api/v1/chat/completions").bearer_auth(&key),
         "deepseek" => client.post("https://api.deepseek.com/v1/chat/completions").bearer_auth(&key),
         "mistral" => client.post("https://api.mistral.ai/v1/chat/completions").bearer_auth(&key),
+        "anymodel" => client.post(ANYMODEL_CHAT).bearer_auth(&key),
+        "opencode" => client.post(OPENCODE_CHAT).bearer_auth(&key),
         "anthropic" => client
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", key.as_str())
@@ -654,8 +662,21 @@ mod tests {
         assert_eq!(provider_of_secret("ai.openai"), Some("openai"));
         assert_eq!(provider_of_secret("ai.svetlana"), Some("svetlana"));
         assert_eq!(provider_of_secret("ai.gigachat"), Some("gigachat"));
+        assert_eq!(provider_of_secret("ai.anymodel"), Some("anymodel"));
+        assert_eq!(provider_of_secret("ai.opencode"), Some("opencode"));
         assert_eq!(provider_of_secret("ai.evil"), None);
+        assert_eq!(provider_of_secret("ai.custom"), None);
         assert_eq!(provider_of_secret("stt.apikey"), None);
+    }
+
+    #[test]
+    fn gateway_addresses_are_fixed_https() {
+        assert_eq!(ANYMODEL_CHAT, "https://anymodel.org/v1/chat/completions");
+        assert_eq!(OPENCODE_CHAT, "https://opencode.ai/zen/v1/chat/completions");
+        let ok = json!({"model": "kimi-k2.5", "messages": [{"role": "user", "content": "hi"}], "temperature": 0.7, "max_tokens": 100});
+        assert!(validate_body("opencode", "kimi-k2.5", &ok).is_ok());
+        let any = json!({"model": "claude-sonnet-4.5", "messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "hi"}]});
+        assert!(validate_body("anymodel", "claude-sonnet-4.5", &any).is_ok());
     }
 
     #[test]
