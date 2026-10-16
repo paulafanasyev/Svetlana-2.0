@@ -28,7 +28,7 @@ export const MCP_SERVERS: readonly McpServerInfo[] = Object.freeze([
   {
     id: 'github', name: 'GitHub', kind: 'mcp', url: 'https://api.githubcopilot.com/mcp/', auth: 'bearer', tokenRequired: true,
     tokenUrl: 'https://github.com/settings/personal-access-tokens/new',
-    tokenHint: 'GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token. Срок: 30–90 дней, Repository access: только нужные репозитории, права: Contents, Issues, Pull requests (Read, а для изменений Read and write). Токен начинается с github_pat_.',
+    tokenHint: 'GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token. Срок: 30–90 дней, Repository access: только нужные репозитории, права: Contents, Issues, Pull requests (Read, а для изменений Read and write); чтобы Светлана могла настроить автовыкладку сайта (файлы в .github/workflows), добавьте Workflows: Read and write. Токен начинается с github_pat_.',
     description: 'Репозитории, issues, pull requests, Actions, поиск по коду.',
   },
   {
