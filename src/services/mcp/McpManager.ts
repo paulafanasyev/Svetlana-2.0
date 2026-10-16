@@ -12,6 +12,7 @@ import { MCP_SERVERS, mcpServer, type McpServerInfo } from './McpCatalog';
 import { McpClient, McpError, type McpConnection, type McpToolDef } from './McpClient';
 import { VercelConnection } from './VercelTools';
 import { BegetConnection, begetDnsRecords } from './BegetTools';
+import { RegruConnection, regruRecord } from './RegruTools';
 
 const STATE_KEY = 'svetlana_mcp_v1';
 const MAX_ACTIONS = 3;
@@ -122,6 +123,7 @@ export type ConnectionFactory = (server: McpServerInfo, token: string | null) =>
 const defaultFactory: ConnectionFactory = (s, t) => {
   if (s.kind !== 'rest') return new McpClient(s, t);
   if (s.id === 'beget') return new BegetConnection(t ?? '');
+  if (s.id === 'regru') return new RegruConnection(t ?? '');
   return new VercelConnection(t ?? '');
 };
 let factory: ConnectionFactory = defaultFactory;
@@ -145,7 +147,12 @@ const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,40}$/;
 /** Понятный пользователю текст ошибки сервиса, без токена. */
 function friendlyError(server: McpServerInfo, e: unknown, secret: string | null): string {
   if (e instanceof McpError) {
-    if (e.code === 'auth' && server.id === 'beget') return `${scrubSecret(stripControl(e.message, false), secret).slice(0, 300)} Затем откройте «Сервисы», нажмите «Сменить данные для входа», вставьте логин и пароль API через двоеточие и нажмите «Подключить».`;
+    if (e.code === 'auth' && server.tokenLabel) {
+      const why = scrubSecret(stripControl(e.message, false), secret).slice(0, 300);
+      // Причина в IP-адресе: данные для входа верны, после правки списка достаточно нажать «Обновить».
+      if (/IP-адрес/.test(why)) return `${why} Затем откройте «Сервисы» и нажмите «Обновить».`;
+      return `${why} Затем откройте «Сервисы», нажмите «Сменить данные для входа», вставьте логин и пароль API через двоеточие и нажмите «Подключить».`;
+    }
     if (e.code === 'auth') return `${server.name}: токен не подошёл, истёк или у него мало прав. Откройте «Сервисы», нажмите «Сменить токен» у этого сервиса, вставьте новый и нажмите «Подключить».`;
     if (e.code === 'network' || e.code === 'timeout') return `${server.name}: нет связи или сервис не ответил. Проверьте интернет, откройте «Сервисы» и нажмите «Обновить», затем повторите запрос.`;
     const detail = scrubSecret(stripControl(e.message, false), secret).slice(0, 200);
@@ -199,6 +206,19 @@ function describeBeget(name: string, args: Record<string, unknown>): string | nu
     const fmt = (k: string, label: string) => r[k] ? `${label}: ${r[k].length ? r[k].map(x => (k === 'MX' ? `${x.priority} ${x.value}` : x.value)).join(', ') : 'нет (будут удалены)'}` : null;
     const parts = [fmt('A', 'A (IP сайта)'), fmt('MX', 'MX (почта)'), fmt('TXT', 'TXT'), fmt('NS', 'NS'), fmt('CNAME', 'CNAME')].filter(Boolean);
     return `Beget: у домена ${str(args.fqdn)} останутся только эти записи. ${parts.join('; ')}`;
+  } catch { return null; }
+}
+
+/** Понятное описание изменения REG.RU для окна подтверждения. */
+function describeRegru(name: string, args: Record<string, unknown>): string | null {
+  if (name !== 'add_record' && name !== 'remove_record') return null;
+  try {
+    const r = regruRecord(args, name === 'remove_record'); // при удалении показываем точное значение, которое уйдёт в REG.RU
+    const host = r.subdomain === '@' ? r.domain : `${r.subdomain}.${r.domain}`;
+    const value = r.type === 'MX' ? `${r.priority} ${r.value}` : r.value;
+    return name === 'add_record'
+      ? `REG.RU: добавить запись ${r.type} для ${host}: ${value}. Остальные записи не изменятся.`
+      : `REG.RU: удалить запись ${r.type} у ${host}: ${value}. Остальные записи не изменятся.`;
   } catch { return null; }
 }
 
@@ -359,6 +379,7 @@ export class McpManager {
   /** Для окна подтверждения: что именно сделает вызов (сводка операции, которую сервис прислал на первом шаге). */
   private describe(server: McpServerInfo, def: McpToolDef, args: Record<string, unknown>): string | null {
     if (server.id === 'beget') return describeBeget(def.name, args);
+    if (server.id === 'regru') return describeRegru(def.name, args);
     if (server.id !== 'timeweb' || def.name !== 'execute_tool' || typeof args.confirm_token !== 'string') return null;
     const s = this.rawSummary(args);
     const text = s ? s.replace(/\[(?:BILLABLE|WRITE)\]\s*/g, '').trim() : '';
@@ -386,6 +407,12 @@ export class McpManager {
     }
     if (server.id === 'beget' && def.name === 'change_dns') {
       return 'Beget заменит ВСЕ DNS-записи этого домена списком ниже. Записей, которых нет в списке, не останется: проверьте, что почта (MX) и проверочные TXT на месте.';
+    }
+    if (server.id === 'regru' && def.name === 'remove_record') {
+      return 'Запись будет удалена из DNS. Если это почта (MX) или проверка домена (TXT), они перестанут работать.';
+    }
+    if (server.id === 'regru' && def.name === 'add_record') {
+      return 'Запись добавится к существующим. Изменения DNS расходятся по интернету до нескольких часов.';
     }
     if (server.id === 'timeweb' || server.id === 'context7') return null; // справочные шаги
     if (knownRead) return null;
@@ -495,7 +522,10 @@ export class McpManager {
       return { c: conn, tools: cleanTools(await conn.listTools(), t) };
     };
     const { c, tools } = await open().catch((e: unknown) => {
-      if (e instanceof McpError && e.code === 'auth' && server.id === 'beget') throw new McpError(scrubSecret(e.message, t), 'auth');
+      if (e instanceof McpError && e.code === 'auth' && server.tokenLabel) {
+        const why = scrubSecret(e.message, t);
+        throw new McpError(/IP-адрес/.test(why) ? `${why} После этого нажмите «Подключить» ещё раз.` : why, 'auth');
+      }
       if (e instanceof McpError && e.code === 'auth') throw new McpError(`${server.name}: токен не подошёл, истёк или у него недостаточно прав. Проверьте токен и нажмите «Подключить» ещё раз.`, 'auth');
       if (e instanceof McpError) throw new McpError(scrubSecret(e.message, t), e.code);
       if (e instanceof Error && /недопустимые символы/.test(e.message)) throw new McpError(e.message, 'auth');
