@@ -3,7 +3,7 @@
 // нельзя ни из модели, ни из настроек. Те же адреса разрешены в CSP (csp.mjs и tauri.conf.json).
 // Российские облака: Timeweb Cloud и Yandex Cloud (официальные удалённые MCP). У Beget удалённого MCP нет,
 // поэтому он работает через встроенный набор запросов к Beget API (BegetTools.ts); REG.RU так же, через Рег.API 2
-// (RegruTools.ts). Selectel пока не подключён.
+// (RegruTools.ts), Selectel — через его публичные API (SelectelTools.ts).
 // Сервисы, которые пускают только по OAuth для одобренных приложений (Notion, Cloudflare,
 // официальный Vercel MCP), подключить токеном нельзя; Vercel работает напрямую через его API.
 
@@ -17,6 +17,8 @@ export interface McpServerInfo {
   /** Подсказка в поле ввода, если там не просто токен (например, «логин:пароль API»). */
   tokenLabel?: string;
   url: string;
+  /** Другие адреса того же сервиса (например, сервер входа), тоже разрешённые в CSP. */
+  extraOrigins?: readonly string[];
   auth: McpAuth;
   tokenRequired: boolean;
   tokenUrl: string;
@@ -64,6 +66,14 @@ export const MCP_SERVERS: readonly McpServerInfo[] = Object.freeze([
     description: 'Российский регистратор: домены, баланс, DNS-серверы, добавление и удаление DNS-записей (по одной, остальные не меняются).',
   },
   {
+    id: 'selectel', name: 'Selectel', kind: 'rest', url: 'https://api.selectel.ru', auth: 'bearer', tokenRequired: true,
+    extraOrigins: ['https://cloud.api.selcloud.ru'],
+    tokenLabel: 'аккаунт:проект:пользователь:пароль',
+    tokenUrl: 'https://docs.selectel.ru/access-control/user-management/manage-service-users/',
+    tokenHint: 'Панель Selectel → «Управление доступом» → «Сервисные пользователи» → «Добавить»: задайте имя и пароль и добавьте пользователя в нужный проект: для работы с DNS достаточно роли «DNS», для остального — «Администратор проекта»; чтобы видеть баланс, нужен ещё доступ к биллингу аккаунта. Вставьте через двоеточие номер аккаунта (виден в правом верхнем углу панели), имя проекта, имя пользователя и пароль: 123456:my-project:svetlana:пароль.',
+    description: 'Российское облако: баланс, DNS-хостинг (зоны и записи), добавление и удаление DNS-записей по одной. Серверы и S3 пока не подключены.',
+  },
+  {
     id: 'supabase', name: 'Supabase', kind: 'mcp', url: 'https://mcp.supabase.com/mcp', auth: 'bearer', tokenRequired: true,
     tokenUrl: 'https://supabase.com/dashboard/account/tokens',
     tokenHint: 'Supabase → Account → Access Tokens → Generate new token. Токен начинается с sbp_.',
@@ -108,7 +118,7 @@ export const MCP_SERVERS: readonly McpServerInfo[] = Object.freeze([
 ].map(s => Object.freeze(s)) as McpServerInfo[]);
 
 /** Источники (origin) всех сервисов: ровно они добавлены в CSP. */
-export const MCP_ORIGINS: readonly string[] = Object.freeze(Array.from(new Set(MCP_SERVERS.map(s => new URL(s.url).origin))));
+export const MCP_ORIGINS: readonly string[] = Object.freeze(Array.from(new Set(MCP_SERVERS.flatMap(s => [new URL(s.url).origin, ...(s.extraOrigins ?? [])]))));
 
 export function mcpServer(id: string): McpServerInfo | undefined {
   return MCP_SERVERS.find(s => s.id === id);
