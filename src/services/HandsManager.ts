@@ -21,11 +21,19 @@ export class HandsManager {
   private config: PlatformHandsConfig | null = null;
   private status: ConnectionStatus = 'disconnected';
   private listeners: ((status: ConnectionStatus) => void)[] = [];
+  /** Номер попытки подключения: результат старой попытки (или после отключения) ничего не меняет. */
+  private gen = 0;
 
   async connect(config: PlatformHandsConfig): Promise<void> {
+    const gen = ++this.gen;
+    const prev = this.hands;
+    this.hands = null;
+    if (prev) { try { await prev.disconnect(); } catch { /* старое подключение уже не нужно */ } }
+    if (gen !== this.gen) throw new Error('Подключение отменено: начато новое подключение или телефон отключили.');
     // Код подключения в памяти не храним дольше, чем нужно для рукопожатия.
     this.config = { ...config, token: undefined };
     this.setStatus('connecting');
+    let hands: PlatformHands | null = null;
 
     try {
       if (config.transport === 'websocket') {
@@ -35,29 +43,37 @@ export class HandsManager {
         if (!LOOPBACK_WS_RE.test(config.endpoint.trim())) {
           throw new Error('WebSocket доступен только для отладки на этом компьютере. Для телефона выберите защищённое подключение HTTP.');
         }
-        this.hands = new WebSocketHands(config);
+        hands = new WebSocketHands(config);
       } else if (config.transport === 'http') {
-        this.hands = new HTTPHands(config);
+        hands = new HTTPHands(config);
       } else {
         throw new Error(`Unsupported transport: ${config.transport}`);
       }
 
-      await this.hands.connect();
+      await hands.connect();
+      if (gen !== this.gen) {
+        // Пока шло рукопожатие, начали другое подключение или нажали «Отключить».
+        try { await hands.disconnect(); } catch { /* noop */ }
+        throw new Error('Подключение отменено: начато новое подключение или телефон отключили.');
+      }
+      this.hands = hands;
       this.setStatus('connected');
       console.log('[HandsManager] Connected to Android device');
     } catch (error) {
-      this.setStatus('error');
-      this.hands = null;
+      if (gen === this.gen) {
+        this.setStatus('error');
+        this.hands = null;
+      }
       throw error;
     }
   }
 
   async disconnect(): Promise<void> {
-    if (this.hands) {
-      await this.hands.disconnect();
-      this.hands = null;
-      this.setStatus('disconnected');
-    }
+    this.gen++; // начатое подключение больше ничего не запишет
+    const hands = this.hands;
+    this.hands = null;
+    if (hands) await hands.disconnect();
+    if (this.status !== 'disconnected') this.setStatus('disconnected');
   }
 
   getHands(): PlatformHands | null {

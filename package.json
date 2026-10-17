@@ -10,7 +10,7 @@
     "predev": "node scripts/ensure-native-deps.mjs",
     "dev": "vite",
     "prebuild": "node scripts/ensure-native-deps.mjs",
-    "build": "vite build",
+    "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "pretest": "node scripts/ensure-native-deps.mjs",
     "test": "vitest run",
