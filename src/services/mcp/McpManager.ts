@@ -13,6 +13,7 @@ import { McpClient, McpError, type McpConnection, type McpToolDef } from './McpC
 import { VercelConnection } from './VercelTools';
 import { BegetConnection, begetDnsRecords, begetFqdn, begetSiteName, asciiDomain } from './BegetTools';
 import { RegruConnection, regruNss, regruRecord, regruRequest } from './RegruTools';
+import { SelectelConnection, selectelRecord } from './SelectelTools';
 
 const STATE_KEY = 'svetlana_mcp_v1';
 const MAX_ACTIONS = 3;
@@ -124,6 +125,7 @@ const defaultFactory: ConnectionFactory = (s, t) => {
   if (s.kind !== 'rest') return new McpClient(s, t);
   if (s.id === 'beget') return new BegetConnection(t ?? '');
   if (s.id === 'regru') return new RegruConnection(t ?? '');
+  if (s.id === 'selectel') return new SelectelConnection(t ?? '');
   return new VercelConnection(t ?? '');
 };
 let factory: ConnectionFactory = defaultFactory;
@@ -151,7 +153,7 @@ function friendlyError(server: McpServerInfo, e: unknown, secret: string | null)
       const why = scrubSecret(stripControl(e.message, false), secret).slice(0, 300);
       // Причина в IP-адресе: данные для входа верны, после правки списка достаточно нажать «Обновить».
       if (/IP-адрес/.test(why)) return `${why} Затем откройте «Сервисы» и нажмите «Обновить».`;
-      return `${why} Затем откройте «Сервисы», нажмите «Сменить данные для входа», вставьте логин и пароль API через двоеточие и нажмите «Подключить».`;
+      return `${why} Затем откройте «Сервисы», нажмите «Сменить данные для входа», вставьте данные в формате ${server.tokenLabel} и нажмите «Подключить».`;
     }
     if (e.code === 'auth') return `${server.name}: токен не подошёл, истёк или у него мало прав. Откройте «Сервисы», нажмите «Сменить токен» у этого сервиса, вставьте новый и нажмите «Подключить».`;
     if (e.code === 'network' || e.code === 'timeout') return `${server.name}: нет связи или сервис не ответил. Проверьте интернет, откройте «Сервисы» и нажмите «Обновить», затем повторите запрос.`;
@@ -220,12 +222,26 @@ function describeBeget(name: string, args: Record<string, unknown>): string | nu
   } catch { return null; }
 }
 
+/** Понятное описание изменения DNS в Selectel для окна подтверждения. */
+function describeSelectel(name: string, args: Record<string, unknown>): string | null {
+  if (name !== 'add_record' && name !== 'remove_record') return null;
+  try {
+    const r = selectelRecord(args);
+    const shown = shownDomain(args.domain, r.domain); // кириллица: punycode и рядом исходное написание
+    const host = r.subdomain === '@' ? shown : `${r.subdomain}.${shown}`;
+    const value = r.content; // ровно то, что уйдёт в Selectel (MX с приоритетом, точка в конце имени, TXT в кавычках)
+    return name === 'add_record'
+      ? `Selectel: добавить запись ${r.type} для ${host}: ${value}. Остальные записи не изменятся.`
+      : `Selectel: удалить запись ${r.type} у ${host}: ${value}. Остальные записи не изменятся.`;
+  } catch { return null; }
+}
+
 /** Понятное описание изменения REG.RU для окна подтверждения. */
 function describeRegru(name: string, args: Record<string, unknown>): string | null {
   if (name === 'set_nss') {
     try {
       const nss = regruNss(args.nss);
-      const beget = nss.every(h => /\.beget\.(com|pro)$/.test(h)) ? ' (Beget)' : '';
+      const beget = nss.every(h => /\.beget\.(com|pro)$/.test(h)) ? ' (Beget)' : nss.every(h => /^[a-d]\.ns\.selectel\.ru$/.test(h)) ? ' (Selectel)' : '';
       const d = regruRequest('set_nss', args).data as { domains: { dname: string }[] };
       return `REG.RU: домен ${shownDomain(args.domain, d.domains[0].dname)} будут обслуживать DNS-серверы${beget}: ${nss.join(', ')}`;
     } catch { return null; }
@@ -399,6 +415,7 @@ export class McpManager {
   private describe(server: McpServerInfo, def: McpToolDef, args: Record<string, unknown>): string | null {
     if (server.id === 'beget') return describeBeget(def.name, args);
     if (server.id === 'regru') return describeRegru(def.name, args);
+    if (server.id === 'selectel') return describeSelectel(def.name, args);
     if (server.id !== 'timeweb' || def.name !== 'execute_tool' || typeof args.confirm_token !== 'string') return null;
     const s = this.rawSummary(args);
     const text = s ? s.replace(/\[(?:BILLABLE|WRITE)\]\s*/g, '').trim() : '';
@@ -435,6 +452,12 @@ export class McpManager {
     }
     if (server.id === 'beget' && def.name === 'add_site') {
       return 'В аккаунте Beget появится пустой сайт (папка). Файлы нужно будет загрузить отдельно через панель Beget или по FTP. Число сайтов ограничено тарифом.';
+    }
+    if (server.id === 'selectel' && def.name === 'remove_record') {
+      return 'Запись будет удалена из DNS Selectel. Если это почта (MX) или проверка домена (TXT), они перестанут работать.';
+    }
+    if (server.id === 'selectel' && def.name === 'add_record') {
+      return 'Запись добавится к существующим. Она заработает, только если домен обслуживают DNS-серверы Selectel (a.ns.selectel.ru … d.ns.selectel.ru). Изменения DNS расходятся до нескольких часов.';
     }
     if (server.id === 'regru' && def.name === 'remove_record') {
       return 'Запись будет удалена из DNS. Если это почта (MX) или проверка домена (TXT), они перестанут работать.';
@@ -866,4 +889,4 @@ export async function runMcpLoop(opts: { reply: string; actions: McpAction[]; so
   return { notes, summary, lastReply };
 }
 
-export const MCP_REJECTED_TEXT = 'Действие пропущено: запрос получился слишком длинным или сложным, и Светлана не смогла бы показать его вам целиком. Попросите сделать это по частям.';
+export const MCP_REJECTED_TEXT = 'Действие пропущено: запрос получился слишком длинным или сложным, и Светлана не смогла бы показать его вам целиком.
