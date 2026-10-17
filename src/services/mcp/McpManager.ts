@@ -889,4 +889,4 @@ export async function runMcpLoop(opts: { reply: string; actions: McpAction[]; so
   return { notes, summary, lastReply };
 }
 
-export const MCP_REJECTED_TEXT = 'Действие пропущено: запрос получился слишком длинным или сложным, и Светлана не смогла бы показать его вам целиком.
+export const MCP_REJECTED_TEXT = 'Действие пропущено: запрос получился слишком длинным или сложным, и Светлана не смогла бы показать его вам целиком. Попросите сделать это по частям.';
