@@ -15,6 +15,8 @@ const CONVERSATION_ID_RE = /^[0-9a-f]{32}$/;
 let conversationId: string | null = null;
 /** Идёт выдача нового ID: параллельные запросы ждут один и тот же ответ, а не просят каждый свой. */
 let pending: Promise<string> | null = null;
+/** Номер выдачи: сброс разговора делает начатую выдачу устаревшей. */
+let pendingGen = 0;
 
 function invoker(): Invoke | null {
   const inv = (globalThis as any).__TAURI_INTERNALS__?.invoke;
@@ -36,19 +38,25 @@ function need(): Invoke {
 export function resetNativeConversation(): void {
   conversationId = null;
   pending = null;
+  pendingGen++;
 }
 
 async function currentConversation(inv: Invoke): Promise<string> {
   if (conversationId) return conversationId;
   if (!pending) {
-    const p: Promise<string> = (async () => {
+    const gen = ++pendingGen;
+    const req = (async () => {
       const id = await inv('ai_new_conversation');
       const ok = typeof id === 'string' && CONVERSATION_ID_RE.test(id) ? id : null;
-      if (pending === p) conversationId = ok; // разговор не сбросили, пока ждали ответ
+      if (gen === pendingGen) conversationId = ok; // разговор не сбросили, пока ждали ответ
       return ok ?? '';
     })();
-    pending = p;
-    p.then(() => { if (pending === p) pending = null; }, () => { if (pending === p) pending = null; });
+    pending = req;
+    // Когда выдача закончилась (успешно или с ошибкой), следующий запрос может попросить новый ID.
+    req.then(
+      () => { if (pending === req) pending = null; },
+      () => { if (pending === req) pending = null; },
+    );
   }
   return pending;
 }
