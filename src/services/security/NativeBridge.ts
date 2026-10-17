@@ -13,6 +13,8 @@ export const NATIVE_KEY_PLACEHOLDER = '•••• хранится на уст
 
 const CONVERSATION_ID_RE = /^[0-9a-f]{32}$/;
 let conversationId: string | null = null;
+/** Идёт выдача нового ID: параллельные запросы ждут один и тот же ответ, а не просят каждый свой. */
+let pending: Promise<string> | null = null;
 
 function invoker(): Invoke | null {
   const inv = (globalThis as any).__TAURI_INTERNALS__?.invoke;
@@ -33,14 +35,22 @@ function need(): Invoke {
 /** Новый разговор: следующий запрос получит новый ID и, значит, новое подтверждение в нативном окне. */
 export function resetNativeConversation(): void {
   conversationId = null;
+  pending = null;
 }
 
 async function currentConversation(inv: Invoke): Promise<string> {
-  if (!conversationId) {
-    const id = await inv('ai_new_conversation');
-    conversationId = typeof id === 'string' && CONVERSATION_ID_RE.test(id) ? id : null;
+  if (conversationId) return conversationId;
+  if (!pending) {
+    const p: Promise<string> = (async () => {
+      const id = await inv('ai_new_conversation');
+      const ok = typeof id === 'string' && CONVERSATION_ID_RE.test(id) ? id : null;
+      if (pending === p) conversationId = ok; // разговор не сбросили, пока ждали ответ
+      return ok ?? '';
+    })();
+    pending = p;
+    p.then(() => { if (pending === p) pending = null; }, () => { if (pending === p) pending = null; });
   }
-  return conversationId ?? '';
+  return pending;
 }
 
 /** Сохранить ключ в защищённое хранилище устройства (пустое значение удаляет). */
@@ -63,7 +73,7 @@ export async function nativeCloudChat(provider: string, model: string, body: Rec
   } catch (e) {
     // ID устарел (приложение долго открыто) — просим новый один раз.
     if (!String((e as any)?.message ?? e).includes('CONVERSATION_UNKNOWN')) throw e;
-    conversationId = null;
+    resetNativeConversation();
     text = await ask();
   }
   return safeJsonParse(String(text ?? ''), 8 * 1024 * 1024);
