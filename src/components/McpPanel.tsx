@@ -1,4 +1,4 @@
-// «Сервисы»: подключение GitHub, Vercel, Timeweb Cloud, Yandex Cloud, Beget, REG.RU, Supabase, Linear, Stripe, Sentry, Neon, Context7 и Hugging Face по токену.
+// «Сервисы»: подключение GitHub, Vercel, Timeweb Cloud, Yandex Cloud, Beget, REG.RU, Selectel, Supabase, Linear, Stripe, Sentry, Neon, Context7 и Hugging Face по токену.
 // Токен уходит в зашифрованное хранилище и обратно в интерфейс не показывается.
 // Каждый вызов сервиса из чата Светлана выполняет только после подтверждения на экране
 // (кроме просмотра в Vercel, если пользователь сам разрешил его галочкой).
@@ -21,7 +21,7 @@ function ServerCard({ s }: { s: ServerStatus }) {
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [replace, setReplace] = useState(false);
   const listId = useId();
-  // У сервисов с логином и паролем (Beget, REG.RU) вместо «токена» говорим «данные для входа».
+  // У сервисов с логином и паролем (Beget, REG.RU, Selectel) вместо «токена» говорим «данные для входа».
   const creds = !!s.server.tokenLabel;
 
   const run = async (fn: () => Promise<string>) => {
@@ -60,7 +60,7 @@ function ServerCard({ s }: { s: ServerStatus }) {
               value={token}
               onChange={e => setToken(e.target.value)}
               placeholder={s.server.tokenLabel ?? (s.server.tokenRequired ? 'токен' : 'токен (необязательно)')}
-              aria-label={creds ? `Логин и пароль API ${s.server.name} в формате ${s.server.tokenLabel}` : `Токен ${s.server.name}`}
+              aria-label={creds ? `Данные для входа в API ${s.server.name} в формате ${s.server.tokenLabel}` : `Токен ${s.server.name}`}
               className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-xs focus:outline-none focus:border-indigo-500/50"
             />
             <button type="button" onClick={() => setShow(!show)} aria-pressed={show} aria-label={show ? (creds ? 'Скрыть данные доступа' : 'Скрыть токен') : (creds ? 'Показать данные доступа' : 'Показать токен')} title={show ? (creds ? 'Скрыть данные доступа' : 'Скрыть токен') : (creds ? 'Показать данные доступа' : 'Показать токен')} className="p-2 rounded-lg bg-white/5 hover:bg-white/10">
@@ -159,8 +159,8 @@ export default function McpPanel({ onClose }: { onClose?: () => void }) {
         Подключите сервис, и Светлана сможет работать с ним из чата: «разверни мой сайт на Timeweb», «покажи открытые задачи в GitHub», «почему упал последний деплой».
       </p>
       <ol className="text-sm text-sv-muted list-decimal pl-5 space-y-0.5">
-        <li>Откройте ссылку под нужным сервисом: «Как получить токен» для сервисов с токеном (создайте его с минимальными правами и сроком), «Как настроить API» для Beget и REG.RU. Для Beget включите доступ к API и задайте отдельный пароль API. Для REG.RU в «Настройках API» задайте альтернативный пароль API и добавьте свой внешний IP-адрес.</li>
-        <li>Для сервисов с токеном скопируйте токен, вставьте его в поле и нажмите «Подключить». Для Beget и REG.RU вставьте логин и пароль API через двоеточие: логин:пароль.</li>
+        <li>Откройте ссылку под нужным сервисом: «Как получить токен» для сервисов с токеном (создайте его с минимальными правами и сроком), «Как настроить API» для Beget, REG.RU и Selectel. Для Beget включите доступ к API и задайте отдельный пароль API. Для REG.RU в «Настройках API» задайте альтернативный пароль API и добавьте свой внешний IP-адрес. Для Selectel в панели откройте «Управление доступом» → «Сервисные пользователи» → «Добавить», задайте имя и пароль и добавьте пользователя в нужный проект (для DNS достаточно роли «DNS»), затем скопируйте номер аккаунта и имя проекта.</li>
+        <li>Для сервисов с токеном скопируйте токен, вставьте его в поле и нажмите «Подключить». Для Beget и REG.RU вставьте логин и пароль API через двоеточие: логин:пароль. Для Selectel: номер_аккаунта:проект:пользователь:пароль, например 123456:my-project:svetlana:пароль.</li>
         <li>Пишите Светлане в чат. Каждое действие она покажет вам на подтверждение, изменения помечены ⚠️. Без окна может идти только просмотр в Vercel, если вы включите там галочку «чтение без подтверждения».</li>
       </ol>
       <p className="text-xs text-sv-muted">
