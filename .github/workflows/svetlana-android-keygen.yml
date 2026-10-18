@@ -13,7 +13,8 @@ permissions:
 
 jobs:
   keygen:
-    if: ${{ inputs.confirm == 'СОЗДАТЬ' }}
+    # Только из основных веток: из другой ветки изменённый workflow мог бы унести ключ подписи.
+    if: ${{ inputs.confirm == 'СОЗДАТЬ' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
