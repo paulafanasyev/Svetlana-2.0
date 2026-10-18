@@ -26,6 +26,8 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
     defaults:
       run:
         working-directory: android-hands
@@ -62,8 +64,8 @@ jobs:
           path: android-hands/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      # Подписанный релиз, если в секретах репозитория есть ключ (см. ci/workflows/README.md). Иначе в Releases
-      # уходит тот же отладочный APK, что и раньше. Секреты доступны только в push основных веток.
+      # Подписанный релиз, если в секретах репозитория есть ключ (см. ci/workflows/README.md). Без ключа в Releases
+      # ничего не публикуется: отладочный APK остаётся только артефактом сборки. Секреты доступны только в push основных веток.
       - name: Release signing key (optional)
         id: sign
         if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main')
@@ -90,18 +92,17 @@ jobs:
           SVETLANA_KEY_PASSWORD: ${{ secrets.SVETLANA_KEY_PASSWORD }}
         run: gradle assembleRelease --no-daemon
       - name: Pick APK for Releases
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main')
+        if: steps.sign.outputs.signed == 'true'
         working-directory: android-hands
         run: |
           mkdir -p ../release-apk
-          if [ "${{ steps.sign.outputs.signed }}" = "true" ]; then
-            cp app/build/outputs/apk/release/app-release.apk ../release-apk/Svetlana-2.0-Android.apk
-          else
-            cp "$(ls app/build/outputs/apk/debug/*.apk | head -n 1)" ../release-apk/Svetlana-2.0-Android.apk
-          fi
+          cp app/build/outputs/apk/release/app-release.apk ../release-apk/Svetlana-2.0-Android.apk
           rm -f "$RUNNER_TEMP/release.jks"
+      - name: No signing key, nothing to publish
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main') && steps.sign.outputs.signed != 'true'
+        run: echo "::warning::Ключ подписи не задан в секретах: APK в Releases не публикуется (отладочная сборка остаётся только артефактом)."
       - name: Upload APK for Releases
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main')
+        if: steps.sign.outputs.signed == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: svetlana-apk-release
@@ -113,7 +114,7 @@ jobs:
   # Версия из того же tauri.conf.json и одна очередь svetlana-release на все ветки: один тег, без гонки.
   release:
     needs: build
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main') && needs.build.outputs.signed == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
