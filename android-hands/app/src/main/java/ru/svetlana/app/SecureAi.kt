@@ -255,7 +255,7 @@ object SecureAi {
         synchronized(consents) { consents.removeAll { it.provider == provider } }
     }
 
-    /** Начало первого сообщения пользователя — только для окна подтверждения. */
+    /** Начало первого сообщения пользователя — только для окна подтверждения (без скрытых и bidi-символов). */
     fun previewOf(provider: String, body: JSONObject): String {
         val text: String = if (provider == "svetlana") {
             (opt(body, "message") as? String).orEmpty()
@@ -275,7 +275,7 @@ object SecureAi {
                 else -> (opt(f, "content") as? String).orEmpty()
             }
         }
-        return text.filter { !it.isISOControl() }.take(80)
+        return ErrorText.clean(text).take(80)
     }
 
     fun cloudChat(ctx: Context, provider: String, model: String, conversation: String, body: Any?, confirm: (String) -> Boolean): String {
@@ -448,7 +448,8 @@ object SecureAi {
             else -> headers["Authorization"] = "Bearer $key"
         }
         val (code, text) = exchange(endpoint(p, model), headers, body, gen, MAX_RESPONSE)
-        if (code !in 200..299) throw Fail("HTTP $code: ${text.take(500)}")
+        // Некоторые сервисы повторяют ключ в тексте ошибки: до страницы он не доходит.
+        if (code !in 200..299) throw Fail("HTTP $code: ${ErrorText.scrub(text, listOf(key))}")
         return text
     }
 
@@ -457,7 +458,7 @@ object SecureAi {
         val headers = linkedMapOf("Content-Type" to "application/json", "Accept" to "application/json")
         if (c.key.isNotEmpty()) headers["Authorization"] = "Bearer ${c.key}"
         val (code, text) = exchange(c.endpoint + COMPLETIONS, headers, body, gen, MAX_RESPONSE)
-        if (code !in 200..299) throw Fail("Свой ИИ: HTTP $code: ${text.take(500)}")
+        if (code !in 200..299) throw Fail("Свой ИИ: HTTP $code: ${ErrorText.scrub(text, listOf(c.key))}")
         return text
     }
 
@@ -508,7 +509,7 @@ object SecureAi {
                 code == 401 && attempt == 0 -> gigaToken = null
                 code == 401 -> throw Fail(GIGACHAT_BAD_KEY)
                 code == 402 -> throw Fail(GIGACHAT_NO_TOKENS)
-                code !in 200..299 -> throw Fail("HTTP $code: ${text.take(500)}")
+                code !in 200..299 -> throw Fail("HTTP $code: ${ErrorText.scrub(text, listOf(key, token))}")
                 else -> return text
             }
         }
