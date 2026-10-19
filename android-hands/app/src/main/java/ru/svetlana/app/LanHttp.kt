@@ -14,8 +14,9 @@ import java.net.Socket
  *
  * - только IP домашней сети (10.x, 172.16–31.x, 192.168.x) или этот телефон (127.x, localhost), без DNS: адрес не подменить;
  * - только GET и POST с JSON, без перенаправлений и куки, размер (до 8 МБ, как у облака) и частота ограничены;
- * - отправка данных (POST) на новый адрес только после нативного подтверждения; разрешённые адреса
- *   стираются вместе с ключами (secret_wipe_all). GET (список моделей, состояние) данных не отправляет.
+ * - любой запрос (и GET, и POST) на новый адрес только после нативного подтверждения: иначе чужой скрипт мог бы
+ *   читать страницы роутера и других устройств сети. Разрешение действует 30 дней (адрес в сети может
+ *   достаться другому устройству) и стирается вместе с ключами (secret_wipe_all).
  */
 object LanHttp {
     private const val PREFS = "svetlana_lan_v1"
@@ -27,6 +28,9 @@ object LanHttp {
     private const val CONNECT_MS = 5_000
     private const val READ_MS = 180_000
     private const val PER_MINUTE = 120
+    /** Сколько дней действует разрешение на адрес. */
+    private const val ALLOW_DAYS = 30L
+    private const val DAY_MS = 24L * 60 * 60 * 1000
     const val BAD = "Адрес должен быть в домашней сети или на этом телефоне, например http://192.168.1.10:11434"
     private const val BAD_REPLY = "Устройство ответило непонятно"
     private const val TOO_BIG = "Слишком большой ответ устройства"
@@ -54,14 +58,24 @@ object LanHttp {
         return Target(host, port, m.groupValues[3].ifEmpty { "/" } + m.groupValues[4])
     }
 
-    private fun allowed(ctx: Context, key: String): Boolean =
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getStringSet(KEY, emptySet())?.contains(key) == true
+    /** День, когда выдано разрешение на адрес, или null. Записи старого вида (без дня) считаются истёкшими. */
+    private fun grantedDay(entry: String, key: String): Long? =
+        if (entry.startsWith("$key@")) entry.substringAfter('@').toLongOrNull() else null
+
+    private fun allowed(ctx: Context, key: String): Boolean {
+        val today = System.currentTimeMillis() / DAY_MS
+        val set = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getStringSet(KEY, emptySet()) ?: emptySet()
+        return set.any { e -> grantedDay(e, key)?.let { today - it in 0..ALLOW_DAYS } == true }
+    }
 
     private fun allow(ctx: Context, key: String) {
         val p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val today = System.currentTimeMillis() / DAY_MS
         val set = HashSet(p.getStringSet(KEY, emptySet()) ?: emptySet())
+        // Убираем старое разрешение этого адреса, записи старого вида и истёкшие.
+        set.removeAll { e -> e == key || !e.contains('@') || e.startsWith("$key@") || (e.substringAfter('@').toLongOrNull()?.let { today - it !in 0..ALLOW_DAYS } ?: true) }
         if (set.size >= 50) set.clear()
-        set.add(key)
+        set.add("$key@$today")
         p.edit().putStringSet(KEY, set).apply()
     }
 
@@ -86,11 +100,12 @@ object LanHttp {
         val bytes = if (m == "POST") body.toByteArray(Charsets.UTF_8) else ByteArray(0)
         if (bytes.size > MAX_BODY) throw SecureAi.Fail("Запрос слишком большой")
         if (!rateOk()) throw SecureAi.Fail("Слишком много запросов в домашнюю сеть, подождите минуту")
-        if (m == "POST" && !allowed(ctx, t.key)) {
+        if (!allowed(ctx, t.key)) {
             val where = if (t.host.startsWith("127.")) "на этом телефоне (${t.key})" else "в домашней сети (${t.key})"
             val ok = confirm(
-                "Разрешить Светлане отправлять данные на устройство $where?\n\n" +
-                    "Так работают локальная модель на вашем компьютере (Ollama, LM Studio) и Svetlana-home. Разрешайте только своё устройство."
+                "Разрешить Светлане связываться с устройством $where: читать с него ответы и отправлять ему данные?\n\n" +
+                    "Так работают локальная модель на вашем компьютере (Ollama, LM Studio) и Svetlana-home. " +
+                    "Разрешайте только своё устройство. Разрешение действует 30 дней."
             )
             if (!ok) throw SecureAi.Fail(SecureAi.CANCELLED)
             allow(ctx, t.key)
