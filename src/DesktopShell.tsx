@@ -6,6 +6,8 @@
 // «Для разработчика» и помечены: это описание, а не работающая функция. При первом запуске открывается
 // мастер настройки (FirstRunSetup): без него чат не знает, куда слать вопрос. Если ИИ не выбран, в чате
 // есть кнопка «Подключить ИИ», которая снова открывает мастер.
+// Каждая вкладка обёрнута в ErrorBoundary: ошибка на одной странице не оставляет белый экран, а переход на
+// другую вкладку сбрасывает ошибку (key={tab}).
 import { useEffect, useState } from 'react';
 import { MessageCircle, Cpu, Smartphone, Wrench, Settings2, AlertTriangle, Mic, Download, Hand } from 'lucide-react';
 import App from './App';
@@ -15,6 +17,7 @@ import AndroidConnectionPage from './pages/AndroidConnectionPage';
 import AndroidHandsPage from './pages/AndroidHandsPage';
 import DownloadPage from './pages/DownloadPage';
 import FirstRunSetup, { isSetupDone } from './components/FirstRunSetup';
+import ErrorBoundary from './components/ErrorBoundary';
 import { aiGateway } from './services/AIGateway';
 import { isNativeApp } from './services/security/NativeBridge';
 import { isAndroidApp } from './platform';
@@ -83,29 +86,32 @@ export default function DesktopShell() {
           data-testid="ai-pill"
           onClick={() => setSetupOpen(true)}
           title={pill.title}
-          className={`text-xs px-3 py-1.5 rounded-full border max-w-[9rem] sm:max-w-none truncate ${pill.cls}`}
+          aria-label={`${pill.text}. ${pill.title}`}
+          className={`text-xs px-3 py-2 min-h-10 rounded-full border max-w-[9rem] sm:max-w-none truncate ${pill.cls}`}
         >
           {pill.text}
         </button>
         <button
           onClick={() => setSetupOpen(true)}
           aria-label="Настройка"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs"
+          className="flex items-center gap-1.5 px-3 py-2 min-h-10 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs"
         >
-          <Settings2 className="w-4 h-4" /><span className="hidden sm:inline">Настройка</span>
+          <Settings2 className="w-4 h-4" aria-hidden="true" /><span className="hidden sm:inline">Настройка</span>
         </button>
       </div>
       {/* На телефоне вкладки — одной строкой с прокруткой и короткими надписями. */}
-      <nav className="w-full sm:w-auto flex gap-1 overflow-x-auto sm:flex-wrap">
+      <nav aria-label="Основные разделы" className="w-full sm:w-auto flex gap-1 overflow-x-auto sm:flex-wrap">
         {tabs.map(t => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`shrink-0 flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+            aria-current={tab === t.id ? 'page' : undefined}
+            aria-label={t.label}
+            className={`shrink-0 flex items-center gap-2 px-3 py-2 min-h-10 rounded-lg text-sm transition-colors ${
               tab === t.id ? 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/30' : 'text-sv-muted hover:bg-white/5 hover:text-sv-text border border-transparent'
             }`}
           >
-            <t.icon className="w-4 h-4" />
+            <t.icon className="w-4 h-4" aria-hidden="true" />
             <span className="sm:hidden">{t.short}</span>
             <span className="hidden sm:inline">{t.label}</span>
           </button>
@@ -132,12 +138,14 @@ export default function DesktopShell() {
       <div className="min-h-screen">
         {bar}
         <div className="px-4 py-2 bg-yellow-500/10 border-b border-yellow-500/30 text-xs text-yellow-300 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <AlertTriangle className="w-4 h-4 shrink-0" aria-hidden="true" />
           Здесь схемы, план и демо разработки (в том числе оркестратор задач). Статусы и «демо-задачи» на этих страницах описывают замысел и не проверяют ваше устройство. Работающий чат на вкладке «Чат со Светланой».
         </div>
         {/* Отступ снизу: там плавающие кнопки CRM / Бизнес / Голос (CRMLauncher). */}
         <div className="pb-28 overflow-x-auto">
-          <App />
+          <ErrorBoundary key={tab} label="Для разработчика">
+            <App />
+          </ErrorBoundary>
         </div>
         {setup}
       </div>
@@ -149,25 +157,27 @@ export default function DesktopShell() {
       {bar}
       {/* Отступ снизу: там плавающие кнопки CRM / Бизнес / Голос (CRMLauncher). */}
       <main className="p-3 sm:p-6 pb-28 max-w-7xl mx-auto">
-        {tab === 'chat' && (
-          <>
-            {/* Честно про голос в Windows: встроенное распознавание браузера в WebView2 недоступно, локальная GigaAM проверяет только цифры.
-                В Android слушает распознавание самого телефона, ключ не нужен, поэтому там подсказки нет. */}
-            {windows && (
-              <div data-testid="voice-note" className="mb-4 px-4 py-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-xs text-indigo-200 flex items-start gap-2">
-                <Mic className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>
-                  Писать можно сразу. Для голосовых команд в Windows нужен ключ Groq или OpenAI: нажмите кнопку «Голос» внизу слева и вставьте ключ там. Встроенное распознавание браузера в Windows-приложении не работает, а локальная модель речи пока только проверяет голос цифрами.
-                </span>
-              </div>
-            )}
-            <AvatarPage onConnectAi={() => setSetupOpen(true)} />
-          </>
-        )}
-        {tab === 'providers' && <AIProvidersPage />}
-        {tab === 'phone' && <AndroidConnectionPage />}
-        {tab === 'hands' && <AndroidHandsPage />}
-        {tab === 'download' && <DownloadPage />}
+        <ErrorBoundary key={tab} label={TABS.find(t => t.id === tab)?.label}>
+          {tab === 'chat' && (
+            <>
+              {/* Честно про голос в Windows: встроенное распознавание браузера в WebView2 недоступно, локальная GigaAM проверяет только цифры.
+                  В Android слушает распознавание самого телефона, ключ не нужен, поэтому там подсказки нет. */}
+              {windows && (
+                <div data-testid="voice-note" className="mb-4 px-4 py-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-xs text-indigo-200 flex items-start gap-2">
+                  <Mic className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                  <span>
+                    Писать можно сразу. Для голосовых команд в Windows нужен ключ Groq или OpenAI: нажмите кнопку «Голос» внизу слева и вставьте ключ там. Встроенное распознавание браузера в Windows-приложении не работает, а локальная модель речи пока только проверяет голос цифрами.
+                  </span>
+                </div>
+              )}
+              <AvatarPage onConnectAi={() => setSetupOpen(true)} />
+            </>
+          )}
+          {tab === 'providers' && <AIProvidersPage />}
+          {tab === 'phone' && <AndroidConnectionPage />}
+          {tab === 'hands' && <AndroidHandsPage />}
+          {tab === 'download' && <DownloadPage />}
+        </ErrorBoundary>
       </main>
       {setup}
     </div>
