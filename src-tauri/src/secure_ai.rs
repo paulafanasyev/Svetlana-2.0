@@ -26,7 +26,9 @@
 //! - только известные провайдеры и строгая рекурсивная схема тела запроса;
 //! - лимит частоты запросов, новых разговоров и изменений ключей;
 //! - размер запроса проверяется ДО разбора схемы, ответ читается по частям и обрывается на лимите
-//!   (сервер не может забить память огромным ответом).
+//!   (сервер не может забить память огромным ответом);
+//! - текст ошибки сервиса доходит до страницы без ключа (scrub_error), а в окне подтверждения нет
+//!   невидимых и bidi-символов, которыми можно спрятать или перевернуть часть текста.
 
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -72,6 +74,10 @@ const MAX_CONVERSATIONS: usize = 32;
 const CONVERSATIONS_PER_MINUTE: usize = 10;
 const CONVERSATION_UNKNOWN: &str = "CONVERSATION_UNKNOWN: разговор не выдан приложением или устарел";
 const TOO_BIG_RESPONSE: &str = "Ответ слишком большой";
+/// Чем заменяется ключ (и похожее на ключ) в тексте ошибки сервиса.
+const KEY_HIDDEN: &str = "[ключ скрыт]";
+/// Сколько символов ошибки сервиса доходит до страницы.
+const MAX_ERROR: usize = 300;
 
 /// Разрешение из нативного окна.
 struct Consent {
@@ -170,19 +176,65 @@ async fn read_limited(mut response: reqwest::Response, max: usize) -> Result<(re
     Ok((status, String::from_utf8_lossy(&bytes).into_owned()))
 }
 
-fn http_result(status: reqwest::StatusCode, text: String) -> Result<String, String> {
+/// Управляющие, невидимые и меняющие направление текста (bidi) символы: в окнах и ошибках их не показываем.
+fn is_hidden_char(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{061C}' | '\u{FEFF}')
+}
+
+/// Символ, из которых состоят ключи и токены.
+fn key_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '_' | '=' | '-')
+}
+
+/// Похоже на ключ: sk-…, gsk_…, AIza… (от 14 символов) или любая длинная строка из символов ключей.
+fn key_like(w: &str) -> bool {
+    let n = w.chars().count();
+    n >= 40 || (n >= 14 && ["sk-", "sk_", "gsk_", "pk-", "pk_", "rk-", "rk_", "AIza"].iter().any(|p| w.starts_with(p)))
+}
+
+/// Текст ошибки сервиса для страницы: без наших секретов и похожего на ключи, без скрытых символов, коротко.
+fn scrub_error(text: &str, secrets: &[&str]) -> String {
+    let mut t = text.to_string();
+    for s in secrets {
+        if s.len() >= 8 {
+            t = t.replace(*s, KEY_HIDDEN);
+        }
+    }
+    let mut out = String::with_capacity(t.len());
+    let mut word = String::new();
+    // Пробел в конце закрывает последнее слово и потом убирается.
+    for c in t.chars().chain(std::iter::once(' ')) {
+        if key_char(c) {
+            word.push(c);
+            continue;
+        }
+        if !word.is_empty() {
+            if key_like(&word) {
+                out.push_str(KEY_HIDDEN);
+            } else {
+                out.push_str(&word);
+            }
+            word.clear();
+        }
+        out.push(c);
+    }
+    out.pop();
+    out.chars().filter(|c| !is_hidden_char(*c)).take(MAX_ERROR).collect()
+}
+
+fn http_result(status: reqwest::StatusCode, text: String, secrets: &[&str]) -> Result<String, String> {
     if !status.is_success() {
-        let short: String = text.chars().take(500).collect();
-        return Err(format!("HTTP {}: {}", status.as_u16(), short));
+        // Некоторые сервисы повторяют ключ в тексте ошибки: до страницы он не доходит.
+        return Err(format!("HTTP {}: {}", status.as_u16(), scrub_error(&text, secrets)));
     }
     Ok(text)
 }
 
-/// Начало первого сообщения пользователя — только для окна подтверждения.
+/// Начало первого сообщения пользователя — только для окна подтверждения (без скрытых и bidi-символов).
 fn preview_of(provider: &str, body: &Value) -> String {
     if provider == "svetlana" {
         let text = body.get("message").and_then(|m| m.as_str()).unwrap_or("");
-        return text.chars().filter(|c| !c.is_control()).take(80).collect();
+        return text.chars().filter(|c| !is_hidden_char(*c)).take(80).collect();
     }
     let list_key = if provider == "google" { "contents" } else { "messages" };
     let first = body
@@ -198,7 +250,7 @@ fn preview_of(provider: &str, body: &Value) -> String {
             }
         })
         .unwrap_or("");
-    text.chars().filter(|c| !c.is_control()).take(80).collect()
+    text.chars().filter(|c| !is_hidden_char(*c)).take(80).collect()
 }
 
 /// Есть ли свежее и не исчерпанное разрешение для этого провайдера, модели и разговора.
@@ -362,7 +414,7 @@ async fn gigachat_chat(key: &str, body_text: String) -> Result<String, String> {
             }
             401 => return Err(GIGACHAT_BAD_KEY.into()),
             402 => return Err(GIGACHAT_NO_TOKENS.into()),
-            _ => return http_result(status, text),
+            _ => return http_result(status, text, &[key, token.as_str()]),
         }
     }
     Err(GIGACHAT_BAD_KEY.into())
@@ -645,7 +697,7 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conv
         .await
         .map_err(|e| e.without_url().to_string())?;
     let (status, text) = read_limited(response, MAX_RESPONSE).await?;
-    http_result(status, text)
+    http_result(status, text, &[key.as_str()])
 }
 
 #[cfg(test)]
@@ -739,6 +791,31 @@ mod tests {
         assert_eq!(preview_of("openai", &a), "привет");
         let g = json!({"contents": [{"role": "user", "parts": [{"text": "привет"}]}]});
         assert_eq!(preview_of("google", &g), "привет");
+    }
+
+    #[test]
+    fn preview_drops_bidi_and_invisible_chars() {
+        let b = json!({"message": "оплати\u{202E}счёт\u{2066}\u{200B}"});
+        assert_eq!(preview_of("svetlana", &b), "оплатисчёт");
+        let m = json!({"model": "m", "messages": [{"role": "user", "content": "a\u{202D}b\u{FEFF}c\nd"}]});
+        assert_eq!(preview_of("openai", &m), "abcd");
+    }
+
+    #[test]
+    fn provider_errors_never_echo_the_key() {
+        let key = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789";
+        let out = scrub_error(&format!("Incorrect API key provided: {key}. See docs"), &[key]);
+        assert!(!out.contains("abcdefghijklmnop"));
+        assert!(out.contains("Incorrect API key provided"));
+        assert!(out.contains(KEY_HIDDEN));
+        let other = scrub_error("bad token Bearer gsk_ABCDEFGHIJKLMNOPQRSTUV here", &[]);
+        assert!(!other.contains("ABCDEFGHIJKLMNOP"));
+        assert!(other.ends_with(" here"));
+        assert_eq!(scrub_error(&"я".repeat(1000), &[]).chars().count(), MAX_ERROR);
+        assert_eq!(scrub_error("model not found", &[]), "model not found");
+        let r = http_result(reqwest::StatusCode::UNAUTHORIZED, format!("bad key {key}"), &[key]);
+        assert!(!r.unwrap_err().contains("abcdefghijklmnop"));
+        assert_eq!(http_result(reqwest::StatusCode::OK, "ok".into(), &[key]), Ok("ok".to_string()));
     }
 
     #[test]
