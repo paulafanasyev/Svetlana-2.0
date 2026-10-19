@@ -2,7 +2,7 @@
 // Настройки одинаковые на сайте, в Windows и в Android: запись своего голоса, модель распознавания на
 // устройстве (в приложениях), облачное распознавание (Groq/OpenAI), озвучка. В Android без записанного голоса
 // слушает распознавание самого телефона (ключ не нужен). Панель закрывается системной кнопкой «Назад» и Escape.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Mic, MicOff, Settings2, X, Volume2, VolumeX } from 'lucide-react';
 import { sttSupport, getCloudStt, setCloudStt, resetWebStt, STT_PRESETS, type Listener } from '../services/voice/SpeechEngine';
 import { listenCommand } from './Avatar';
@@ -133,7 +133,7 @@ function VoiceSettings({ onClose }: { onClose: () => void }) {
       : 'Облачное распознавание отключено.');
   };
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Escape') { e.stopPropagation(); onClose(); }
   };
 
