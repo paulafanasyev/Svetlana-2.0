@@ -43,6 +43,7 @@ object Steps {
     private val BIDI = Regex("[\\u061C\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2069\\uFEFF]")
     private val SWIPE_DIRS = setOf("left", "right", "up", "down")
     const val NEED_OPEN_APP = "после «Назад», «Домой» или уведомлений сначала нужно открыть приложение («открой …»), чтобы не нажать в случайном"
+    const val TYPE_WARNING = "⚠ Светлана напечатает текст в другом приложении или очистит поле. Не разрешайте, если это пароль, код из СМС или номер карты."
 
     /** Текст для окна подтверждения: без управляющих и bidi-символов, в одну строку, ограниченной длины. */
     fun safe(s: String, max: Int = 200): String =
@@ -150,6 +151,9 @@ object Steps {
         n.isNotEmpty() && RISKY.any { n.contains(it) }
     }
 
+    /** Ввод или очистка текста в чужом приложении: отдельное предупреждение (пароль, код из СМС, карта). */
+    fun typesText(steps: List<Step>): Boolean = steps.any { it is Step.Type || it is Step.Clear }
+
     fun needsHands(steps: List<Step>): Boolean = steps.any { it !is Step.OpenApp && it !is Step.Wait }
 
     private fun touchesScreen(s: Step) = s is Step.Tap || s is Step.LongPress || s is Step.Type || s is Step.Clear ||
@@ -160,14 +164,16 @@ object Steps {
 
     /**
      * Выполняет шаги по порядку и останавливается на первой неудаче. Вызывать не из главного потока.
-     * Действия на экране привязаны к приложению: после «Открыть X» — к пакету X, иначе к тому, что было
-     * на экране при первом действии. «Назад», «Домой» и т.п. привязку НЕ сбрасывают: если после них
-     * сверху другое приложение — остановка; а если привязки ещё не было, дальше нужен «Открыть …».
+     * Действия на экране привязаны к приложению: после «Открыть X» — к пакету X, иначе к pinned — приложению,
+     * которое было на экране ДО окна подтверждения (если после подтверждения сверху выскочило другое
+     * приложение, первое же нажатие останавливается). Без pinned — к тому, что было на экране при первом
+     * действии. «Назад», «Домой» и т.п. привязку НЕ сбрасывают: если после них сверху другое приложение —
+     * остановка; а если привязки ещё не было, дальше нужен «Открыть …».
      * Пакет проверяется и здесь, и в HandsService прямо перед каждым нажатием.
      */
-    fun run(ctx: Context, steps: List<Step>): String {
+    fun run(ctx: Context, steps: List<Step>, pinned: String? = null): String {
         val log = StringBuilder()
-        var expected: String? = null
+        var expected: String? = pinned
         var unbound = false
         for ((i, s) in steps.withIndex()) {
             val (ok, text) = try {

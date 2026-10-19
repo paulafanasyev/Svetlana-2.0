@@ -209,10 +209,16 @@ class Bridge(private val act: MainActivity) {
         bg(finish) {
             // Приложения ищем ДО подтверждения: в окне видно, какое именно откроется (название и пакет).
             val resolved = Steps.resolveApps(act.applicationContext, steps)
+            // И приложение на экране запоминаем ДО подтверждения: если после «Да» сверху выскочит другое,
+            // первое же нажатие остановится, а не уйдёт в чужое окно.
+            val pinned = HandsService.instance?.currentApp()
             val list = resolved.mapIndexed { i, s -> "${i + 1}. ${s.title}" }.joinToString("\n")
-            val warn = if (Steps.risky(resolved)) "\n\n⚠ Есть шаг, похожий на отправку, оплату или удаление. Проверьте внимательно." else ""
+            val warn = buildString {
+                if (Steps.risky(resolved)) append("\n\n⚠ Есть шаг, похожий на отправку, оплату или удаление. Проверьте внимательно.")
+                if (Steps.typesText(resolved)) append("\n\n").append(Steps.TYPE_WARNING)
+            }
             if (!act.confirm("Выполнить на телефоне?\n\n$list$warn")) throw SecureAi.Fail(SecureAi.CANCELLED)
-            Steps.run(act.applicationContext, resolved)
+            Steps.run(act.applicationContext, resolved, pinned)
         }
     }
 
