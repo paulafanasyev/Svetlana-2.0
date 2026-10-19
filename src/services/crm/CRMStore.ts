@@ -101,6 +101,9 @@ export const ACTIVITY_LABELS: Record<ActivityType, string> = {
   note: 'Заметка', call: 'Звонок', meeting: 'Встреча', message: 'Сообщение', task: 'Задача',
 };
 
+/** Текст ошибки, если изменение не удалось сохранить (и оно отменено). */
+export const CRM_SAVE_FAILED = 'Не удалось сохранить CRM: в хранилище нет места или оно недоступно. Изменение отменено.';
+
 const STORAGE_KEY = 'svetlana_crm_v1';
 const CONTACT_STATUSES: ContactStatus[] = ['lead', 'client', 'partner', 'other'];
 const ACTIVITY_TYPES: ActivityType[] = ['note', 'call', 'meeting', 'message', 'task'];
@@ -192,12 +195,15 @@ export class CRMStore {
   private readonly storage: KeyValueStorage;
   private readonly clock: () => number;
   private data: CRMData;
+  /** Последнее состояние, которое точно сохранено: если запись не удалась, данные откатываются к нему. */
+  private saved: string;
   private listeners = new Set<() => void>();
 
   constructor(storage: KeyValueStorage = defaultStorage(), clock: () => number = Date.now) {
     this.storage = storage;
     this.clock = clock;
     this.data = this.load();
+    this.saved = JSON.stringify(this.data);
   }
 
   // ---------- persistence ----------
@@ -210,8 +216,19 @@ export class CRMStore {
     }
   }
 
+  /**
+   * Сохранить всё или ничего: если хранилище не приняло запись (нет места, доступ запрещён), изменение
+   * откатывается целиком. Иначе оно жило бы только в памяти и молча пропало после перезапуска.
+   */
   private commit(): void {
-    this.storage.setItem(STORAGE_KEY, JSON.stringify(this.data));
+    const next = JSON.stringify(this.data);
+    try {
+      this.storage.setItem(STORAGE_KEY, next);
+    } catch {
+      this.data = JSON.parse(this.saved) as CRMData;
+      throw new Error(CRM_SAVE_FAILED);
+    }
+    this.saved = next;
     this.listeners.forEach(l => l());
   }
 
