@@ -23,7 +23,8 @@
 // «★ Светлана Сервер» (id 'svetlana') — единая Светлана на мир-самозанятых.рф в полном режиме (см. SvetlanaCore).
 // Запись ключа асинхронна (в Windows — после окна подтверждения): addProvider/updateProvider/removeProvider возвращают
 // промис, и проверку соединения нужно делать только после него. Если ключ не сохранён («Отмена»),
-// addProvider откатывается: новый провайдер убирается, прежние настройки и активный выбор возвращаются.
+// addProvider и updateProvider откатываются: прежние настройки и активный выбор возвращаются.
+// Пустой или странный ответ модели — понятная ошибка (textOrFail), а не пустая реплика Светланы и не TypeError.
 import { getSecret, setSecret } from './security/SecretStore';
 import { safeJsonParse, stripControl, MAX_BYTES } from './security/SafeData';
 import { isNativeApp, nativeSetSecret, nativeHasSecret, nativeCloudChat, NATIVE_KEY_PLACEHOLDER } from './security/NativeBridge';
@@ -98,6 +99,14 @@ export function normalizeGigachatKey(k: string): string {
 export function gigachatTemperature(t: unknown): number {
   const n = typeof t === 'number' && Number.isFinite(t) ? t : 0.7;
   return Math.min(2, Math.max(0.1, n));
+}
+
+/** Текст ответа модели или понятная ошибка: пустой или странный ответ не выдаётся за ответ Светланы. */
+export function textOrFail(label: string, v: unknown): string {
+  if (typeof v !== 'string' || !v.trim()) {
+    throw new Error(`${label}: модель вернула пустой ответ. Попробуйте ещё раз или выберите другую модель.`);
+  }
+  return v;
 }
 
 /** «Свой ИИ»: любой OpenAI-совместимый сервер по https. Пока только в приложении для Android (SecureAi.kt). */
@@ -259,8 +268,15 @@ class AIGateway {
   }
 
   private async loadFromStorage(): Promise<void> {
-    if (typeof localStorage === 'undefined') return;
-    const stored = localStorage.getItem('svetlana_ai_providers');
+    // В приватном режиме доступ к хранилищу может бросить ошибку: тогда работаем с настройками по умолчанию,
+    // а не роняем ready (иначе любой запрос к ИИ падал бы с непонятной ошибкой).
+    let stored: string | null = null;
+    try {
+      if (typeof localStorage === 'undefined') return;
+      stored = localStorage.getItem('svetlana_ai_providers');
+    } catch (e) {
+      console.error('Хранилище настроек недоступно, ИИ работает с настройками по умолчанию:', e);
+    }
     if (stored) {
       try {
         const data = safeJsonParse(stored, MAX_BYTES.storage);
@@ -304,9 +320,14 @@ class AIGateway {
   private saveToStorage() {
     // Ключи в localStorage не пишем никогда.
     const data = Array.from(this.providers.values()).map(({ apiKey: _k, ...rest }) => rest);
-    localStorage.setItem('svetlana_ai_providers', JSON.stringify(data));
-    if (this.activeProvider) {
-      localStorage.setItem('svetlana_active_provider', this.activeProvider);
+    try {
+      localStorage.setItem('svetlana_ai_providers', JSON.stringify(data));
+      if (this.activeProvider) {
+        localStorage.setItem('svetlana_active_provider', this.activeProvider);
+      }
+    } catch (e) {
+      // Нет места или хранилище недоступно: настройки действуют до перезапуска, работа не прерывается.
+      console.error('Не удалось сохранить настройки ИИ:', e);
     }
   }
 
@@ -386,12 +407,18 @@ class AIGateway {
     return Promise.all(jobs).then(() => undefined);
   }
 
+  /**
+   * Изменить провайдера. Если новый ключ не сохранён («Отмена» или ошибка хранилища) — откат как в addProvider:
+   * прежние настройки и активный выбор возвращаются, иначе старый ключ ушёл бы с новой моделью или адресом.
+   */
   updateProvider(id: string, updates: Partial<AIProvider>): Promise<void> {
     const provider = this.providers.get(id);
     if (!provider) return Promise.resolve();
     const next = sanitizeProvider({ ...provider, ...updates, id });
     if (!next) throw new Error('Некорректные настройки провайдера (адрес)');
     this.guardCustomEndpoint(provider, next);
+    const prev = { ...provider };
+    const prevActive = this.activeProvider;
     Object.assign(provider, next);
     if (updates.enabled) {
       this.activeProvider = id;
@@ -399,7 +426,13 @@ class AIGateway {
     // У своего ИИ адрес лежит в хранилище вместе с ключом: новый адрес записывается туда же.
     const saved = 'apiKey' in updates ? this.storeKey(provider) : Promise.resolve();
     this.saveToStorage();
-    return saved;
+    return saved.catch((e: unknown) => {
+      // В приложении отметка ключа уже сверена с хранилищем (storeKey), на сайте возвращается прежний ключ.
+      Object.assign(provider, prev, { apiKey: isNativeApp() ? provider.apiKey : prev.apiKey });
+      this.activeProvider = prevActive;
+      this.saveToStorage();
+      throw e;
+    });
   }
 
   getProvider(id: string): AIProvider | undefined {
@@ -599,7 +632,7 @@ class AIGateway {
 
     const data = await response.json();
     return {
-      content: data.message?.content || '',
+      content: textOrFail('Ollama', data?.message?.content),
       provider: provider.name,
       model: provider.model,
     };
@@ -623,10 +656,10 @@ class AIGateway {
 
     const data = await response.json();
     return {
-      content: data.choices[0].message.content,
+      content: textOrFail('LM Studio', data?.choices?.[0]?.message?.content),
       provider: provider.name,
       model: provider.model,
-      usage: data.usage,
+      usage: data?.usage,
     };
   }
 
@@ -653,10 +686,10 @@ class AIGateway {
 
     const data = await response.json();
     return {
-      content: data.choices[0].message.content,
+      content: textOrFail(label, data?.choices?.[0]?.message?.content),
       provider: provider.name,
       model: provider.model,
-      usage: data.usage,
+      usage: data?.usage,
     };
   }
 
@@ -707,10 +740,10 @@ class AIGateway {
 
     const data = await response.json();
     return {
-      content: data.content[0].text,
+      content: textOrFail('Anthropic', data?.content?.[0]?.text),
       provider: provider.name,
       model: provider.model,
-      usage: data.usage,
+      usage: data?.usage,
     };
   }
 
@@ -747,10 +780,10 @@ class AIGateway {
 
     const data = await response.json();
     return {
-      content: data.candidates[0].content.parts[0].text,
+      content: textOrFail('Google', data?.candidates?.[0]?.content?.parts?.[0]?.text),
       provider: provider.name,
       model: provider.model,
-      usage: data.usageMetadata ? {
+      usage: data?.usageMetadata ? {
         prompt_tokens: data.usageMetadata.promptTokenCount,
         completion_tokens: data.usageMetadata.candidatesTokenCount,
         total_tokens: data.usageMetadata.totalTokenCount,
