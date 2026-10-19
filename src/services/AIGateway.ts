@@ -25,6 +25,8 @@
 // промис, и проверку соединения нужно делать только после него. Если ключ не сохранён («Отмена»),
 // addProvider и updateProvider откатываются: прежние настройки и активный выбор возвращаются.
 // Пустой или странный ответ модели — понятная ошибка (textOrFail), а не пустая реплика Светланы и не TypeError.
+// Каждый запрос из браузера ограничен по времени (fetchAi, 2 минуты), а текст ошибки сервиса проходит через scrubApiError:
+// сам ключ и похожие на ключ строки вырезаются (как ErrorText.kt и scrub_error в приложениях), длина ограничена.
 import { getSecret, setSecret } from './security/SecretStore';
 import { safeJsonParse, stripControl, MAX_BYTES } from './security/SafeData';
 import { isNativeApp, nativeSetSecret, nativeHasSecret, nativeCloudChat, NATIVE_KEY_PLACEHOLDER } from './security/NativeBridge';
@@ -89,6 +91,51 @@ const DEFAULT_OFFLINE_PROVIDERS: AIProvider[] = [
 
 /** GigaChat работает только в приложениях (нативная часть): браузер к нему не подключится. */
 export const GIGACHAT_WEB_ONLY = 'GigaChat работает в приложениях Светланы для Windows и Android. На сайте браузер не может к нему подключиться: выберите другой ИИ или откройте приложение.';
+
+/** Сколько ждать ответа ИИ из браузера (локальные модели на слабом ПК думают долго). */
+export const AI_TIMEOUT_MS = 120_000;
+export const AI_TIMEOUT_TEXT = 'ИИ не ответил за 2 минуты. Проверьте интернет и попробуйте ещё раз или выберите другой ИИ.';
+
+/** fetch с ограничением времени: зависший сервер не оставляет чат в вечном «Думаю…». */
+export async function fetchAi(url: string, init: RequestInit, ms = AI_TIMEOUT_MS, f: typeof fetch = fetch): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await f(url, { ...init, signal: ctrl.signal });
+  } catch (e) {
+    if (ctrl.signal.aborted) throw new Error(AI_TIMEOUT_TEXT);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const HIDDEN_KEY = '[ключ скрыт]';
+const KEY_LIKE = /\b(?:sk-(?:ant-|proj-)?[A-Za-z0-9_-]{8,}|gsk_[A-Za-z0-9]{10,}|AIza[0-9A-Za-z_-]{20,}|[A-Za-z0-9_-]{40,})\b/g;
+const BEARER = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{6,}/gi;
+const INVISIBLE = /[-\u001F\u007F\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g;
+
+/**
+ * Текст ошибки облачного сервиса для экрана и журнала: без самого ключа (любой длины), без похожих на ключ
+ * строк, без управляющих и невидимых символов, не длиннее 300 знаков.
+ */
+export function scrubApiError(raw: unknown, secrets: Array<string | undefined | null> = []): string {
+  let t = typeof raw === 'string' ? raw : raw == null ? '' : (() => { try { return JSON.stringify(raw); } catch { return String(raw); } })();
+  for (const s of secrets) if (s && s.length >= 3 && s !== NATIVE_KEY_PLACEHOLDER) t = t.split(s).join(HIDDEN_KEY);
+  t = t.replace(INVISIBLE, ' ').replace(BEARER, `$1 ${HIDDEN_KEY}`).replace(KEY_LIKE, HIDDEN_KEY);
+  return t.replace(/\s+/g, ' ').trim().slice(0, 300);
+}
+
+/** «Сервис ответил ошибкой» без секретов: код + очищенное сообщение сервиса. */
+async function apiError(label: string, response: Response, key?: string): Promise<Error> {
+  const body: any = await response.json().catch(() => ({}));
+  const msg = body?.error?.message ?? body?.message ?? (typeof body?.error === 'string' ? body.error : '') ?? '';
+  const clean = scrubApiError(msg || response.statusText, [key]);
+  return new Error(`${label} API error: ${response.status}${clean ? ` ${clean}` : ''}`);
+}
+
+/** В журнал — только очищенный текст ошибки, без самого объекта (в нём может быть ключ). */
+const logText = (e: unknown): string => scrubApiError((e as { message?: unknown } | null)?.message ?? e);
 
 /** «Ключ авторизации» GigaChat из Studio: без слова Basic, пробелов и переносов (их часто копируют вместе с ключом). */
 export function normalizeGigachatKey(k: string): string {
@@ -275,7 +322,7 @@ class AIGateway {
       if (typeof localStorage === 'undefined') return;
       stored = localStorage.getItem('svetlana_ai_providers');
     } catch (e) {
-      console.error('Хранилище настроек недоступно, ИИ работает с настройками по умолчанию:', e);
+      console.error('Хранилище настроек недоступно, ИИ работает с настройками по умолчанию:', logText(e));
     }
     if (stored) {
       try {
@@ -295,7 +342,7 @@ class AIGateway {
         }
         if (migrated) this.saveToStorage();
       } catch (e) {
-        console.error('Failed to load AI providers:', e);
+        console.error('Failed to load AI providers:', logText(e));
       }
     }
     const native = isNativeApp();
@@ -307,7 +354,7 @@ class AIGateway {
         const name = secretName(p.id);
         const legacy = p.id === CUSTOM_AI_ID ? null : p.apiKey && p.apiKey !== NATIVE_KEY_PLACEHOLDER ? p.apiKey : await getSecret(name);
         if (legacy) {
-          try { await nativeSetSecret(name, legacy); await setSecret(name, null); } catch (e) { console.error('Не удалось перенести ключ в хранилище приложения', e); }
+          try { await nativeSetSecret(name, legacy); await setSecret(name, null); } catch (e) { console.error('Не удалось перенести ключ в хранилище приложения', logText(e)); }
         }
         p.apiKey = undefined;
         try { if (await nativeHasSecret(name)) p.apiKey = NATIVE_KEY_PLACEHOLDER; } catch { /* нет хранилища */ }
@@ -327,7 +374,7 @@ class AIGateway {
       }
     } catch (e) {
       // Нет места или хранилище недоступно: настройки действуют до перезапуска, работа не прерывается.
-      console.error('Не удалось сохранить настройки ИИ:', e);
+      console.error('Не удалось сохранить настройки ИИ:', logText(e));
     }
   }
 
@@ -345,7 +392,7 @@ class AIGateway {
       // Браузерную копию стираем фоном; её ошибка не должна становиться необработанным промисом.
       void Promise.resolve(setSecret(name, null)).catch(() => undefined);
       return nativeSetSecret(name, value).catch(async (e) => {
-        console.error('Не удалось сохранить ключ в хранилище приложения', e);
+        console.error('Не удалось сохранить ключ в хранилище приложения', logText(e));
         // Отметка должна совпадать с хранилищем (например, пользователь нажал «Отмена» в окне подтверждения).
         try { p.apiKey = (await nativeHasSecret(name)) ? NATIVE_KEY_PLACEHOLDER : undefined; } catch { p.apiKey = undefined; }
         throw e;
@@ -473,7 +520,7 @@ class AIGateway {
             console.warn(`Provider ${provider.name} failed, trying fallback: ${fallback.name}`);
             return await this.callProvider(fallback, messages, options);
           } catch (fallbackError) {
-            console.error(`Fallback ${fallback.name} also failed:`, fallbackError);
+            console.error(`Fallback ${fallback.name} also failed:`, logText(fallbackError));
             continue;
           }
         }
@@ -574,12 +621,12 @@ class AIGateway {
     const content = provider.id === 'anthropic' ? data?.content?.[0]?.text
       : provider.id === 'google' ? data?.candidates?.[0]?.content?.parts?.[0]?.text
       : data?.choices?.[0]?.message?.content;
-    if (typeof content !== 'string') throw new Error(`${provider.name}: пустой ответ`);
-    return { content, provider: provider.name, model: provider.model, usage: provider.id === 'google' ? undefined : data?.usage };
+    // Пустая строка — тоже ошибка, а не «успешный» пустой ответ Светланы.
+    return { content: textOrFail(provider.name, content), provider: provider.name, model: provider.model, usage: provider.id === 'google' ? undefined : data?.usage };
   }
 
   private async callViaProxy(proxyEndpoint: string, provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    const response = await fetch(validateProxyUrl(proxyEndpoint), {
+    const response = await fetchAi(validateProxyUrl(proxyEndpoint), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -592,18 +639,22 @@ class AIGateway {
       }),
     });
 
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(`AI Proxy error: ${err.error || response.statusText}`);
-    }
+    if (!response.ok) throw await apiError('AI Proxy', response, provider.apiKey);
 
-    return await response.json();
+    // Ответ прокси проверяем так же, как ответ модели: странный JSON не выдаётся за ответ Светланы.
+    const data: any = await response.json().catch(() => null);
+    return {
+      content: textOrFail('AI Proxy', data?.content),
+      provider: typeof data?.provider === 'string' ? data.provider.slice(0, 100) : provider.name,
+      model: typeof data?.model === 'string' ? data.model.slice(0, 100) : provider.model,
+      usage: data?.usage && typeof data.usage === 'object' ? data.usage : undefined,
+    };
   }
 
   private async callOllama(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
     let response: Response;
     try {
-      response = await fetch(`${provider.endpoint}/api/chat`, {
+      response = await fetchAi(`${provider.endpoint}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -618,6 +669,7 @@ class AIGateway {
         }),
       });
     } catch (e: any) {
+      if (e?.message === AI_TIMEOUT_TEXT) throw e;
       const why = typeof e?.message === 'string' && /Отменено пользователем/.test(e.message) ? ' В окне телефона нажата «Отмена».' : '';
       throw new Error(isAndroidApp()
         ? `Ollama не отвечает на ${provider.endpoint}.${why} Проверьте: Ollama запущена на компьютере с OLLAMA_HOST=0.0.0.0, телефон и компьютер в одной Wi‑Fi сети, адрес в «Модели ИИ» верный.`
@@ -639,7 +691,7 @@ class AIGateway {
   }
 
   private async callLMStudio(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    const response = await fetch(`${provider.endpoint}/v1/chat/completions`, {
+    const response = await fetchAi(`${provider.endpoint}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -651,7 +703,7 @@ class AIGateway {
     });
 
     if (!response.ok) {
-      throw new Error(`LM Studio API error: ${response.status} ${response.statusText}`);
+      throw new Error(`LM Studio API error: ${response.status} ${scrubApiError(response.statusText)}`);
     }
 
     const data = await response.json();
@@ -665,7 +717,7 @@ class AIGateway {
 
   /** OpenAI-совместимые облачные API с фиксированным официальным адресом. */
   private async callOpenAICompatible(url: string, label: string, provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
-    const response = await fetch(url, {
+    const response = await fetchAi(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -679,10 +731,7 @@ class AIGateway {
       }),
     });
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(`${label} API error: ${error.error?.message || error.message || response.statusText}`);
-    }
+    if (!response.ok) throw await apiError(label, response, provider.apiKey);
 
     const data = await response.json();
     return {
@@ -717,7 +766,7 @@ class AIGateway {
     const systemMessage = messages.find(m => m.role === 'system');
     const chatMessages = messages.filter(m => m.role !== 'system');
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetchAi('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -733,10 +782,7 @@ class AIGateway {
       }),
     });
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(`Anthropic API error: ${error.error?.message || response.statusText}`);
-    }
+    if (!response.ok) throw await apiError('Anthropic', response, provider.apiKey);
 
     const data = await response.json();
     return {
@@ -757,7 +803,7 @@ class AIGateway {
     }));
 
     // Ключ — в заголовке, а не в адресе: адреса попадают в журналы и историю.
-    const response = await fetch(
+    const response = await fetchAi(
       `${validateEndpoint(provider)}/models/${encodeURIComponent(provider.model)}:generateContent`,
       {
         method: 'POST',
@@ -773,10 +819,7 @@ class AIGateway {
       }
     );
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(`Google API error: ${error.error?.message || response.statusText}`);
-    }
+    if (!response.ok) throw await apiError('Google', response, provider.apiKey);
 
     const data = await response.json();
     return {
@@ -802,7 +845,7 @@ class AIGateway {
       await this.chat(testMessages, { max_tokens: 50 }, providerId);
       return true;
     } catch (error) {
-      console.error(`Connection test failed for ${providerId}:`, error);
+      console.error(`Connection test failed for ${providerId}:`, logText(error));
       return false;
     }
   }
