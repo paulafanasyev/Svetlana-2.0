@@ -13,6 +13,12 @@ type Emotion = 'neutral' | 'happy' | 'sad' | 'laughing' | 'crying' | 'surprised'
 // Single master image for all states - unified identity
 const MASTER_AVATAR = SVETLANA_IDENTITY.masterImage;
 
+/** Подписи эмоций для подсказки и экранного диктора. */
+const EMOTION_LABELS: Record<Emotion, string> = {
+  neutral: 'Спокойная', happy: 'Радуется', sad: 'Грустит', laughing: 'Смеётся',
+  crying: 'Плачет', surprised: 'Удивлена', talking: 'Говорит',
+};
+
 interface AvatarProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
   interactive?: boolean;
@@ -53,6 +59,22 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
 
   const stateText = isListening ? 'Светлана слушает' : isTalking ? 'Светлана говорит' : '';
 
+  // Светлану можно нажать и мышкой, и с клавиатуры (Tab, затем Enter или пробел); экранный диктор видит её как кнопку.
+  const toggleControls = () => setShowControls(v => !v);
+  const pressable = interactive
+    ? {
+        role: 'button' as const,
+        tabIndex: 0,
+        'aria-label': 'Светлана: выбрать эмоцию',
+        'aria-expanded': showControls,
+        onClick: toggleControls,
+        onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleControls(); }
+          if (e.key === 'Escape' && showControls) { e.stopPropagation(); setShowControls(false); }
+        },
+      }
+    : {};
+
   return (
     <div className="relative inline-block">
       {/* Для экранных читалок: то же, что показывают кольцо и свечение */}
@@ -60,13 +82,13 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
 
       {/* Main Avatar */}
       <div
-        className={`relative ${sizeClasses[size]} rounded-full overflow-hidden cursor-pointer shadow-2xl shadow-indigo-500/20 border-4 border-indigo-500/30`}
-        onClick={() => interactive && setShowControls(!showControls)}
+        className={`relative ${sizeClasses[size]} rounded-full overflow-hidden ${interactive ? 'cursor-pointer focus:outline-none focus-visible:ring-4 focus-visible:ring-indigo-400' : ''} shadow-2xl shadow-indigo-500/20 border-4 border-indigo-500/30`}
+        {...pressable}
       >
         {/* Single master identity with state overlays */}
         <motion.img
           src={MASTER_AVATAR}
-          alt="Svetlana"
+          alt="Светлана"
           className={`w-full h-full object-cover transition-all duration-300 ${overlay.overlay || ''}`}
           animate={pulse ? { scale: [1, 1.02, 1] } : {}}
           transition={pulse ? { duration: 2, repeat: Infinity } : {}}
@@ -101,6 +123,8 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
+          role="group"
+          aria-label="Эмоции Светланы"
           className="absolute -bottom-16 left-1/2 -translate-x-1/2 flex gap-2 p-2 rounded-xl bg-sv-darker/95 border border-sv-border backdrop-blur-xl"
         >
           {(['neutral', 'happy', 'sad', 'laughing', 'crying', 'surprised'] as Emotion[]).map(emotion => (
@@ -110,7 +134,9 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
               className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition-all ${
                 currentEmotion === emotion ? 'bg-indigo-500 text-white' : 'bg-white/10 text-sv-muted hover:bg-white/20'
               }`}
-              title={emotion}
+              title={EMOTION_LABELS[emotion]}
+              aria-label={EMOTION_LABELS[emotion]}
+              aria-pressed={currentEmotion === emotion}
             >
               {emotion === 'neutral' && '😐'}
               {emotion === 'happy' && '😊'}
@@ -171,29 +197,30 @@ export function VoiceControl({ onCommand, onListeningChange }: { onCommand?: (co
   useEffect(() => { onCommandRef.current = onCommand; }, [onCommand]);
   useEffect(() => { onListeningRef.current = onListeningChange; }, [onListeningChange]);
   useEffect(() => { onListeningRef.current?.(isListening); }, [isListening]);
-  // Уход со страницы: микрофон выключен, кольцо погасло.
-  useEffect(() => () => { listenerRef.current?.stop(); onListeningRef.current?.(false); }, []);
+  // Уход со страницы: микрофон выключен, кольцо погасло, поздние ответы распознавания уже ничего не меняют.
+  useEffect(() => () => { tokenRef.current = null; listenerRef.current?.stop(); onListeningRef.current?.(false); }, []);
 
   const start = (continuous: boolean) => {
     setError(null);
     setTranscript('');
     const token = {};
     tokenRef.current = token;
+    const live = () => tokenRef.current === token;
     const listener = listenCommand({
       continuous,
       // не слушаем саму себя; в режиме «без рук» проверяем только фразы «Светлана, …»
       accept: t => !selfSpeaking() && (!continuous || hasWakeWord(t)),
-      onPartial: t => setTranscript(t),
+      onPartial: t => { if (live()) setTranscript(t); },
       onFinal: t => {
-        if (selfSpeaking()) return; // не слушаем саму себя
+        if (!live() || selfSpeaking()) return; // слушание уже закончено или это говорит сама Светлана
         setTranscript(t);
         if (continuous && !hasWakeWord(t)) return;
         const command = normalizeSpoken(t);
         if (command) onCommandRef.current?.(command);
       },
-      onError: m => setError(m),
+      onError: m => { if (live()) setError(m); },
       onEnd: () => {
-        if (tokenRef.current !== token) return;
+        if (!live()) return;
         listenerRef.current = null;
         setIsListening(false);
         setHandsFree(false);
@@ -251,13 +278,13 @@ export function VoiceControl({ onCommand, onListeningChange }: { onCommand?: (co
       </button>
 
       <div className="text-center space-y-1">
-        <p className="text-sm text-sv-muted">
+        <p className="text-sm text-sv-muted" role="status">
           {handsFree ? 'Слушаю постоянно. Начните со слова «Светлана»' : isListening ? 'Слушаю...' : 'Нажмите и скажите команду'}
         </p>
         {transcript && <p className="text-sm text-indigo-300 italic">"{transcript}"</p>}
-        {error && <p className="text-xs text-amber-300">{error}</p>}
+        {error && <p className="text-xs text-amber-300" role="alert">{error}</p>}
         {((support.web && !android) || phoneVerified) && (
-          <button data-testid="hands-free" onClick={toggleHandsFree} className={`text-xs px-3 py-1 rounded-full border ${handsFree ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-white/5 border-white/10 text-sv-muted hover:bg-white/10'}`}>
+          <button data-testid="hands-free" onClick={toggleHandsFree} aria-pressed={handsFree} className={`text-xs px-3 py-1 rounded-full border ${handsFree ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-white/5 border-white/10 text-sv-muted hover:bg-white/10'}`}>
             {handsFree ? 'Режим «Светлана, …» включён' : 'Включить «Светлана, …» без рук'}
           </button>
         )}
