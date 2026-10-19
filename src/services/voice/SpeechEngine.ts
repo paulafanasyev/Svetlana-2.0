@@ -33,6 +33,11 @@ let sttKey: string | null = null;
 let sttKeyLoaded = false;
 const ALLOWED_STT = new Set(STT_PRESETS.map(p => p.baseUrl));
 
+/** Сохранить ключ в зашифрованное хранилище. Сбой хранилища не роняет приложение: ключ остаётся в памяти до перезапуска. */
+function storeSttKey(v: string | null): void {
+  try { void setSecret(STT_SECRET, v).catch(() => undefined); } catch { /* хранилище недоступно */ }
+}
+
 /** Загрузить ключ из зашифрованного хранилища (вызывается при старте; переносит старый открытый ключ). */
 export async function loadCloudSttKey(s: KV | null = storage()): Promise<void> {
   try {
@@ -61,12 +66,12 @@ export function getCloudStt(s: KV | null = storage()): CloudSttConfig | null {
 }
 export function setCloudStt(cfg: CloudSttConfig | null, s: KV | null = storage()): void {
   if (!s) return;
-  if (!cfg) { s.removeItem?.(CFG_KEY); sttKey = null; void setSecret(STT_SECRET, null); return; }
+  if (!cfg) { s.removeItem?.(CFG_KEY); sttKey = null; storeSttKey(null); return; }
   const baseUrl = cfg.baseUrl.trim().replace(/\/+$/, '');
   if (!ALLOWED_STT.has(baseUrl)) throw new Error('Неизвестный сервис распознавания: разрешены только Groq и OpenAI');
   s.setItem(CFG_KEY, JSON.stringify({ baseUrl, model: cfg.model.trim() }));
   sttKey = cfg.apiKey.trim();
-  void setSecret(STT_SECRET, sttKey);
+  storeSttKey(sttKey);
 }
 
 function webRecognitionCtor(): any {
@@ -205,7 +210,16 @@ function listenWeb(opts: ListenOptions): Listener {
     if (opts.continuous && !stopped) { try { rec.start(); return; } catch { /* already started */ } }
     opts.onEnd?.();
   };
-  rec.start();
+  try {
+    rec.start();
+  } catch (e) {
+    // Запуск не удался (микрофон занят или запрещён): сообщаем и завершаем, а не роняем окно.
+    stopped = true;
+    rec.onresult = null; rec.onerror = null; rec.onend = null;
+    opts.onError?.(micError(e));
+    opts.onEnd?.();
+    return { mode: 'web', stop: () => undefined };
+  }
   return { mode: 'web', stop: () => { stopped = true; try { rec.stop(); } catch { /* noop */ } } };
 }
 
