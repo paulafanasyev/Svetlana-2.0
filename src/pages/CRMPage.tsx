@@ -1,4 +1,6 @@
 // Svetlana CRM — contacts, deals pipeline, tasks, summary, import/export.
+// Доступность: у каждого поля и списка есть подпись для экранного диктора (не только подсказка внутри поля),
+// ошибки читаются сразу (role=alert), результаты импорта — как статус (role=status).
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
 import { assertFileSize, MAX_BYTES } from '../services/security/SafeData';
 import {
@@ -98,24 +100,24 @@ function ContactForm({ contact, onDone }: { contact?: CRMContact; onDone: (id?: 
   };
 
   return (
-    <form onSubmit={submit} className={`${card} p-4 space-y-3`}>
+    <form onSubmit={submit} className={`${card} p-4 space-y-3`} aria-label={contact ? 'Редактировать контакт' : 'Новый контакт'}>
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">{contact ? 'Редактировать контакт' : 'Новый контакт'}</h3>
-        <button type="button" onClick={() => onDone(contact?.id)} className="p-1 text-slate-400 hover:text-white" aria-label="Закрыть"><X className="w-4 h-4" /></button>
+        <button type="button" onClick={() => onDone(contact?.id)} className="p-1 text-slate-400 hover:text-white" aria-label="Закрыть"><X className="w-4 h-4" aria-hidden="true" /></button>
       </div>
-      <input className={input} placeholder="Имя *" value={draft.name} onChange={set('name')} autoFocus />
+      <input className={input} placeholder="Имя *" aria-label="Имя (обязательно)" aria-required="true" value={draft.name} onChange={set('name')} autoFocus />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <input className={input} placeholder="Телефоны (через запятую)" value={draft.phones} onChange={set('phones')} />
-        <input className={input} placeholder="E-mail (через запятую)" value={draft.emails} onChange={set('emails')} />
-        <input className={input} placeholder="Компания" value={draft.company} onChange={set('company')} />
-        <input className={input} placeholder="Должность" value={draft.position} onChange={set('position')} />
-        <select className={input} value={draft.status} onChange={set('status')}>
+        <input className={input} placeholder="Телефоны (через запятую)" aria-label="Телефоны через запятую" inputMode="tel" value={draft.phones} onChange={set('phones')} />
+        <input className={input} placeholder="E-mail (через запятую)" aria-label="E-mail через запятую" inputMode="email" value={draft.emails} onChange={set('emails')} />
+        <input className={input} placeholder="Компания" aria-label="Компания" value={draft.company} onChange={set('company')} />
+        <input className={input} placeholder="Должность" aria-label="Должность" value={draft.position} onChange={set('position')} />
+        <select className={input} aria-label="Статус контакта" value={draft.status} onChange={set('status')}>
           {STATUSES.map(s => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
         </select>
-        <input className={input} placeholder="Теги (через запятую)" value={draft.tags} onChange={set('tags')} />
+        <input className={input} placeholder="Теги (через запятую)" aria-label="Теги через запятую" value={draft.tags} onChange={set('tags')} />
       </div>
-      <textarea className={`${input} min-h-[70px]`} placeholder="Заметки" value={draft.notes} onChange={set('notes')} />
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      <textarea className={`${input} min-h-[70px]`} placeholder="Заметки" aria-label="Заметки" value={draft.notes} onChange={set('notes')} />
+      {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
       <button type="submit" className={btnPrimary} disabled={!draft.name.trim()}>Сохранить</button>
     </form>
   );
@@ -151,13 +153,13 @@ function ContactDetail({ contact, onEdit, onDeleted }: { contact: CRMContact; on
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
-          <button onClick={onEdit} className={btnGhost} aria-label="Изменить"><Pencil className="w-4 h-4" /><span className="hidden sm:inline">Изменить</span></button>
-          <button onClick={remove} className={`${btnGhost} text-red-300`} aria-label="Удалить"><Trash2 className="w-4 h-4" /></button>
+          <button onClick={onEdit} className={btnGhost} aria-label={`Изменить контакт ${contact.name}`}><Pencil className="w-4 h-4" aria-hidden="true" /><span className="hidden sm:inline">Изменить</span></button>
+          <button onClick={remove} className={`${btnGhost} text-red-300`} aria-label={`Удалить контакт ${contact.name}`}><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
         </div>
       </div>
       <div className="space-y-1 text-sm">
-        {contact.phones.map(p => <a key={p} href={`tel:${p}`} className="flex items-center gap-2 text-indigo-300 hover:underline"><Phone className="w-4 h-4" />{p}</a>)}
-        {contact.emails.map(m => <a key={m} href={`mailto:${m}`} className="flex items-center gap-2 text-indigo-300 hover:underline break-all"><Mail className="w-4 h-4 shrink-0" />{m}</a>)}
+        {contact.phones.map(p => <a key={p} href={`tel:${p}`} className="flex items-center gap-2 text-indigo-300 hover:underline"><Phone className="w-4 h-4" aria-hidden="true" />{p}</a>)}
+        {contact.emails.map(m => <a key={m} href={`mailto:${m}`} className="flex items-center gap-2 text-indigo-300 hover:underline break-all"><Mail className="w-4 h-4 shrink-0" aria-hidden="true" />{m}</a>)}
       </div>
       {contact.tags.length > 0 && (
         <div className="flex flex-wrap gap-1.5">{contact.tags.map(t => <span key={t} className="px-2 py-0.5 rounded-full text-xs bg-indigo-500/15 text-indigo-200">{t}</span>)}</div>
@@ -175,15 +177,15 @@ function ContactDetail({ contact, onEdit, onDeleted }: { contact: CRMContact; on
 
       <div>
         <h4 className="text-sm font-semibold text-slate-300 mb-2">История</h4>
-        <form onSubmit={addLog} className="flex flex-wrap sm:flex-nowrap gap-2 mb-3">
-          <select className={`${input} sm:w-36`} value={logType} onChange={e => setLogType(e.target.value as ActivityType)}>
+        <form onSubmit={addLog} className="flex flex-wrap sm:flex-nowrap gap-2 mb-3" aria-label="Добавить запись в историю">
+          <select className={`${input} sm:w-36`} aria-label="Тип записи" value={logType} onChange={e => setLogType(e.target.value as ActivityType)}>
             {LOG_TYPES.map(t => <option key={t} value={t}>{ACTIVITY_LABELS[t]}</option>)}
           </select>
-          <input className={`${input} flex-1 min-w-0`} placeholder="Что было?" value={logText} onChange={e => setLogText(e.target.value)} />
-          <button type="submit" className={btnPrimary} disabled={!logText.trim()} aria-label="Добавить"><Plus className="w-4 h-4" /></button>
+          <input className={`${input} flex-1 min-w-0`} placeholder="Что было?" aria-label="Что было" value={logText} onChange={e => setLogText(e.target.value)} />
+          <button type="submit" className={btnPrimary} disabled={!logText.trim()} aria-label="Добавить запись"><Plus className="w-4 h-4" aria-hidden="true" /></button>
         </form>
         <div className="space-y-2 max-h-64 overflow-y-auto">
-          {activities.length === 0 && <p className="text-sm text-slate-500">Пока пусто</p>}
+          {activities.length === 0 && <p className="text-sm text-slate-400">Пока пусто</p>}
           {activities.map(a => (
             <div key={a.id} className="text-sm border-l-2 border-indigo-500/40 pl-3">
               <span className="text-slate-400">{date(a.createdAt)} · {ACTIVITY_LABELS[a.type]}{a.type === 'task' && a.done ? ' ✓' : ''}</span>
@@ -211,24 +213,25 @@ function ContactsTab() {
       <div className="lg:col-span-2 space-y-3">
         <div className="flex gap-2">
           <div className="relative flex-1 min-w-0">
-            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
-            <input className={`${input} pl-9`} placeholder="Поиск: имя, телефон, компания, тег" value={query} onChange={e => setQuery(e.target.value)} />
+            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" aria-hidden="true" />
+            <input type="search" className={`${input} pl-9`} placeholder="Поиск: имя, телефон, компания, тег" aria-label="Поиск контактов" value={query} onChange={e => setQuery(e.target.value)} />
           </div>
-          <button className={`${btnPrimary} shrink-0`} onClick={() => { setMode('new'); setSelectedId(null); }}><Plus className="w-4 h-4" />Контакт</button>
+          <button className={`${btnPrimary} shrink-0`} onClick={() => { setMode('new'); setSelectedId(null); }}><Plus className="w-4 h-4" aria-hidden="true" />Контакт</button>
         </div>
-        <select className={input} value={status} onChange={e => setStatus(e.target.value as ContactStatus | '')}>
+        <select className={input} aria-label="Фильтр по статусу" value={status} onChange={e => setStatus(e.target.value as ContactStatus | '')}>
           <option value="">Все статусы</option>
           {STATUSES.map(s => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
         </select>
-        <p className="text-xs text-slate-500">Найдено: {contacts.length}{contacts.length > visible.length ? ` (показаны первые ${visible.length}, уточните поиск)` : ''}</p>
+        <p className="text-xs text-slate-400" role="status">Найдено: {contacts.length}{contacts.length > visible.length ? ` (показаны первые ${visible.length}, уточните поиск)` : ''}</p>
         <div className={`${card} divide-y divide-white/5 max-h-[60vh] overflow-y-auto`}>
-          {visible.length === 0 && <p className="p-4 text-sm text-slate-500">Контактов нет. Добавьте вручную или импортируйте на вкладке «Данные».</p>}
+          {visible.length === 0 && <p className="p-4 text-sm text-slate-400">Контактов нет. Добавьте вручную или импортируйте на вкладке «Данные».</p>}
           {visible.map(c => (
             <button key={c.id} onClick={() => { setSelectedId(c.id); setMode('view'); }}
+              aria-current={selectedId === c.id ? 'true' : undefined}
               className={`w-full text-left px-4 py-2.5 hover:bg-white/5 ${selectedId === c.id ? 'bg-indigo-500/10' : ''}`}>
               <div className="flex justify-between gap-2">
                 <span className="font-medium truncate">{c.name}</span>
-                <span className="text-xs text-slate-500 shrink-0">{STATUS_LABELS[c.status]}</span>
+                <span className="text-xs text-slate-400 shrink-0">{STATUS_LABELS[c.status]}</span>
               </div>
               <p className="text-xs text-slate-400 truncate">{[c.phones[0], c.company].filter(Boolean).join(' · ')}</p>
             </button>
@@ -239,7 +242,7 @@ function ContactsTab() {
         {mode === 'new' && <ContactForm onDone={id => { setMode('view'); if (id) setSelectedId(id); }} />}
         {mode === 'edit' && selected && <ContactForm contact={selected} onDone={() => setMode('view')} />}
         {mode === 'view' && selected && <ContactDetail contact={selected} onEdit={() => setMode('edit')} onDeleted={() => setSelectedId(null)} />}
-        {mode === 'view' && !selected && <div className={`${card} p-8 text-center text-slate-500`}>Выберите контакт в списке</div>}
+        {mode === 'view' && !selected && <div className={`${card} p-8 text-center text-slate-400`}>Выберите контакт в списке</div>}
       </div>
     </div>
   );
@@ -273,25 +276,25 @@ function DealsTab() {
 
   return (
     <div className="space-y-4">
-      <form onSubmit={add} className={`${card} p-4 grid grid-cols-1 md:grid-cols-4 gap-3`}>
-        <input className={input} placeholder="Название сделки *" value={title} onChange={e => setTitle(e.target.value)} />
-        <select className={input} value={contactId} onChange={e => setContactId(e.target.value)}>
+      <form onSubmit={add} className={`${card} p-4 grid grid-cols-1 md:grid-cols-4 gap-3`} aria-label="Новая сделка">
+        <input className={input} placeholder="Название сделки *" aria-label="Название сделки (обязательно)" aria-required="true" value={title} onChange={e => setTitle(e.target.value)} />
+        <select className={input} aria-label="Контакт сделки" value={contactId} onChange={e => setContactId(e.target.value)}>
           <option value="">Без контакта</option>
           {contacts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        <input className={input} placeholder="Сумма, ₽" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} />
-        <button type="submit" className={`${btnPrimary} justify-center`} disabled={!title.trim()}><Plus className="w-4 h-4" />Сделка</button>
-        {error && <p className="md:col-span-4 text-sm text-red-400">{error}</p>}
+        <input className={input} placeholder="Сумма, ₽" aria-label="Сумма в рублях" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} />
+        <button type="submit" className={`${btnPrimary} justify-center`} disabled={!title.trim()}><Plus className="w-4 h-4" aria-hidden="true" />Сделка</button>
+        {error && <p role="alert" className="md:col-span-4 text-sm text-red-400">{error}</p>}
       </form>
       <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3">
         {DEAL_STAGES.map(stage => {
           const items = deals.filter(d => d.stage === stage);
           const total = items.reduce((s, d) => s + d.amount, 0);
           return (
-            <div key={stage} className={`${card} p-3 md:min-h-[200px]`}>
+            <section key={stage} aria-label={STAGE_LABELS[stage]} className={`${card} p-3 md:min-h-[200px]`}>
               <div className="mb-3">
                 <h4 className={`text-sm font-semibold ${stage === 'won' ? 'text-emerald-300' : stage === 'lost' ? 'text-red-300' : ''}`}>{STAGE_LABELS[stage]}</h4>
-                <p className="text-xs text-slate-500">{items.length} · {money(total)}</p>
+                <p className="text-xs text-slate-400">{items.length} · {money(total)}</p>
               </div>
               <div className="space-y-2">
                 {items.map(d => (
@@ -300,14 +303,14 @@ function DealsTab() {
                     <p className="text-xs text-slate-400">{contactName(d.contactId) ?? 'Без контакта'}</p>
                     <p className="text-xs text-slate-300 mt-1">{money(d.amount, d.currency)}</p>
                     <div className="flex justify-between mt-2">
-                      <button onClick={() => move(d, -1)} disabled={stage === DEAL_STAGES[0]} className="p-2 text-slate-400 hover:text-white disabled:opacity-30" aria-label="Назад"><ChevronLeft className="w-4 h-4" /></button>
-                      <button onClick={() => { if (window.confirm(`Удалить сделку «${d.title}»?`)) crmStore.deleteDeal(d.id); }} className="p-2 text-slate-500 hover:text-red-300" aria-label="Удалить"><Trash2 className="w-3.5 h-3.5" /></button>
-                      <button onClick={() => move(d, 1)} disabled={stage === DEAL_STAGES[DEAL_STAGES.length - 1]} className="p-2 text-slate-400 hover:text-white disabled:opacity-30" aria-label="Вперёд"><ChevronRight className="w-4 h-4" /></button>
+                      <button onClick={() => move(d, -1)} disabled={stage === DEAL_STAGES[0]} className="p-2 text-slate-400 hover:text-white disabled:opacity-30" aria-label={`Сделка «${d.title}»: на этап назад`}><ChevronLeft className="w-4 h-4" aria-hidden="true" /></button>
+                      <button onClick={() => { if (window.confirm(`Удалить сделку «${d.title}»?`)) crmStore.deleteDeal(d.id); }} className="p-2 text-slate-400 hover:text-red-300" aria-label={`Удалить сделку «${d.title}»`}><Trash2 className="w-3.5 h-3.5" aria-hidden="true" /></button>
+                      <button onClick={() => move(d, 1)} disabled={stage === DEAL_STAGES[DEAL_STAGES.length - 1]} className="p-2 text-slate-400 hover:text-white disabled:opacity-30" aria-label={`Сделка «${d.title}»: на этап вперёд`}><ChevronRight className="w-4 h-4" aria-hidden="true" /></button>
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
+            </section>
           );
         })}
       </div>
@@ -336,31 +339,31 @@ function TasksTab() {
 
   return (
     <div className="space-y-4 max-w-3xl">
-      <form onSubmit={add} className={`${card} p-4 grid grid-cols-1 md:grid-cols-4 gap-3`}>
-        <input className={`${input} md:col-span-2`} placeholder="Что сделать? *" value={text} onChange={e => setText(e.target.value)} />
-        <select className={input} value={contactId} onChange={e => setContactId(e.target.value)}>
+      <form onSubmit={add} className={`${card} p-4 grid grid-cols-1 md:grid-cols-4 gap-3`} aria-label="Новая задача">
+        <input className={`${input} md:col-span-2`} placeholder="Что сделать? *" aria-label="Что сделать (обязательно)" aria-required="true" value={text} onChange={e => setText(e.target.value)} />
+        <select className={input} aria-label="Контакт задачи" value={contactId} onChange={e => setContactId(e.target.value)}>
           <option value="">Без контакта</option>
           {contacts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        <input type="date" className={input} value={due} onChange={e => setDue(e.target.value)} />
-        <button type="submit" className={`${btnPrimary} md:col-span-4 justify-center`} disabled={!text.trim()}><Plus className="w-4 h-4" />Добавить задачу</button>
+        <input type="date" className={input} aria-label="Срок" value={due} onChange={e => setDue(e.target.value)} />
+        <button type="submit" className={`${btnPrimary} md:col-span-4 justify-center`} disabled={!text.trim()}><Plus className="w-4 h-4" aria-hidden="true" />Добавить задачу</button>
       </form>
       <label className="flex items-center gap-2 text-sm text-slate-400">
         <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} />Показывать выполненные
       </label>
       <div className={`${card} divide-y divide-white/5`}>
-        {tasks.length === 0 && <p className="p-4 text-sm text-slate-500">Задач нет</p>}
+        {tasks.length === 0 && <p className="p-4 text-sm text-slate-400">Задач нет</p>}
         {tasks.map(t => {
           const overdue = !t.done && t.dueAt !== undefined && t.dueAt < now;
           const who = t.contactId ? crmStore.getContact(t.contactId)?.name : undefined;
           return (
             <div key={t.id} className="flex items-center gap-3 px-4 py-2.5">
-              <input type="checkbox" className="w-5 h-5 shrink-0" checked={t.done} onChange={e => crmStore.setActivityDone(t.id, e.target.checked)} aria-label="Выполнено" />
+              <input type="checkbox" className="w-5 h-5 shrink-0" checked={t.done} onChange={e => crmStore.setActivityDone(t.id, e.target.checked)} aria-label={`Выполнено: ${t.text}`} />
               <div className="flex-1 min-w-0">
-                <p className={`text-sm break-words ${t.done ? 'line-through text-slate-500' : ''}`}>{t.text}</p>
-                <p className={`text-xs ${overdue ? 'text-red-400' : 'text-slate-500'}`}>{[who, t.dueAt ? `до ${date(t.dueAt)}` : '', overdue ? 'просрочено' : ''].filter(Boolean).join(' · ')}</p>
+                <p className={`text-sm break-words ${t.done ? 'line-through text-slate-400' : ''}`}>{t.text}</p>
+                <p className={`text-xs ${overdue ? 'text-red-400' : 'text-slate-400'}`}>{[who, t.dueAt ? `до ${date(t.dueAt)}` : '', overdue ? 'просрочено' : ''].filter(Boolean).join(' · ')}</p>
               </div>
-              <button onClick={() => crmStore.deleteActivity(t.id)} className="p-2 text-slate-500 hover:text-red-300" aria-label="Удалить"><Trash2 className="w-4 h-4" /></button>
+              <button onClick={() => crmStore.deleteActivity(t.id)} className="p-2 text-slate-400 hover:text-red-300" aria-label={`Удалить задачу: ${t.text}`}><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
             </div>
           );
         })}
@@ -401,12 +404,12 @@ function SummaryTab() {
           <div key={st} className="grid grid-cols-2 sm:flex sm:items-center gap-x-3 gap-y-1 text-sm">
             <span className="sm:w-32 sm:shrink-0 text-slate-400">{STAGE_LABELS[st]}</span>
             <span className="sm:order-last sm:w-40 sm:shrink-0 text-right text-slate-300 text-xs sm:text-sm">{s.byStage[st].count} · {money(s.byStage[st].amount)}</span>
-            <div className="col-span-2 sm:flex-1 h-2.5 rounded-full bg-white/5 overflow-hidden">
+            <div className="col-span-2 sm:flex-1 h-2.5 rounded-full bg-white/5 overflow-hidden" aria-hidden="true">
               <div className={`h-full ${st === 'lost' ? 'bg-red-400/60' : st === 'won' ? 'bg-emerald-400/70' : 'bg-indigo-400/70'}`} style={{ width: `${(s.byStage[st].amount / maxStage) * 100}%` }} />
             </div>
           </div>
         ))}
-        <p className="text-xs text-slate-500 pt-2">Конверсия закрытых сделок: {closed ? Math.round((s.wonDeals / closed) * 100) : 0}%</p>
+        <p className="text-xs text-slate-400 pt-2">Конверсия закрытых сделок: {closed ? Math.round((s.wonDeals / closed) * 100) : 0}%</p>
       </div>
     </div>
   );
@@ -441,19 +444,19 @@ function DataTab() {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl">
       <div className={`${card} p-4 space-y-2`}>
-        <h4 className="font-semibold flex items-center gap-2"><Smartphone className="w-4 h-4" />Контакты с телефона</h4>
+        <h4 className="font-semibold flex items-center gap-2"><Smartphone className="w-4 h-4" aria-hidden="true" />Контакты с телефона</h4>
         <p data-testid={android ? 'phone-import-android' : undefined} className="text-sm text-slate-400">
           {android ? PHONE_IMPORT_ON_ANDROID : 'Нужен подключённый телефон (страница «Телефон»). Дубли по номеру объединяются.'}
         </p>
-        <button className={btnPrimary} onClick={fromPhone} disabled={busy}>{busy ? 'Импортирую…' : android ? 'Импортировать контакты телефона' : 'Импортировать с телефона'}</button>
+        <button className={btnPrimary} onClick={fromPhone} disabled={busy} aria-busy={busy}>{busy ? 'Импортирую…' : android ? 'Импортировать контакты телефона' : 'Импортировать с телефона'}</button>
       </div>
       <div className={`${card} p-4 space-y-2`}>
         <h4 className="font-semibold">CSV (Excel, Google Таблицы)</h4>
         <p className="text-sm text-slate-400">Колонки: Имя, Телефоны, E-mail, Компания.</p>
         <div className="flex flex-wrap gap-2">
-          <button className={btnGhost} onClick={() => download(`crm-contacts-${stamp}.csv`, '\uFEFF' + crmStore.exportContactsCSV(), 'text/csv;charset=utf-8')}><Download className="w-4 h-4" />Экспорт</button>
-          <label className={`${btnGhost} cursor-pointer`}><Upload className="w-4 h-4" />Импорт
-            <input type="file" accept=".csv,text/csv" className="hidden" onChange={readFile(text => { const r = crmStore.importContactsCSV(text); return `CSV: добавлено ${r.added}, обновлено ${r.merged}, пропущено ${r.skipped}.`; })} />
+          <button className={btnGhost} onClick={() => download(`crm-contacts-${stamp}.csv`, '\uFEFF' + crmStore.exportContactsCSV(), 'text/csv;charset=utf-8')}><Download className="w-4 h-4" aria-hidden="true" />Экспорт</button>
+          <label className={`${btnGhost} cursor-pointer focus-within:ring-2 focus-within:ring-indigo-400`}><Upload className="w-4 h-4" aria-hidden="true" />Импорт
+            <input type="file" accept=".csv,text/csv" className="sr-only" aria-label="Импорт контактов из CSV" onChange={readFile(text => { const r = crmStore.importContactsCSV(text); return `CSV: добавлено ${r.added}, обновлено ${r.merged}, пропущено ${r.skipped}.`; })} />
           </label>
         </div>
       </div>
@@ -461,9 +464,9 @@ function DataTab() {
         <h4 className="font-semibold">Резервная копия</h4>
         <p className="text-sm text-slate-400">Все контакты, сделки и задачи одним файлом. Восстановление заменяет текущие данные.</p>
         <div className="flex flex-wrap gap-2">
-          <button className={btnGhost} onClick={() => download(`crm-backup-${stamp}.json`, crmStore.exportJSON(), 'application/json')}><Download className="w-4 h-4" />Сохранить</button>
-          <label className={`${btnGhost} cursor-pointer`}><Upload className="w-4 h-4" />Восстановить
-            <input type="file" accept=".json,application/json" className="hidden" onChange={readFile(text => {
+          <button className={btnGhost} onClick={() => download(`crm-backup-${stamp}.json`, crmStore.exportJSON(), 'application/json')}><Download className="w-4 h-4" aria-hidden="true" />Сохранить</button>
+          <label className={`${btnGhost} cursor-pointer focus-within:ring-2 focus-within:ring-indigo-400`}><Upload className="w-4 h-4" aria-hidden="true" />Восстановить
+            <input type="file" accept=".json,application/json" className="sr-only" aria-label="Восстановить CRM из резервной копии" onChange={readFile(text => {
               if (!window.confirm('Заменить все данные CRM содержимым файла?')) return 'Отменено';
               const r = crmStore.importJSON(text);
               return `Восстановлено: контактов ${r.contacts}, сделок ${r.deals}, записей ${r.activities}.`;
@@ -474,9 +477,9 @@ function DataTab() {
       <div className={`${card} p-4 space-y-2`}>
         <h4 className="font-semibold text-red-300">Очистить CRM</h4>
         <p className="text-sm text-slate-400">Удалит все данные на этом устройстве. Сначала сделайте резервную копию.</p>
-        <button className={`${btnGhost} text-red-300`} onClick={() => { if (window.confirm('Удалить ВСЕ данные CRM?')) { crmStore.clearAll(); setMessage('CRM очищена'); } }}><Trash2 className="w-4 h-4" />Очистить</button>
+        <button className={`${btnGhost} text-red-300`} onClick={() => { if (window.confirm('Удалить ВСЕ данные CRM?')) { crmStore.clearAll(); setMessage('CRM очищена'); } }}><Trash2 className="w-4 h-4" aria-hidden="true" />Очистить</button>
       </div>
-      {message && <p className="md:col-span-2 text-sm text-indigo-200">{message}</p>}
+      {message && <p role="status" className="md:col-span-2 text-sm text-indigo-200">{message}</p>}
     </div>
   );
 }
@@ -499,15 +502,15 @@ export default function CRMPage({ onClose }: { onClose?: () => void }) {
     <div className="space-y-5 text-white">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-2"><Users className="w-6 h-6 text-indigo-400 shrink-0" />CRM Светланы</h2>
+          <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-2"><Users className="w-6 h-6 text-indigo-400 shrink-0" aria-hidden="true" />CRM Светланы</h2>
           <p className="text-sm text-slate-400">Данные хранятся только на этом устройстве. Светлана управляет CRM из чата.</p>
         </div>
-        {onClose && <button onClick={onClose} className={btnGhost} aria-label="Закрыть CRM"><X className="w-4 h-4" />Закрыть</button>}
+        {onClose && <button onClick={onClose} className={btnGhost} aria-label="Закрыть CRM"><X className="w-4 h-4" aria-hidden="true" />Закрыть</button>}
       </div>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Разделы CRM">
         {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} className={`${btn} ${tab === t.id ? 'bg-indigo-600 text-white' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}>
-            <t.icon className="w-4 h-4" />{t.label}
+          <button key={t.id} onClick={() => setTab(t.id)} aria-pressed={tab === t.id} className={`${btn} ${tab === t.id ? 'bg-indigo-600 text-white' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}>
+            <t.icon className="w-4 h-4" aria-hidden="true" />{t.label}
             {t.badge ? <span className="ml-1 px-1.5 rounded-full bg-black/30 text-xs">{t.badge}</span> : null}
           </button>
         ))}
