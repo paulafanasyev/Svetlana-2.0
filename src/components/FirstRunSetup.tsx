@@ -9,9 +9,10 @@
 //    (имя по умолчанию svetlana:latest в открытом каталоге Ollama нет, поэтому не надеемся на него).
 //    На компьютере Ollama на этом же ПК (127.0.0.1). На телефоне Ollama работает на компьютере в той же
 //    Wi-Fi сети: вводим адрес ПК (например 192.168.1.10), запросы идут через нативный lan_http.
-// Крестик и системная кнопка «Назад» телефона только закрывают мастер (при следующем запуске он покажется
-// снова); считать настройку законченной без ИИ можно только явной кнопкой «Пока пропустить».
-import { useEffect, useState } from 'react';
+// Крестик, Escape и системная кнопка «Назад» телефона только закрывают мастер (при следующем запуске он
+// покажется снова); считать настройку законченной без ИИ можно только явной кнопкой «Пока пропустить».
+// Клавиатура: фокус сразу в поле ключа, Tab не уходит за пределы окна, после закрытия фокус возвращается назад.
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Key, HardDrive, Loader2, CheckCircle2, AlertCircle, X, Sparkles, Gift } from 'lucide-react';
 import { aiGateway, GIGACHAT_WEB_ONLY } from '../services/AIGateway';
 import { explainAiError } from '../services/AiErrors';
@@ -24,6 +25,7 @@ import { GIGACHAT_KEY_HINT } from '../pages/AIProvidersPage';
 const DONE_KEY = 'svetlana_setup_done_v1';
 const OLLAMA = 'http://127.0.0.1:11434';
 const PING = 'Привет! Это проверка связи, ответь одним словом.';
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function isSetupDone(): boolean {
   try { return localStorage.getItem(DONE_KEY) === '1'; } catch { return true; }
@@ -141,19 +143,53 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
   const [olError, setOlError] = useState('');
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState('');
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const keyRef = useRef<HTMLInputElement>(null);
+  const readyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // На телефоне — адрес компьютера с Ollama в домашней сети. На ПК и сайте — этот же компьютер.
   const savedEndpoint = aiGateway.getProvider('ollama')?.endpoint ?? '';
   const [olAddr, setOlAddr] = useState(android ? (savedEndpoint.includes('127.0.0.1') ? '' : savedEndpoint) : OLLAMA);
 
-  const finish = () => { markSetupDone(); setTimeout(onReady, 700); };
-  // Крестик и «Назад» только закрывают: случайное нажатие не оставляет человека навсегда без ИИ.
+  const finish = () => {
+    markSetupDone();
+    if (readyTimer.current) clearTimeout(readyTimer.current);
+    readyTimer.current = setTimeout(() => { readyTimer.current = null; onReady(); }, 700);
+  };
+  // Крестик, Escape и «Назад» только закрывают: случайное нажатие не оставляет человека навсегда без ИИ.
   const close = () => { onClose(); };
   const skip = () => { markSetupDone(); onClose(); };
   const retryOnly = keySaved && !key.trim();
   const gRetryOnly = gSaved && !gKey.trim();
+  const anyBusy = sv === 'busy' || gs === 'busy' || ol === 'busy';
 
   // Системная кнопка «Назад» телефона = крестик «Закрыть».
   useEffect(() => onBack(close), []);
+
+  // Фокус в поле ключа; после закрытия — обратно туда, где был. Таймер «Открываю чат» не переживает окно.
+  useEffect(() => {
+    const opener = typeof document !== 'undefined' ? document.activeElement as HTMLElement | null : null;
+    keyRef.current?.focus();
+    return () => {
+      if (readyTimer.current) clearTimeout(readyTimer.current);
+      if (opener && opener.isConnected) opener.focus();
+    };
+  }, []);
+
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      if (!anyBusy) close();
+      return;
+    }
+    if (e.key !== 'Tab' || !dialogRef.current) return;
+    const items = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE));
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !dialogRef.current.contains(active))) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && (active === last || !dialogRef.current.contains(active))) { e.preventDefault(); first.focus(); }
+  };
 
   /** Сохранить ключ. При неудаче нового провайдера убираем (раньше настроенного не трогаем). */
   const saveKey = async (value: string): Promise<boolean> => {
@@ -284,29 +320,31 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
 
   const statusLine = (s: Status, err: string, okText: string) => (
     <>
-      {s === 'ok' && <p className="text-xs text-emerald-400 flex items-center gap-1.5 mt-2"><CheckCircle2 className="w-4 h-4" />{okText}</p>}
-      {s === 'error' && <p className="text-xs text-rose-300 flex items-start gap-1.5 mt-2"><AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />{err}</p>}
+      {s === 'busy' && <p role="status" className="sr-only">Проверяю…</p>}
+      {s === 'ok' && <p role="status" className="text-xs text-emerald-400 flex items-center gap-1.5 mt-2"><CheckCircle2 className="w-4 h-4" aria-hidden="true" />{okText}</p>}
+      {s === 'error' && <p role="alert" className="text-xs text-rose-300 flex items-start gap-1.5 mt-2"><AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />{err}</p>}
     </>
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" role="dialog" aria-modal="true" aria-label="Настройка ИИ">
+    <div ref={dialogRef} onKeyDown={onKeyDown} className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" role="dialog" aria-modal="true" aria-labelledby="first-run-title">
       <div className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-900 text-white p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between mb-4">
           <div>
-            <h2 className="text-xl font-bold flex items-center gap-2"><Sparkles className="w-5 h-5 text-pink-400" />Добро пожаловать в Светлану 2.0</h2>
+            <h2 id="first-run-title" className="text-xl font-bold flex items-center gap-2"><Sparkles className="w-5 h-5 text-pink-400" aria-hidden="true" />Добро пожаловать в Светлану 2.0</h2>
             <p className="text-sm text-slate-400 mt-1">Выбери, через какой ИИ Светлана будет отвечать. Это можно поменять потом во вкладке «Модели ИИ».</p>
           </div>
-          <button onClick={close} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400" title="Закрыть" aria-label="Закрыть"><X className="w-5 h-5" /></button>
+          <button onClick={close} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400" title="Закрыть" aria-label="Закрыть"><X className="w-5 h-5" aria-hidden="true" /></button>
         </div>
 
-        <section className="rounded-xl border border-indigo-500/40 bg-indigo-950/30 p-4 mb-4">
-          <h3 className="font-semibold flex items-center gap-2"><Key className="w-4 h-4 text-indigo-300" />★ Светлана Сервер (рекомендуется)</h3>
+        <section aria-labelledby="setup-server-title" className="rounded-xl border border-indigo-500/40 bg-indigo-950/30 p-4 mb-4">
+          <h3 id="setup-server-title" className="font-semibold flex items-center gap-2"><Key className="w-4 h-4 text-indigo-300" aria-hidden="true" />★ Светлана Сервер (рекомендуется)</h3>
           <p className="text-xs text-slate-400 mt-1">Единая обученная Светлана на мир-самозанятых.рф, полный режим. Нужен ключ Светланы, который вы получили от владельца сервера.
             {keyStorageHint(platform)}
           </p>
           <div className="flex flex-col sm:flex-row gap-2 mt-3">
             <input
+              ref={keyRef}
               type="password"
               value={key}
               onChange={e => setKey(e.target.value)}
@@ -320,17 +358,18 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
             <button
               onClick={connectServer}
               disabled={(!key.trim() && !keySaved) || sv === 'busy'}
+              aria-busy={sv === 'busy'}
               className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm font-medium flex items-center justify-center gap-2"
             >
-              {sv === 'busy' && <Loader2 className="w-4 h-4 animate-spin" />}{retryOnly ? 'Повторить проверку' : 'Подключить'}
+              {sv === 'busy' && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}{retryOnly ? 'Повторить проверку' : 'Подключить'}
             </button>
           </div>
           {statusLine(sv, svError, 'Светлана ответила. Открываю чат…')}
         </section>
 
         {/* GigaChat: бесплатно, только в приложениях Windows и Android. */}
-        <section className="rounded-xl border border-emerald-500/40 bg-emerald-950/20 p-4 mb-4" data-testid="setup-gigachat">
-          <h3 className="font-semibold flex items-center gap-2"><Gift className="w-4 h-4 text-emerald-300" />GigaChat от Сбера: бесплатно</h3>
+        <section aria-labelledby="setup-giga-title" className="rounded-xl border border-emerald-500/40 bg-emerald-950/20 p-4 mb-4" data-testid="setup-gigachat">
+          <h3 id="setup-giga-title" className="font-semibold flex items-center gap-2"><Gift className="w-4 h-4 text-emerald-300" aria-hidden="true" />GigaChat от Сбера: бесплатно</h3>
           <p className="text-xs text-slate-400 mt-1">Хорошо говорит по-русски, ничего устанавливать не нужно. {GIGACHAT_KEY_HINT}{native ? keyStorageHint(platform) : ''}</p>
           {native ? (
             <div className="flex flex-col sm:flex-row gap-2 mt-3">
@@ -348,9 +387,10 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
               <button
                 onClick={connectGiga}
                 disabled={(!gKey.trim() && !gSaved) || gs === 'busy'}
+                aria-busy={gs === 'busy'}
                 className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-sm font-medium flex items-center justify-center gap-2"
               >
-                {gs === 'busy' && <Loader2 className="w-4 h-4 animate-spin" />}{gRetryOnly ? 'Повторить проверку' : 'Подключить'}
+                {gs === 'busy' && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}{gRetryOnly ? 'Повторить проверку' : 'Подключить'}
               </button>
             </div>
           ) : (
@@ -360,8 +400,8 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
         </section>
 
         {/* Ollama: на ПК и сайте — этот компьютер, на телефоне — компьютер в той же Wi-Fi сети. */}
-        <section className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-4 mb-4" data-testid="setup-ollama">
-          <h3 className="font-semibold flex items-center gap-2"><HardDrive className="w-4 h-4 text-cyan-300" />Без интернета: локальная модель через Ollama (для опытных)</h3>
+        <section aria-labelledby="setup-ollama-title" className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-4 mb-4" data-testid="setup-ollama">
+          <h3 id="setup-ollama-title" className="font-semibold flex items-center gap-2"><HardDrive className="w-4 h-4 text-cyan-300" aria-hidden="true" />Без интернета: локальная модель через Ollama (для опытных)</h3>
           {android ? (
             <p className="text-xs text-slate-400 mt-1">Модель работает на твоём компьютере, телефон обращается к нему по домашней Wi-Fi сети, в интернет переписка не уходит. На ПК нужна Ollama (ollama.com/download), модель («ollama pull qwen2.5:7b») и запуск с OLLAMA_HOST=0.0.0.0.</p>
           ) : (
@@ -384,9 +424,10 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
             <button
               onClick={findOllama}
               disabled={ol === 'busy'}
+              aria-busy={ol === 'busy' && !models.length}
               className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-50 text-sm flex items-center justify-center gap-2"
             >
-              {ol === 'busy' && !models.length && <Loader2 className="w-4 h-4 animate-spin" />}Найти Ollama
+              {ol === 'busy' && !models.length && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}Найти Ollama
             </button>
             {models.length > 0 && (
               <>
@@ -401,9 +442,10 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
                 <button
                   onClick={useOllama}
                   disabled={!model || ol === 'busy'}
+                  aria-busy={ol === 'busy'}
                   className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-sm font-medium flex items-center justify-center gap-2"
                 >
-                  {ol === 'busy' && <Loader2 className="w-4 h-4 animate-spin" />}Использовать
+                  {ol === 'busy' && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}Использовать
                 </button>
               </>
             )}
@@ -415,7 +457,7 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
           <button onClick={() => { markSetupDone(); onOpenProviders(); }} className="text-sm text-indigo-300 hover:text-indigo-200">Другие ИИ (OpenAI, Claude, Groq, DeepSeek…) →</button>
           <button onClick={skip} className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sm">Пока пропустить</button>
         </div>
-        <p className="text-[11px] text-slate-500 mt-3">Команды CRM («Сводка CRM») работают и без ИИ. Мастер можно открыть снова кнопкой «Настройка».</p>
+        <p className="text-[11px] text-slate-400 mt-3">Команды CRM («Сводка CRM») работают и без ИИ. Мастер можно открыть снова кнопкой «Настройка».</p>
       </div>
     </div>
   );
