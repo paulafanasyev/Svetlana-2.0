@@ -113,7 +113,8 @@ export async function fetchAi(url: string, init: RequestInit, ms = AI_TIMEOUT_MS
 const HIDDEN_KEY = '[ключ скрыт]';
 const KEY_LIKE = /\b(?:sk-(?:ant-|proj-)?[A-Za-z0-9_-]{8,}|gsk_[A-Za-z0-9]{10,}|AIza[0-9A-Za-z_-]{20,}|[A-Za-z0-9_-]{40,})\b/g;
 const BEARER = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{6,}/gi;
-const INVISIBLE = /[-\u001F\u007F\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g;
+// Управляющие (0x00–0x1F, 0x7F) и невидимые символы, в том числе переворот текста (bidi).
+const INVISIBLE = /[\x00-\x1F\x7F\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g;
 
 /**
  * Текст ошибки облачного сервиса для экрана и журнала: без самого ключа (любой длины), без похожих на ключ
