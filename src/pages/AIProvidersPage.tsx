@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { aiGateway, GIGACHAT_WEB_ONLY, CUSTOM_AI_ID, type AIProvider } from '../services/AIGateway';
 import { explainAiError } from '../services/AiErrors';
@@ -94,7 +94,11 @@ export function customReady(endpoint: string, model: string): boolean {
   return /^https:\/\/[^\s/]+/i.test(endpoint.trim()) && model.trim().length > 0;
 }
 
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 // ==================== CONFIG MODAL ====================
+// Клавиатура: фокус сразу в первом поле, Tab не выходит за окно, Escape = «Отмена», после закрытия фокус возвращается
+// на кнопку, которой окно открыли. Щелчок мимо окна закрывает его, только если ничего не введено (введённый ключ не теряется).
 function ConfigModal({ provider, onSave, onClose }: {
   provider: Omit<AIProvider, 'enabled'> & { enabled?: boolean };
   /** alreadySaved: настройки и ключ уже записаны при проверке — повторно не спрашиваем. */
@@ -108,15 +112,44 @@ function ConfigModal({ provider, onSave, onClose }: {
   const [testError, setTestError] = useState('');
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const isCore = provider.id === 'svetlana';
   const isGiga = provider.id === 'gigachat';
   const isCustom = provider.id === CUSTOM_AI_ID;
   const blocked = appsOnly(provider.id) || (isCustom && !isAndroidApp());
   const phoneLocal = isAndroidApp() && provider.type === 'offline';
   const customIncomplete = isCustom && !customReady(endpoint, model);
+  const dirty = apiKey !== (provider.apiKey || '') || endpoint !== provider.endpoint || model !== provider.model;
+  const titleId = `provider-title-${provider.id}`;
 
   // Системная кнопка «Назад» телефона = «Отмена».
   useEffect(() => onBack(onClose), []);
+
+  // Фокус в первое доступное поле; после закрытия — обратно на кнопку, которой открыли окно.
+  useEffect(() => {
+    const opener = typeof document !== 'undefined' ? document.activeElement as HTMLElement | null : null;
+    const root = dialogRef.current;
+    const first = root?.querySelector<HTMLElement>('input:not([disabled]):not([readonly]), select:not([disabled])')
+      ?? root?.querySelector<HTMLElement>(FOCUSABLE);
+    first?.focus();
+    return () => { if (opener && opener.isConnected) opener.focus(); };
+  }, []);
+
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      if (!saving) onClose();
+      return;
+    }
+    if (e.key !== 'Tab' || !dialogRef.current) return;
+    const items = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE));
+    if (!items.length) return;
+    const firstItem = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === firstItem || !dialogRef.current.contains(active))) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && (active === last || !dialogRef.current.contains(active))) { e.preventDefault(); firstItem.focus(); }
+  };
 
   const handleTest = async () => {
     setTestStatus('testing');
@@ -163,30 +196,34 @@ function ConfigModal({ provider, onSave, onClose }: {
   };
 
   const models = MODEL_OPTIONS[provider.id] || [provider.model];
+  const statusText = testStatus === 'testing' ? 'Проверяю соединение' : testStatus === 'success' ? 'Соединение успешно' : saving ? 'Сохраняю' : '';
 
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-      onClick={onClose}
+      onClick={() => { if (!dirty && !saving) onClose(); }}
     >
       <motion.div
+        ref={dialogRef}
         initial={{ scale: 0.95, y: 15 }}
         animate={{ scale: 1, y: 0 }}
         role="dialog"
         aria-modal="true"
-        aria-label={provider.name}
+        aria-labelledby={titleId}
+        onKeyDown={onKeyDown}
         className="w-full max-w-lg max-h-[90vh] overflow-y-auto glass-card rounded-2xl p-5 sm:p-6 border border-slate-700 bg-slate-900 text-white"
         onClick={e => e.stopPropagation()}
       >
+        <span role="status" className="sr-only">{statusText}</span>
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h3 className="text-lg font-semibold">{provider.name}</h3>
+            <h3 id={titleId} className="text-lg font-semibold">{provider.name}</h3>
             <p className="text-xs text-slate-400">{provider.type === 'offline' ? (phoneLocal ? 'Локальная модель на вашем компьютере (домашняя сеть)' : 'Офлайн / Локальный движок') : isCore ? 'Единая Светлана на своём сервере (мир-самозанятых.рф)' : isGiga ? 'Облачный ИИ Сбера, бесплатный тариф' : isCustom ? 'Ваш внешний ИИ по своему адресу' : 'Внешний облачный ИИ'}</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400" aria-label="Закрыть">
-            <X className="w-5 h-5" />
+          <button onClick={onClose} disabled={saving} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400" aria-label="Закрыть">
+            <X className="w-5 h-5" aria-hidden="true" />
           </button>
         </div>
 
@@ -206,7 +243,7 @@ function ConfigModal({ provider, onSave, onClose }: {
             <div>
               <label htmlFor="provider-key" className="text-sm text-slate-300 mb-1 block">{isCore ? 'Ключ Светланы' : isGiga ? 'Ключ авторизации (Authorization key)' : 'Ключ API (API Key)'}</label>
               <div className="relative">
-                <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" aria-hidden="true" />
                 <input
                   id="provider-key"
                   type="password"
@@ -233,7 +270,7 @@ function ConfigModal({ provider, onSave, onClose }: {
           <div>
             <label htmlFor="provider-endpoint" className="text-sm text-slate-300 mb-1 block">{phoneLocal ? 'Адрес компьютера с моделью' : isCustom ? 'Адрес сервера (https)' : 'Адрес эндпоинта (URL)'}</label>
             <div className="relative">
-              <Server className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <Server className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" aria-hidden="true" />
               <input
                 id="provider-endpoint"
                 type="text"
@@ -284,36 +321,42 @@ function ConfigModal({ provider, onSave, onClose }: {
           <button
             onClick={handleTest}
             disabled={testStatus === 'testing' || saving || blocked || customIncomplete}
+            aria-busy={testStatus === 'testing'}
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-750 text-sm font-medium transition-colors disabled:opacity-50"
           >
             {testStatus === 'testing' ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
                 Проверка соединения...
               </>
             ) : testStatus === 'success' ? (
               <>
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" aria-hidden="true" />
                 <span className="text-emerald-400">Соединение успешно!</span>
               </>
             ) : testStatus === 'error' ? (
               <>
-                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
                 <span className="text-rose-400 text-left" role="alert">{testError}</span>
               </>
             ) : (
               <>
-                <TestTube className="w-4 h-4" />
+                <TestTube className="w-4 h-4" aria-hidden="true" />
                 Проверить соединение
               </>
             )}
           </button>
-          <p className="text-[11px] text-slate-500">Проверка сразу сохраняет настройки и ключ.</p>
+          <p className="text-[11px] text-slate-400">
+            {testStatus === 'error'
+              ? 'Связи нет. Исправьте ключ или адрес и проверьте ещё раз. Сохранить можно и так, но тогда Светлана может не отвечать.'
+              : 'Проверка сразу сохраняет настройки и ключ.'}
+          </p>
         </div>
 
         <div className="flex gap-3 mt-6">
           <button
             onClick={onClose}
+            disabled={saving}
             className="flex-1 px-4 py-2.5 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 text-sm"
           >
             Отмена
@@ -321,10 +364,11 @@ function ConfigModal({ provider, onSave, onClose }: {
           <button
             onClick={handleSave}
             disabled={saving || testStatus === 'testing' || blocked || customIncomplete}
-            className="flex-1 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium flex items-center justify-center gap-2"
+            aria-busy={saving}
+            className={`flex-1 px-4 py-2.5 rounded-lg disabled:opacity-50 text-white text-sm font-medium flex items-center justify-center gap-2 ${testStatus === 'error' ? 'bg-amber-700 hover:bg-amber-600' : 'bg-indigo-600 hover:bg-indigo-500'}`}
           >
-            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-            Сохранить и включить
+            {saving && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
+            {testStatus === 'error' ? 'Сохранить без проверки' : 'Сохранить и включить'}
           </button>
         </div>
       </motion.div>
@@ -387,7 +431,7 @@ export default function AIProvidersPage() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Cpu className="w-7 h-7 text-indigo-400" />
+            <Cpu className="w-7 h-7 text-indigo-400" aria-hidden="true" />
             Модели и Провайдеры ИИ
           </h2>
           <p className="text-sm text-slate-400 mt-1">
@@ -403,7 +447,7 @@ export default function AIProvidersPage() {
         <div className="glass-card rounded-2xl p-5 border border-emerald-500/30 bg-emerald-950/20 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-4 min-w-0">
             <div className="w-12 h-12 shrink-0 rounded-xl bg-emerald-500/20 flex items-center justify-center">
-              <Zap className="w-6 h-6 text-emerald-400" />
+              <Zap className="w-6 h-6 text-emerald-400" aria-hidden="true" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -420,7 +464,7 @@ export default function AIProvidersPage() {
             onClick={() => setConfiguringProvider(activeProvider)}
             className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700 flex items-center gap-1.5"
           >
-            <Settings className="w-3.5 h-3.5" /> Настроить
+            <Settings className="w-3.5 h-3.5" aria-hidden="true" /> Настроить
           </button>
         </div>
       )}
@@ -437,7 +481,7 @@ export default function AIProvidersPage() {
               : 'text-slate-400 hover:text-white hover:bg-slate-800'
           }`}
         >
-          <HardDrive className="w-4 h-4" />
+          <HardDrive className="w-4 h-4" aria-hidden="true" />
           {android ? 'Локальные модели (на компьютере)' : 'Локальные модели (Офлайн)'}
         </button>
         <button
@@ -450,7 +494,7 @@ export default function AIProvidersPage() {
               : 'text-slate-400 hover:text-white hover:bg-slate-800'
           }`}
         >
-          <Cloud className="w-4 h-4" />
+          <Cloud className="w-4 h-4" aria-hidden="true" />
           {android ? 'Светлана Сервер и облачные ИИ' : 'Внешние облачные ИИ (GigaChat, OpenAI, Claude...)'}
         </button>
       </div>
@@ -460,14 +504,14 @@ export default function AIProvidersPage() {
         <div className="space-y-6">
           {android && (
             <div data-testid="phone-local-note" className="rounded-xl p-4 border border-cyan-500/30 bg-cyan-950/20 text-sm text-cyan-100 flex items-start gap-2">
-              <HardDrive className="w-4 h-4 shrink-0 mt-0.5" />
+              <HardDrive className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
               <span>{PHONE_LOCAL_HINT}</span>
             </div>
           )}
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <h3 className="text-base font-semibold flex items-center gap-2 text-cyan-300">
-                <Download className="w-4 h-4" />
+                <Download className="w-4 h-4" aria-hidden="true" />
                 Каталог локальных моделей для компьютера
               </h3>
               <span className="text-xs text-slate-400">Работают через Ollama / LM Studio без отправки данных в интернет</span>
@@ -490,7 +534,7 @@ export default function AIProvidersPage() {
                       </span>
                       {activeProvider?.model === m.id && (
                         <span className="text-xs text-emerald-400 font-medium flex items-center gap-1">
-                          <Check className="w-3 h-3" /> Выбрана
+                          <Check className="w-3 h-3" aria-hidden="true" /> Выбрана
                         </span>
                       )}
                     </div>
@@ -507,9 +551,9 @@ export default function AIProvidersPage() {
                     >
                       <span className="truncate">{m.command}</span>
                       {copiedCommand === m.command ? (
-                        <span className="text-emerald-400 text-[10px] font-sans shrink-0 ml-1">Скопировано!</span>
+                        <span className="text-emerald-400 text-[10px] font-sans shrink-0 ml-1" role="status">Скопировано!</span>
                       ) : (
-                        <Terminal className="w-3.5 h-3.5 text-slate-500 shrink-0 ml-1" />
+                        <Terminal className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-1" aria-hidden="true" />
                       )}
                     </button>
                     <button
@@ -555,7 +599,7 @@ export default function AIProvidersPage() {
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="p-2.5 rounded-lg bg-cyan-500/10 text-cyan-400">
-                        <HardDrive className="w-5 h-5" />
+                        <HardDrive className="w-5 h-5" aria-hidden="true" />
                       </div>
                       <div className="min-w-0">
                         <h4 className="font-semibold text-sm">{p.name}</h4>
@@ -567,6 +611,7 @@ export default function AIProvidersPage() {
                       {configured && (
                         <button
                           onClick={() => handleSelectActive(p.id)}
+                          aria-pressed={isSelected}
                           className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                             isSelected
                               ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
@@ -582,7 +627,7 @@ export default function AIProvidersPage() {
                         title="Настройки"
                         aria-label={`Настройки: ${p.name}`}
                       >
-                        <Settings className="w-4 h-4" />
+                        <Settings className="w-4 h-4" aria-hidden="true" />
                       </button>
                     </div>
                   </div>
@@ -616,7 +661,7 @@ export default function AIProvidersPage() {
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
-                        <Cloud className="w-4 h-4" />
+                        <Cloud className="w-4 h-4" aria-hidden="true" />
                       </div>
                       <div className="min-w-0">
                         <h4 className="font-semibold text-sm">{p.name}</h4>
@@ -638,6 +683,7 @@ export default function AIProvidersPage() {
                     {configured && !blocked && (
                       <button
                         onClick={() => handleSelectActive(p.id)}
+                        aria-pressed={isSelected}
                         className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                           isSelected
                             ? 'bg-purple-500/30 text-purple-300 border border-purple-500/40'
@@ -651,7 +697,7 @@ export default function AIProvidersPage() {
                       onClick={() => setConfiguringProvider(configured || { ...p, apiKey: '' })}
                       className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs flex items-center gap-1"
                     >
-                      <Settings className="w-3.5 h-3.5" />
+                      <Settings className="w-3.5 h-3.5" aria-hidden="true" />
                       {blocked ? 'Подробнее' : configured ? 'Изменить' : 'Подключить'}
                     </button>
                   </div>
