@@ -100,7 +100,7 @@ jobs:
           rm -f "$RUNNER_TEMP/release.jks"
       - name: No signing key, nothing to publish
         if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main') && steps.sign.outputs.signed != 'true'
-        run: echo "::warning::Ключ подписи не задан в секретах: APK в Releases не публикуется (отладочная сборка остаётся только артефактом)."
+        run: echo "::warning::Ключ подписи не задан в секретах, APK в Releases не публикуется (отладочная сборка остаётся только артефактом)."
       - name: Upload APK for Releases
         if: steps.sign.outputs.signed == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
