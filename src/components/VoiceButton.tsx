@@ -1,7 +1,7 @@
 // Глобальная кнопка «Голос»: команды бизнеса и CRM голосом с любого экрана + настройки распознавания и озвучки.
 // Настройки одинаковые на сайте, в Windows и в Android: запись своего голоса, модель распознавания на
 // устройстве (в приложениях), облачное распознавание (Groq/OpenAI), озвучка. В Android без записанного голоса
-// слушает распознавание самого телефона (ключ не нужен). Панель закрывается системной кнопкой «Назад».
+// слушает распознавание самого телефона (ключ не нужен). Панель закрывается системной кнопкой «Назад» и Escape.
 import { useEffect, useRef, useState } from 'react';
 import { Mic, MicOff, Settings2, X, Volume2, VolumeX } from 'lucide-react';
 import { sttSupport, getCloudStt, setCloudStt, resetWebStt, STT_PRESETS, type Listener } from '../services/voice/SpeechEngine';
@@ -30,6 +30,7 @@ export default function VoiceButton() {
   const [settings, setSettings] = useState(false);
   const listenerRef = useRef<Listener | null>(null);
   const hideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => () => { listenerRef.current?.stop(); if (hideRef.current) clearTimeout(hideRef.current); }, []);
 
@@ -49,10 +50,14 @@ export default function VoiceButton() {
       speakText('Это вопрос для чата. Здесь я выполняю команды про деньги, запись и клиентов.');
       return;
     }
-    const lines = await runCRMActions([intent], 'voice');
-    const reply = lines.join('\n');
-    show({ heard: command, reply }, 20000);
-    speakText(reply);
+    try {
+      const lines = await runCRMActions([intent], 'voice');
+      const reply = lines.join('\n');
+      show({ heard: command, reply }, 20000);
+      speakText(reply);
+    } catch {
+      show({ heard: command, error: 'Не получилось выполнить команду. Попробуйте ещё раз.' });
+    }
   };
 
   const toggle = () => {
@@ -70,25 +75,30 @@ export default function VoiceButton() {
     if (!l) setSettings(true);
   };
 
+  const closeSettings = () => {
+    setSettings(false);
+    settingsBtnRef.current?.focus();
+  };
+
   return (
     <>
       <div className="flex items-center rounded-full bg-fuchsia-600 shadow-lg shadow-fuchsia-900/40 text-white text-sm font-medium">
-        <button onClick={toggle} className={`flex items-center gap-2 pl-3 sm:pl-4 pr-3 py-2.5 rounded-l-full ${listening ? 'bg-red-600' : 'hover:bg-fuchsia-700'}`} aria-label={listening ? 'Остановить' : 'Сказать команду'}>
-          {listening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}Голос
+        <button onClick={toggle} className={`flex items-center gap-2 pl-3 sm:pl-4 pr-3 py-2.5 rounded-l-full ${listening ? 'bg-red-600' : 'hover:bg-fuchsia-700'}`} aria-label={listening ? 'Остановить' : 'Сказать команду'} aria-pressed={listening}>
+          {listening ? <MicOff className="w-4 h-4" aria-hidden="true" /> : <Mic className="w-4 h-4" aria-hidden="true" />}Голос
         </button>
-        <button onClick={() => setSettings(s => !s)} className="pl-2 pr-3 py-2.5 rounded-r-full hover:bg-fuchsia-700 border-l border-white/20" aria-label="Настройки голоса">
-          <Settings2 className="w-4 h-4" />
+        <button ref={settingsBtnRef} onClick={() => setSettings(s => !s)} className="pl-2 pr-3 py-2.5 rounded-r-full hover:bg-fuchsia-700 border-l border-white/20" aria-label="Настройки голоса" aria-expanded={settings} aria-haspopup="dialog">
+          <Settings2 className="w-4 h-4" aria-hidden="true" />
         </button>
       </div>
       {bubble && (
-        <div className="fixed bottom-20 left-3 right-3 sm:right-auto sm:left-5 z-40 sm:max-w-sm rounded-xl bg-slate-900/95 border border-white/10 p-3 text-sm text-white shadow-xl space-y-1">
-          <button className="float-right text-slate-400 hover:text-white" onClick={() => setBubble(null)} aria-label="Закрыть"><X className="w-4 h-4" /></button>
+        <div role={bubble.error ? 'alert' : 'status'} className="fixed bottom-20 left-3 right-3 sm:right-auto sm:left-5 z-40 sm:max-w-sm rounded-xl bg-slate-900/95 border border-white/10 p-3 text-sm text-white shadow-xl space-y-1">
+          <button className="float-right text-slate-400 hover:text-white" onClick={() => setBubble(null)} aria-label="Закрыть"><X className="w-4 h-4" aria-hidden="true" /></button>
           {bubble.heard && <p className="text-slate-300 italic">«{bubble.heard}»</p>}
           {bubble.reply && <p className="whitespace-pre-line">{bubble.reply}</p>}
           {bubble.error && <p className="text-amber-300">{bubble.error}</p>}
         </div>
       )}
-      {settings && <VoiceSettings onClose={() => setSettings(false)} />}
+      {settings && <VoiceSettings onClose={closeSettings} />}
     </>
   );
 }
@@ -101,25 +111,39 @@ function VoiceSettings({ onClose }: { onClose: () => void }) {
   const [key, setKey] = useState(current?.apiKey ?? '');
   const [muted, setMutedState] = useState(isMuted());
   const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const closeRef = useRef<HTMLButtonElement | null>(null);
   const s = sttSupport();
 
   useEffect(() => onBack(onClose), []);
+  useEffect(() => { closeRef.current?.focus(); }, []);
 
   const save = () => {
-    setCloudStt(key.trim() ? { baseUrl: p.baseUrl, apiKey: key, model: p.model } : null);
-    resetWebStt();
+    setErr(null);
+    try {
+      setCloudStt(key.trim() ? { baseUrl: p.baseUrl, apiKey: key, model: p.model } : null);
+      resetWebStt();
+    } catch {
+      setMsg(null);
+      setErr('Не удалось сохранить. Проверьте, что выбран Groq или OpenAI, и попробуйте ещё раз.');
+      return;
+    }
     setMsg(key.trim()
       ? (android ? 'Сохранено. Если модель на телефон не скачана, голос будет проверяться через облачное распознавание.' : 'Сохранено. Если встроенное распознавание не сработает, включится облачное.')
       : 'Облачное распознавание отключено.');
   };
 
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') { e.stopPropagation(); onClose(); }
+  };
+
   const now = s.mode === 'native' ? 'распознавание телефона' : s.mode === 'web' ? 'встроенное распознавание' : s.mode === 'cloud' ? 'облачное распознавание' : 'распознавание не настроено';
 
   return (
-    <div className="fixed bottom-20 left-3 sm:left-5 z-50 w-[22rem] max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-y-auto rounded-xl bg-slate-900/98 border border-white/10 p-4 text-sm text-white shadow-2xl space-y-3">
+    <div role="dialog" aria-labelledby="voice-settings-title" onKeyDown={onKeyDown} className="fixed bottom-20 left-3 sm:left-5 z-50 w-[22rem] max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-y-auto rounded-xl bg-slate-900/98 border border-white/10 p-4 text-sm text-white shadow-2xl space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold">Голос Светланы</h3>
-        <button onClick={onClose} className="text-slate-400 hover:text-white" aria-label="Закрыть"><X className="w-4 h-4" /></button>
+        <h3 id="voice-settings-title" className="font-semibold">Голос Светланы</h3>
+        <button ref={closeRef} onClick={onClose} className="text-slate-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400 rounded" aria-label="Закрыть настройки голоса"><X className="w-4 h-4" aria-hidden="true" /></button>
       </div>
       {android && (
         <p data-testid="android-voice" className="text-xs text-slate-300">
@@ -135,28 +159,30 @@ function VoiceSettings({ onClose }: { onClose: () => void }) {
           ? 'Облачное распознавание нужно, только если не хотите скачивать модель на телефон. Ключ Groq бесплатный.'
           : 'В браузере Chrome/Edge работает встроенное. В приложении для Windows нужно облачное — ключ Groq бесплатный.'}
       </p>
-      <div className="flex gap-2">
+      <div className="flex gap-2" role="group" aria-label="Сервис распознавания">
         {STT_PRESETS.map(x => (
-          <button key={x.id} onClick={() => setPreset(x.id)} className={`px-3 py-1.5 rounded-lg text-xs ${preset === x.id ? 'bg-indigo-600' : 'bg-white/5 hover:bg-white/10'}`}>{x.title}</button>
+          <button key={x.id} onClick={() => setPreset(x.id)} aria-pressed={preset === x.id} className={`px-3 py-1.5 rounded-lg text-xs ${preset === x.id ? 'bg-indigo-600' : 'bg-white/5 hover:bg-white/10'}`}>{x.title}</button>
         ))}
       </div>
-      <input className={input} type="password" placeholder="API-ключ" value={key} onChange={e => setKey(e.target.value)} />
+      <label htmlFor="voice-stt-key" className="block text-xs text-slate-300">Ключ {p.title}</label>
+      <input id="voice-stt-key" className={input} type="password" autoComplete="off" placeholder="API-ключ" value={key} onChange={e => setKey(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') save(); }} />
       <a className="text-xs text-indigo-300 underline" href={p.keyUrl} target="_blank" rel="noreferrer">Получить ключ {p.title}</a>
       <div className="flex flex-wrap gap-2">
         <button className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700" onClick={save}>Сохранить</button>
         {ttsAvailable() && (
-          <button className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 inline-flex items-center gap-1.5" onClick={() => { const m = !muted; setMuted(m); setMutedState(m); }}>
-            {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}{muted ? 'Озвучка выкл.' : 'Озвучка вкл.'}
+          <button className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 inline-flex items-center gap-1.5" aria-pressed={!muted} onClick={() => { const m = !muted; setMuted(m); setMutedState(m); }}>
+            {muted ? <VolumeX className="w-4 h-4" aria-hidden="true" /> : <Volume2 className="w-4 h-4" aria-hidden="true" />}{muted ? 'Озвучка выкл.' : 'Озвучка вкл.'}
           </button>
         )}
         {ttsAvailable() && <button className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10" onClick={() => speakText('Привет! Я Светлана. Слышно меня?', { force: true })}>Тест</button>}
       </div>
-      {msg && <p className="text-xs text-indigo-200">{msg}</p>}
+      {msg && <p role="status" className="text-xs text-indigo-200">{msg}</p>}
+      {err && <p role="alert" className="text-xs text-amber-300">{err}</p>}
       <div className="text-xs text-slate-400">
         <p className="mb-1">Попробуйте сказать:</p>
         {EXAMPLES.map(e => <p key={e}>• {e}</p>)}
       </div>
-      <p className="text-[11px] text-slate-500">Ключ хранится только на этом устройстве. Запись голоса уходит в выбранный сервис только при нажатии «Голос».</p>
+      <p className="text-[11px] text-slate-400">Ключ хранится только на этом устройстве. Запись голоса уходит в выбранный сервис только при нажатии «Голос».</p>
     </div>
   );
 }
