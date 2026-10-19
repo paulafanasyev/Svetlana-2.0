@@ -1,12 +1,18 @@
 // Orchestrator - Central coordination for all agent modules
+// Безопасность и надёжность:
+// - не видим экран (наблюдение не удалось) — ничего не делаем вслепую;
+// - цель шага не найдена на экране — шаг не выполняется;
+// - проверка результата учитывает изменение экрана; при неудаче мы только смотрим ещё раз,
+//   а НЕ повторяем действие (дважды отправленное сообщение или платёж хуже ошибки);
+// - одновременно идёт одна задача; reset() отменяет текущую (после отмены ни одно действие не запускается);
+// - настройки из хранилища проверяются (sanitizeOrchestratorConfig), ошибка подписчика не ломает задачу.
 
 import { planner, type Task, type TaskStep } from './Planner';
 import { memory } from './Memory';
-import { verification, type VerificationResult } from './Verification';
-import { aiGateway, type ChatMessage } from './AIGateway';
-import { toolRegistry, type Tool } from './ToolRegistry';
+import { verification } from './Verification';
+import { toolRegistry } from './ToolRegistry';
 import { policyEngine, type PolicyContext } from './PolicyEngine';
-import { observationManager } from './ObservationLayer';
+import { observationManager, type ScreenState } from './ObservationLayer';
 import { avatarStateMachine } from './AvatarStateMachine';
 
 export type AgentState = 'idle' | 'understanding' | 'planning' | 'observing' | 'grounding' | 'policy' | 'acting' | 'verifying' | 'reflecting' | 'complete' | 'error';
@@ -26,16 +32,42 @@ export interface OrchestratorConfig {
   enableMemory: boolean;
 }
 
+export const ORCH_BUSY = 'Светлана уже выполняет другую задачу. Дождитесь её или нажмите «Сброс».';
+export const ORCH_CANCELLED = 'Задача отменена.';
+export const ORCH_NO_OBSERVATION = 'Не удалось посмотреть на экран, поэтому действие не выполнено.';
+export const ORCH_TARGET_MISSING = 'На экране не найдено';
+export const ORCH_NOT_VERIFIED = 'Не удалось убедиться, что действие сработало. Повторять его сама Светлана не будет: проверьте экран.';
+
+const DEFAULT_CONFIG: OrchestratorConfig = {
+  maxRetries: 3,
+  enableVerification: true,
+  enableReflection: true,
+  enableMemory: true,
+};
+
+/** Настройки из хранилища или формы: только известные поля, число повторных проверок 0–5. */
+export function sanitizeOrchestratorConfig(raw: unknown, base: OrchestratorConfig = DEFAULT_CONFIG): OrchestratorConfig {
+  const r = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+  const n = Number(r.maxRetries);
+  const bool = (v: unknown, d: boolean) => (typeof v === 'boolean' ? v : d);
+  return {
+    maxRetries: Number.isFinite(n) ? Math.min(5, Math.max(0, Math.floor(n))) : base.maxRetries,
+    enableVerification: bool(r.enableVerification, base.enableVerification),
+    enableReflection: bool(r.enableReflection, base.enableReflection),
+    enableMemory: bool(r.enableMemory, base.enableMemory),
+  };
+}
+
+type StepResult = { success: boolean; error?: string };
+
 class Orchestrator {
   private state: AgentState = 'idle';
   private currentTask: Task | null = null;
   private eventLog: AgentEvent[] = [];
-  private config: OrchestratorConfig = {
-    maxRetries: 3,
-    enableVerification: true,
-    enableReflection: true,
-    enableMemory: true,
-  };
+  private config: OrchestratorConfig = { ...DEFAULT_CONFIG };
+  /** Номер текущего запуска: reset() его меняет, и старый запуск останавливается на ближайшей проверке. */
+  private runId = 0;
+  private running = false;
 
   private listeners: ((event: AgentEvent) => void)[] = [];
 
@@ -45,17 +77,21 @@ class Orchestrator {
 
   private loadConfig() {
     try {
-      const stored = localStorage.getItem('svetlana_orchestrator_config');
-      if (stored) {
-        this.config = { ...this.config, ...JSON.parse(stored) };
+      const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('svetlana_orchestrator_config') : null;
+      if (stored && stored.length < 10_000) {
+        this.config = sanitizeOrchestratorConfig(JSON.parse(stored));
       }
-    } catch (e) {
-      console.error('Failed to load orchestrator config:', e);
+    } catch {
+      this.config = { ...DEFAULT_CONFIG };
     }
   }
 
   private saveConfig() {
-    localStorage.setItem('svetlana_orchestrator_config', JSON.stringify(this.config));
+    try {
+      localStorage.setItem('svetlana_orchestrator_config', JSON.stringify(this.config));
+    } catch {
+      // Хранилище недоступно: настройки действуют до перезапуска.
+    }
   }
 
   // Event system
@@ -72,37 +108,53 @@ class Orchestrator {
     if (this.eventLog.length > 1000) {
       this.eventLog.shift();
     }
-    this.listeners.forEach(l => l(fullEvent));
+    for (const l of [...this.listeners]) {
+      try { l(fullEvent); } catch { /* ошибка подписчика не останавливает задачу */ }
+    }
+  }
+
+  /** Запуск ещё актуален (не было reset() и нового запуска). */
+  private alive(id: number): boolean {
+    return this.runId === id;
+  }
+
+  private cancelled(): { success: false; error: string } {
+    return { success: false, error: ORCH_CANCELLED };
+  }
+
+  isRunning(): boolean {
+    return this.running;
   }
 
   // Main execution pipeline
   async execute(goal: string, context?: any): Promise<{ success: boolean; result?: any; error?: string }> {
+    if (this.running) return { success: false, error: ORCH_BUSY };
+    const id = ++this.runId;
+    this.running = true;
     try {
       // 1. UNDERSTAND
       this.setState('understanding');
       this.emit({ type: 'understand', state: 'understanding', detail: `Parsing goal: "${goal}"`, data: { goal } });
-      
+
       if (this.config.enableMemory) {
         memory.addMessage('user', goal);
         memory.addToShortTerm({ type: 'action', content: `User request: ${goal}`, importance: 0.8 });
       }
 
-      await this.delay(500);
-
       // 2. PLAN
       this.setState('planning');
       this.emit({ type: 'plan', state: 'planning', detail: 'Decomposing task into steps' });
-      
+
       const task = await planner.createPlan({ goal, context });
+      if (!this.alive(id)) return this.cancelled();
       this.currentTask = task;
-      
+
       this.emit({ type: 'plan_complete', state: 'planning', detail: `Created plan with ${task.steps.length} steps`, data: { task } });
-      
-      await this.delay(500);
 
       // 3-8. Execute each step
       for (const step of task.steps) {
-        const result = await this.executeStep(step, context);
+        const result = await this.executeStep(task, step, id, context);
+        if (!this.alive(id)) return this.cancelled();
         if (!result.success) {
           this.setState('error');
           this.emit({ type: 'error', state: 'error', detail: `Step failed: ${step.action}`, data: { error: result.error } });
@@ -113,7 +165,7 @@ class Orchestrator {
       // 9. COMPLETE
       this.setState('complete');
       this.emit({ type: 'complete', state: 'complete', detail: 'Task completed successfully' });
-      
+
       if (this.config.enableMemory) {
         memory.addMessage('assistant', `Task completed: ${goal}`);
         memory.addToLongTerm({ type: 'action', content: `Completed: ${goal}`, importance: 0.6 });
@@ -121,127 +173,133 @@ class Orchestrator {
 
       return { success: true, result: task };
     } catch (error: any) {
+      if (!this.alive(id)) return this.cancelled();
+      const message = typeof error?.message === 'string' ? error.message.slice(0, 300) : 'Неизвестная ошибка';
       this.setState('error');
-      this.emit({ type: 'error', state: 'error', detail: error.message, data: { error: error.message } });
-      return { success: false, error: error.message };
+      this.emit({ type: 'error', state: 'error', detail: message, data: { error: message } });
+      return { success: false, error: message };
+    } finally {
+      if (this.alive(id)) this.running = false;
     }
   }
 
-  private async executeStep(step: TaskStep, context?: any): Promise<{ success: boolean; error?: string }> {
-    // OBSERVE - Real observation
+  private fail(task: Task, step: TaskStep, error: string): StepResult {
+    avatarStateMachine.setError();
+    planner.updateStepStatus(task.id, step.id, 'failed', undefined, error);
+    return { success: false, error };
+  }
+
+  private async executeStep(task: Task, step: TaskStep, id: number, context?: any): Promise<StepResult> {
+    // OBSERVE - Real observation. Не видим экран — не действуем.
     this.setState('observing');
     avatarStateMachine.setExecuting();
     this.emit({ type: 'observe', state: 'observing', detail: `Observing before action: ${step.action}`, data: { step } });
-    
+
     const observationResult = await observationManager.observe();
+    if (!this.alive(id)) return this.cancelled();
     const preState = observationResult.state;
-    
+
     this.emit({ type: 'observe_result', state: 'observing', detail: `Observation: ${observationResult.success ? 'SUCCESS' : 'FAILED'}`, data: { observation: observationResult } });
 
-    // GROUND - Find target element
+    if (!observationResult.success || !preState) {
+      return this.fail(task, step, ORCH_NO_OBSERVATION);
+    }
+
+    // GROUND - Find target element. Цель не найдена — не нажимаем «куда-нибудь».
     this.setState('grounding');
     this.emit({ type: 'ground', state: 'grounding', detail: `Grounding to target: ${step.target || 'N/A'}` });
-    
-    let groundedElement = null;
+
     if (step.target) {
-      groundedElement = await observationManager.findElementByText(step.target);
+      const groundedElement = await observationManager.findElementByText(step.target);
+      if (!this.alive(id)) return this.cancelled();
       this.emit({ type: 'ground_result', state: 'grounding', detail: groundedElement ? `Found: ${groundedElement.text}` : 'Not found', data: { element: groundedElement } });
+      if (!groundedElement) {
+        return this.fail(task, step, `${ORCH_TARGET_MISSING}: «${step.target.slice(0, 80)}».`);
+      }
     }
 
     // POLICY - Real policy check
     this.setState('policy');
     avatarStateMachine.setVerifying();
-    
+
     const tool = toolRegistry.getTool(step.action);
     if (!tool) {
       this.emit({ type: 'policy_error', state: 'policy', detail: `Tool not found: ${step.action}` });
-      return { success: false, error: `Tool ${step.action} not found` };
+      return this.fail(task, step, `Tool ${step.action} not found`);
     }
 
     const policyContext: PolicyContext = {
       platform: observationManager.getContext().platform,
-      currentApp: preState?.currentApp,
+      currentApp: preState.currentApp,
       environment: context || {},
     };
 
     const policyResult = await policyEngine.evaluate(tool, policyContext);
+    if (!this.alive(id)) return this.cancelled();
     this.emit({ type: 'policy', state: 'policy', detail: `Policy: ${policyResult.decision} - ${policyResult.reason}`, data: { policy: policyResult } });
 
     if (policyResult.decision === 'deny') {
-      avatarStateMachine.setError();
       this.emit({ type: 'policy_blocked', state: 'policy', detail: `Action blocked: ${policyResult.reason}` });
-      return { success: false, error: policyResult.reason };
+      return this.fail(task, step, policyResult.reason);
     }
 
     if (policyResult.decision === 'require_confirmation') {
       avatarStateMachine.setConfirmationRequired();
       this.emit({ type: 'policy_confirmation', state: 'policy', detail: policyResult.confirmationMessage || 'Confirmation required' });
-      return { success: false, error: 'Requires user confirmation', };
+      return { success: false, error: 'Requires user confirmation' };
     }
 
-    // ACT - Real tool execution
+    // ACT - Real tool execution (ровно один раз и только если запуск не отменён).
+    if (!this.alive(id)) return this.cancelled();
     this.setState('acting');
     avatarStateMachine.setExecuting();
     this.emit({ type: 'act', state: 'acting', detail: `Executing tool: ${tool.name}`, data: { tool: tool.id, params: step.parameters } });
-    
+
     const actionResult = await toolRegistry.executeTool(tool.id, step.parameters || {});
-    
+
     this.emit({ type: 'act_result', state: 'acting', detail: `Result: ${actionResult.success ? 'SUCCESS' : 'FAILED'}`, data: { result: actionResult } });
 
     if (!actionResult.success) {
-      avatarStateMachine.setError();
-      planner.updateStepStatus(this.currentTask!.id, step.id, 'failed', undefined, actionResult.error);
-      return { success: false, error: actionResult.error };
+      return this.fail(task, step, actionResult.error || 'Действие не выполнено');
     }
+    if (!this.alive(id)) return this.cancelled();
 
-    // VERIFY - Real verification
+    // VERIFY - Real verification: ответ инструмента + (для шагов на экране) изменение экрана.
     if (this.config.enableVerification) {
       this.setState('verifying');
       avatarStateMachine.setVerifying();
       this.emit({ type: 'verify', state: 'verifying', detail: 'Verifying action result' });
-      
-      // Observe again
-      const postObservation = await observationManager.observe();
-      const postState = postObservation.state;
 
-      // Compare states
-      let verificationSuccess = true;
-      if (preState && postState) {
-        const comparison = observationManager.compareStates(preState, postState);
-        verificationSuccess = comparison.changed;
-        
-        this.emit({ type: 'verify_compare', state: 'verifying', detail: `State changed: ${comparison.changed}`, data: { comparison } });
-      }
-
-      // Use verification module
       const verificationResult = await verification.verify({
         action: step.action,
         expectedState: { success: true },
         actualState: actionResult,
       });
+      if (!this.alive(id)) return this.cancelled();
 
-      this.emit({ type: 'verify_result', state: 'verifying', detail: `Verification: ${verificationResult.success ? 'PASS' : 'FAIL'}`, data: { verification: verificationResult } });
-
-      if (!verificationResult.success) {
-        // RETRY
-        for (let retry = 0; retry < this.config.maxRetries; retry++) {
-          this.emit({ type: 'retry', state: 'verifying', detail: `Retry ${retry + 1}/${this.config.maxRetries}` });
-          
-          // Wait before retry (exponential backoff)
-          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retry)));
-          
-          const retryResult = await toolRegistry.executeTool(tool.id, step.parameters || {});
-          
-          if (retryResult.success) {
-            avatarStateMachine.setSuccess();
-            planner.updateStepStatus(this.currentTask!.id, step.id, 'completed', retryResult);
-            return { success: true };
-          }
+      let screenOk = !step.target;
+      for (let attempt = 0; !screenOk && attempt <= this.config.maxRetries; attempt++) {
+        if (attempt > 0) {
+          this.emit({ type: 'retry', state: 'verifying', detail: `Re-check ${attempt}/${this.config.maxRetries}` });
+          await this.delay(500 * Math.pow(2, attempt - 1));
+          if (!this.alive(id)) return this.cancelled();
         }
+        const postObservation = await observationManager.observe();
+        if (!this.alive(id)) return this.cancelled();
+        const postState: ScreenState | undefined = postObservation.success ? postObservation.state : undefined;
+        if (postState) {
+          const comparison = observationManager.compareStates(preState, postState);
+          this.emit({ type: 'verify_compare', state: 'verifying', detail: `State changed: ${comparison.changed}`, data: { comparison } });
+          screenOk = comparison.changed;
+        }
+      }
 
-        avatarStateMachine.setError();
-        planner.updateStepStatus(this.currentTask!.id, step.id, 'failed', undefined, 'Verification failed after retries');
-        return { success: false, error: 'Verification failed after retries' };
+      const verified = verificationResult.success && screenOk;
+      this.emit({ type: 'verify_result', state: 'verifying', detail: `Verification: ${verified ? 'PASS' : 'FAIL'}`, data: { verification: verificationResult, screenChanged: screenOk } });
+
+      if (!verified) {
+        // Действие не повторяем: иначе сообщение или платёж могут уйти дважды.
+        return this.fail(task, step, ORCH_NOT_VERIFIED);
       }
     }
 
@@ -249,23 +307,21 @@ class Orchestrator {
     if (this.config.enableReflection) {
       this.setState('reflecting');
       this.emit({ type: 'reflect', state: 'reflecting', detail: 'Reflecting on action outcome' });
-      
-      // Store in memory
+
+      // В память — только имя инструмента и список параметров, без их значений (в них бывают личные данные).
       if (this.config.enableMemory) {
         memory.addToLongTerm({
           type: 'action',
-          content: `Executed: ${tool.name} with params: ${JSON.stringify(step.parameters)}`,
+          content: `Executed: ${tool.name} (${Object.keys(step.parameters || {}).join(', ') || 'без параметров'})`,
           importance: 0.6,
         });
       }
     }
 
     avatarStateMachine.setSuccess();
-    planner.updateStepStatus(this.currentTask!.id, step.id, 'completed', actionResult);
+    planner.updateStepStatus(task.id, step.id, 'completed', actionResult);
     return { success: true };
   }
-
-  // Methods removed - now using real ToolRegistry, PolicyEngine, and ObservationLayer
 
   private setState(state: AgentState) {
     this.state = state;
@@ -293,11 +349,14 @@ class Orchestrator {
   }
 
   updateConfig(updates: Partial<OrchestratorConfig>) {
-    this.config = { ...this.config, ...updates };
+    this.config = sanitizeOrchestratorConfig({ ...this.config, ...updates }, this.config);
     this.saveConfig();
   }
 
+  /** Отменить текущую задачу и вернуться в ожидание: незапущенные действия уже не выполнятся. */
   reset() {
+    this.runId++;
+    this.running = false;
     this.state = 'idle';
     this.currentTask = null;
   }
