@@ -25,6 +25,19 @@ class ErrorTextTest {
     }
 
     @Test
+    fun gigachatAuthKeyIsHidden() {
+        val key = "MDE5YWJjZGUtZjAxMi00NTY3OmFiY2RlZg=="
+        val out = ErrorText.scrub("invalid credentials Basic $key", listOf(key))
+        assertFalse(out.contains(key))
+        assertTrue(out.startsWith("invalid credentials Basic "))
+    }
+
+    @Test
+    fun plainErrorTextIsKept() {
+        assertEquals("model not found: gpt-5-mini", ErrorText.scrub("model not found: gpt-5-mini", listOf("short")))
+    }
+
+    @Test
     fun bidiAndInvisibleCharsAreRemoved() {
         assertEquals("abcd", ErrorText.clean("a\u202Eb\u2066c\u200Bd"))
         assertEquals("ab", ErrorText.clean("a\nb"))
