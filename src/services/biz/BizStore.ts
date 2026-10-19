@@ -1,5 +1,7 @@
 // Svetlana Business — profile, money ledger, documents (invoices/acts/contracts),
 // receivables and Russian tax estimates (НПД, УСН). Local-first, like the CRM.
+// Запись всё или ничего (как CRMStore): если хранилище не приняло изменение, данные возвращаются к последнему
+// сохранённому состоянию и бросается BIZ_SAVE_FAILED: экран не покажет доход, который исчезнет после перезапуска.
 import type { KeyValueStorage } from '../crm/CRMStore';
 import { safeJsonParse, csvSafe, stripControl, MAX_BYTES } from '../security/SafeData';
 import { contributionsFor, onePercent, dueDate, npdReceiptDeadline, vatStatusUsn, patentPayments, usnRate, USN_RATE_LIMITS, type VatStatus, type PayMethod } from './TaxRules';
@@ -17,6 +19,8 @@ export const REGIME_LABELS: Record<TaxRegime, string> = {
 };
 export const DOC_LABELS: Record<DocType, string> = { invoice: 'Счёт', act: 'Акт', contract: 'Договор' };
 export const DOC_STATUS_LABELS: Record<DocStatus, string> = { draft: 'Черновик', sent: 'Отправлен', paid: 'Оплачен', cancelled: 'Отменён' };
+/** Хранилище не приняло изменение (переполнено или недоступно): изменение отменено. */
+export const BIZ_SAVE_FAILED = 'Не удалось сохранить данные раздела «Бизнес»: хранилище переполнено или недоступно. Изменение отменено, сделайте резервную копию.';
 
 export interface BizProfile {
   regime: TaxRegime;
@@ -277,16 +281,21 @@ export function isTaxable(e: LedgerEntry): boolean {
 const OWN_CONTRIBUTIONS_CATEGORY = /^(взносы ип|взносы за себя|contributions)$/i;
 const DOC_TRANSITIONS: Record<DocStatus, DocStatus[]> = { draft: ['sent', 'cancelled'], sent: ['draft', 'cancelled'], paid: [], cancelled: ['draft'] };
 
+type EntryInput = { kind: EntryKind; amount: number; description: string; date?: number; payerType?: PayerType; contactId?: string; counterparty?: string; documentId?: string; category?: string; taxable?: boolean; payMethod?: PayMethod; noDocs?: boolean };
+
 export class BizStore {
   private readonly storage: KeyValueStorage;
   private readonly clock: () => number;
   private data: BizData;
+  /** Последнее состояние, которое точно лежит в хранилище (для отката). */
+  private saved: string;
   private listeners = new Set<() => void>();
 
   constructor(storage: KeyValueStorage = defaultStorage(), clock: () => number = Date.now) {
     this.storage = storage;
     this.clock = clock;
     this.data = this.load();
+    this.saved = JSON.stringify(this.data);
   }
 
   private load(): BizData {
@@ -298,9 +307,19 @@ export class BizStore {
     }
   }
 
+  /** Запись всё или ничего: хранилище не приняло — данные возвращаются, подписчики не уведомляются. */
   private commit(): void {
-    this.storage.setItem(STORAGE_KEY, JSON.stringify(this.data));
-    this.listeners.forEach(l => l());
+    const json = JSON.stringify(this.data);
+    try {
+      this.storage.setItem(STORAGE_KEY, json);
+    } catch {
+      this.data = sanitize(JSON.parse(this.saved));
+      throw new Error(BIZ_SAVE_FAILED);
+    }
+    this.saved = json;
+    for (const l of [...this.listeners]) {
+      try { l(); } catch { /* ошибка одного экрана не отменяет запись и не мешает другим */ }
+    }
   }
 
   subscribe(listener: () => void): () => void {
@@ -322,7 +341,21 @@ export class BizStore {
       const l = regime === 'usn15' ? USN_RATE_LIMITS.usn15 : USN_RATE_LIMITS.usn6;
       if (!Number.isFinite(patch.usnRate) || patch.usnRate < l.min || patch.usnRate > l.max) throw new Error(`Ставка УСН должна быть от ${l.min} до ${l.max}%`);
     }
-    this.data.profile = { ...this.data.profile, ...patch };
+    // Денежные поля: только настоящие неотрицательные числа (не NaN и не «пусто», превратившееся в 0 незаметно).
+    const money = (v: unknown, label: string, max: number) => {
+      if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > max)) throw new Error(`${label}: укажите сумму цифрами, не меньше нуля`);
+    };
+    money(patch.fixedContributions, 'Фиксированные взносы', 10_000_000);
+    money(patch.contributionsPaid, 'Уплаченные взносы', 10_000_000);
+    money(patch.patentCost, 'Стоимость патента', 100_000_000);
+    const clean: Partial<BizProfile> = { ...patch };
+    if (patch.birthYear !== undefined && patch.birthYear !== null) {
+      const y = Number(patch.birthYear);
+      if (y === 0) clean.birthYear = undefined;
+      else if (!Number.isInteger(y) || y < 1900 || y > 2100) throw new Error('Год рождения: четыре цифры, например 1985');
+      else clean.birthYear = y;
+    }
+    this.data.profile = { ...this.data.profile, ...clean };
     this.commit();
     return this.getProfile();
   }
@@ -336,15 +369,19 @@ export class BizStore {
       .sort((a, b) => b.date - a.date);
   }
 
-  addEntry(input: { kind: EntryKind; amount: number; description: string; date?: number; payerType?: PayerType; contactId?: string; counterparty?: string; documentId?: string; category?: string; taxable?: boolean; payMethod?: PayMethod; noDocs?: boolean }): LedgerEntry {
+  /** Проверенная запись книги (ещё не добавлена). */
+  private makeEntry(input: EntryInput): LedgerEntry {
     const amount = round2(Number(input.amount));
     if (!Number.isFinite(amount) || amount <= 0) throw new Error('Сумма должна быть больше нуля');
-    const description = input.description.trim() || (input.kind === 'income' ? 'Доход' : 'Расход');
+    if (amount > 1e12) throw new Error('Слишком большая сумма');
+    const description = String(input.description ?? '').trim() || (input.kind === 'income' ? 'Доход' : 'Расход');
     const now = this.clock();
-    const entry: LedgerEntry = {
+    const date = input.date ?? now;
+    if (!Number.isFinite(date) || date < 0 || date > MAX_TS) throw new Error('Некорректная дата');
+    return {
       id: newId(input.kind === 'income' ? 'in' : 'ex'),
       kind: input.kind, amount, description,
-      date: input.date ?? now,
+      date,
       payerType: input.payerType ?? 'person',
       contactId: input.contactId, counterparty: input.counterparty?.trim() || undefined,
       documentId: input.documentId, category: input.category,
@@ -354,7 +391,10 @@ export class BizStore {
       noDocs: input.kind === 'expense' && input.noDocs === true ? true : undefined,
       createdAt: now,
     };
-    if (!Number.isFinite(entry.date)) throw new Error('Некорректная дата');
+  }
+
+  addEntry(input: EntryInput): LedgerEntry {
+    const entry = this.makeEntry(input);
     this.data.ledger.push(entry);
     this.commit();
     return entry;
@@ -436,9 +476,12 @@ export class BizStore {
     if (items.some(i => !Number.isFinite(i.qty) || i.qty <= 0 || !Number.isFinite(i.price) || i.price < 0)) throw new Error('Количество и цена должны быть положительными числами');
     const now = this.clock();
     const date = input.date ?? now;
+    if (!Number.isFinite(date) || date < 0 || date > MAX_TS) throw new Error('Некорректная дата документа');
+    const dueDays = Number(input.dueDays ?? 5);
+    if (!Number.isFinite(dueDays) || dueDays < 0 || dueDays > 365) throw new Error('Срок оплаты: от 0 до 365 дней');
     const doc: BizDocument = {
       id: newId('doc'), type: input.type, number: this.nextNumber(input.type, date), date,
-      dueDate: input.type === 'invoice' ? date + (input.dueDays ?? 5) * DAY : undefined,
+      dueDate: input.type === 'invoice' ? date + Math.round(dueDays) * DAY : undefined,
       contactId: input.contactId, clientName, clientDetails: input.clientDetails?.trim() ?? '',
       items, total: round2(items.reduce((s, i) => s + i.qty * i.price, 0)),
       status: 'draft', basis: input.basis, createdAt: now, updatedAt: now,
@@ -481,25 +524,36 @@ export class BizStore {
     return d;
   }
 
-  /** Marks an invoice paid and records the income (once). */
+  /** Marks an invoice paid and records the income (once). Доход и отметка «оплачен» сохраняются одной записью. */
   markPaid(id: string, opts: { date?: number; payerType?: PayerType; payMethod?: PayMethod } = {}): { document: BizDocument; entry: LedgerEntry } {
     const d = this.getDocument(id);
     if (!d) throw new Error(`Документ не найден: ${id}`);
     if (d.type !== 'invoice') throw new Error('Оплаченным можно отметить только счёт');
     if (d.status === 'cancelled') throw new Error('Счёт отменён. Сначала верните его в черновик.');
     const existing = this.data.ledger.find(e => e.documentId === d.id);
-    if (existing) return { document: d, entry: existing };
+    if (existing) {
+      // Доход уже записан (например, прежняя версия упала между двумя записями): доводим счёт до «оплачен».
+      if (d.status !== 'paid') {
+        d.status = 'paid';
+        d.paidAt = existing.date;
+        d.updatedAt = this.clock();
+        this.commit();
+      }
+      return { document: d, entry: existing };
+    }
     const looksCompany = /^(ооо|ао|пао|зао|ип|оао|нко|ано)(?=\s|$|«|")/i.test(d.clientName.trim());
-    const entry = this.addEntry({
+    const entry = this.makeEntry({
       kind: 'income', amount: d.total, description: `Оплата по счёту № ${d.number}: ${d.items.map(i => i.name).join(', ')}`,
       date: opts.date, payerType: opts.payerType ?? (looksCompany ? 'company' : 'person'),
       contactId: d.contactId, counterparty: d.clientName, documentId: d.id, payMethod: opts.payMethod,
     });
+    this.data.ledger.push(entry);
     d.status = 'paid';
     d.paidAt = entry.date;
     d.updatedAt = this.clock();
     this.commit();
-    return { document: d, entry };
+    // После удачной записи отдаём то, что реально лежит в данных.
+    return { document: this.getDocument(id) ?? d, entry: this.data.ledger.find(e => e.id === entry.id) ?? entry };
   }
 
   deleteDocument(id: string): void {
