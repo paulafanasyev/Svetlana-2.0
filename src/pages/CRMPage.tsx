@@ -1,6 +1,7 @@
 // Svetlana CRM — contacts, deals pipeline, tasks, summary, import/export.
 // Доступность: у каждого поля и списка есть подпись для экранного диктора (не только подсказка внутри поля),
 // ошибки читаются сразу (role=alert), результаты импорта — как статус (role=status).
+// Подтверждения — своё окно (askConfirm): в приложении системное window.confirm может молча вернуть «нет».
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
 import { assertFileSize, MAX_BYTES } from '../services/security/SafeData';
 import {
@@ -13,6 +14,7 @@ import {
 } from '../services/crm/CRMStore';
 import { importPhoneContacts } from '../services/crm/CRMTools';
 import { isAndroidApp } from '../platform';
+import { askConfirm } from '../components/ConfirmDialog';
 
 type Tab = 'contacts' | 'deals' | 'tasks' | 'summary' | 'data';
 const STATUSES: ContactStatus[] = ['lead', 'client', 'partner', 'other'];
@@ -126,21 +128,27 @@ function ContactForm({ contact, onDone }: { contact?: CRMContact; onDone: (id?: 
 function ContactDetail({ contact, onEdit, onDeleted }: { contact: CRMContact; onEdit: () => void; onDeleted: () => void }) {
   const [logType, setLogType] = useState<ActivityType>('note');
   const [logText, setLogText] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const activities = crmStore.listActivities({ contactId: contact.id });
   const deals = crmStore.listDeals({ contactId: contact.id });
 
   const addLog = (e: FormEvent) => {
     e.preventDefault();
     if (!logText.trim()) return;
-    crmStore.addActivity({ type: logType, text: logText, contactId: contact.id });
-    setLogText('');
+    setError(null);
+    try {
+      crmStore.addActivity({ type: logType, text: logText, contactId: contact.id });
+      setLogText('');
+    } catch (err: any) { setError(err?.message || 'Не удалось добавить запись'); }
   };
 
-  const remove = () => {
-    if (window.confirm(`Удалить контакт «${contact.name}»? Сделки и история останутся без привязки.`)) {
+  const remove = async () => {
+    const ok = await askConfirm(`Удалить контакт «${contact.name}»? Сделки и история останутся без привязки.`, { okText: 'Удалить' });
+    if (!ok) return;
+    try {
       crmStore.deleteContact(contact.id);
       onDeleted();
-    }
+    } catch (err: any) { setError(err?.message || 'Не удалось удалить контакт'); }
   };
 
   return (
@@ -157,6 +165,7 @@ function ContactDetail({ contact, onEdit, onDeleted }: { contact: CRMContact; on
           <button onClick={remove} className={`${btnGhost} text-red-300`} aria-label={`Удалить контакт ${contact.name}`}><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
         </div>
       </div>
+      {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
       <div className="space-y-1 text-sm">
         {contact.phones.map(p => <a key={p} href={`tel:${p}`} className="flex items-center gap-2 text-indigo-300 hover:underline"><Phone className="w-4 h-4" aria-hidden="true" />{p}</a>)}
         {contact.emails.map(m => <a key={m} href={`mailto:${m}`} className="flex items-center gap-2 text-indigo-300 hover:underline break-all"><Mail className="w-4 h-4 shrink-0" aria-hidden="true" />{m}</a>)}
@@ -263,8 +272,10 @@ function DealsTab() {
   const add = (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    const value = amount.trim() ? Number(amount.replace(/\s/g, '').replace(',', '.')) : 0;
+    if (!Number.isFinite(value) || value < 0) { setError('Укажите сумму цифрами, например 15000'); return; }
     try {
-      crmStore.addDeal({ title, contactId: contactId || undefined, amount: amount ? Number(amount.replace(',', '.')) : 0 });
+      crmStore.addDeal({ title, contactId: contactId || undefined, amount: value });
       setTitle(''); setAmount(''); setContactId('');
     } catch (err: any) { setError(err?.message || 'Не удалось создать сделку'); }
   };
@@ -272,6 +283,12 @@ function DealsTab() {
   const move = (deal: CRMDeal, dir: -1 | 1) => {
     const idx = DEAL_STAGES.indexOf(deal.stage) + dir;
     if (idx >= 0 && idx < DEAL_STAGES.length) crmStore.moveDeal(deal.id, DEAL_STAGES[idx]);
+  };
+
+  const removeDeal = async (deal: CRMDeal) => {
+    const ok = await askConfirm(`Удалить сделку «${deal.title}»?`, { okText: 'Удалить' });
+    if (!ok) return;
+    try { crmStore.deleteDeal(deal.id); } catch (err: any) { setError(err?.message || 'Не удалось удалить сделку'); }
   };
 
   return (
@@ -304,7 +321,7 @@ function DealsTab() {
                     <p className="text-xs text-slate-300 mt-1">{money(d.amount, d.currency)}</p>
                     <div className="flex justify-between mt-2">
                       <button onClick={() => move(d, -1)} disabled={stage === DEAL_STAGES[0]} className="p-2 text-slate-400 hover:text-white disabled:opacity-30" aria-label={`Сделка «${d.title}»: на этап назад`}><ChevronLeft className="w-4 h-4" aria-hidden="true" /></button>
-                      <button onClick={() => { if (window.confirm(`Удалить сделку «${d.title}»?`)) crmStore.deleteDeal(d.id); }} className="p-2 text-slate-400 hover:text-red-300" aria-label={`Удалить сделку «${d.title}»`}><Trash2 className="w-3.5 h-3.5" aria-hidden="true" /></button>
+                      <button onClick={() => { void removeDeal(d); }} className="p-2 text-slate-400 hover:text-red-300" aria-label={`Удалить сделку «${d.title}»`}><Trash2 className="w-3.5 h-3.5" aria-hidden="true" /></button>
                       <button onClick={() => move(d, 1)} disabled={stage === DEAL_STAGES[DEAL_STAGES.length - 1]} className="p-2 text-slate-400 hover:text-white disabled:opacity-30" aria-label={`Сделка «${d.title}»: на этап вперёд`}><ChevronRight className="w-4 h-4" aria-hidden="true" /></button>
                     </div>
                   </div>
@@ -326,6 +343,7 @@ function TasksTab() {
   const [contactId, setContactId] = useState('');
   const [due, setDue] = useState('');
   const [showDone, setShowDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const contacts = crmStore.listContacts();
   const now = Date.now();
   const tasks = showDone ? crmStore.listActivities({ type: 'task' }) : crmStore.listActivities({ openTasks: true });
@@ -333,8 +351,13 @@ function TasksTab() {
   const add = (e: FormEvent) => {
     e.preventDefault();
     if (!text.trim()) return;
-    crmStore.addActivity({ type: 'task', text, contactId: contactId || undefined, dueAt: due ? new Date(`${due}T09:00`).getTime() : undefined });
-    setText(''); setDue('');
+    setError(null);
+    const dueAt = due ? new Date(`${due}T09:00`).getTime() : undefined;
+    if (dueAt !== undefined && !Number.isFinite(dueAt)) { setError('Срок указан неверно'); return; }
+    try {
+      crmStore.addActivity({ type: 'task', text, contactId: contactId || undefined, dueAt });
+      setText(''); setDue('');
+    } catch (err: any) { setError(err?.message || 'Не удалось добавить задачу'); }
   };
 
   return (
@@ -347,6 +370,7 @@ function TasksTab() {
         </select>
         <input type="date" className={input} aria-label="Срок" value={due} onChange={e => setDue(e.target.value)} />
         <button type="submit" className={`${btnPrimary} md:col-span-4 justify-center`} disabled={!text.trim()}><Plus className="w-4 h-4" aria-hidden="true" />Добавить задачу</button>
+        {error && <p role="alert" className="md:col-span-4 text-sm text-red-400">{error}</p>}
       </form>
       <label className="flex items-center gap-2 text-sm text-slate-400">
         <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} />Показывать выполненные
@@ -433,11 +457,20 @@ function DataTab() {
     } finally { setBusy(false); }
   };
 
-  const readFile = (handler: (text: string) => string) => async (e: ChangeEvent<HTMLInputElement>) => {
+  const readFile = (handler: (text: string) => string | Promise<string>) => async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    try { assertFileSize(file, /\.json$/i.test(file.name) ? MAX_BYTES.backupJson : MAX_BYTES.csv); setMessage(handler(await file.text())); } catch (err: any) { setMessage(err?.message || 'Не удалось прочитать файл'); }
+    try {
+      assertFileSize(file, /\.json$/i.test(file.name) ? MAX_BYTES.backupJson : MAX_BYTES.csv);
+      setMessage(await handler(await file.text()));
+    } catch (err: any) { setMessage(err?.message || 'Не удалось прочитать файл'); }
+  };
+
+  const clearAll = async () => {
+    const ok = await askConfirm('Удалить ВСЕ данные CRM на этом устройстве? Вернуть их можно только из резервной копии.', { okText: 'Удалить всё' });
+    if (!ok) return;
+    try { crmStore.clearAll(); setMessage('CRM очищена'); } catch (err: any) { setMessage(err?.message || 'Не удалось очистить CRM'); }
   };
 
   const stamp = new Date().toISOString().slice(0, 10);
@@ -466,8 +499,9 @@ function DataTab() {
         <div className="flex flex-wrap gap-2">
           <button className={btnGhost} onClick={() => download(`crm-backup-${stamp}.json`, crmStore.exportJSON(), 'application/json')}><Download className="w-4 h-4" aria-hidden="true" />Сохранить</button>
           <label className={`${btnGhost} cursor-pointer focus-within:ring-2 focus-within:ring-indigo-400`}><Upload className="w-4 h-4" aria-hidden="true" />Восстановить
-            <input type="file" accept=".json,application/json" className="sr-only" aria-label="Восстановить CRM из резервной копии" onChange={readFile(text => {
-              if (!window.confirm('Заменить все данные CRM содержимым файла?')) return 'Отменено';
+            <input type="file" accept=".json,application/json" className="sr-only" aria-label="Восстановить CRM из резервной копии" onChange={readFile(async text => {
+              const ok = await askConfirm('Заменить все данные CRM содержимым файла?', { okText: 'Заменить' });
+              if (!ok) return 'Отменено';
               const r = crmStore.importJSON(text);
               return `Восстановлено: контактов ${r.contacts}, сделок ${r.deals}, записей ${r.activities}.`;
             })} />
@@ -477,7 +511,7 @@ function DataTab() {
       <div className={`${card} p-4 space-y-2`}>
         <h4 className="font-semibold text-red-300">Очистить CRM</h4>
         <p className="text-sm text-slate-400">Удалит все данные на этом устройстве. Сначала сделайте резервную копию.</p>
-        <button className={`${btnGhost} text-red-300`} onClick={() => { if (window.confirm('Удалить ВСЕ данные CRM?')) { crmStore.clearAll(); setMessage('CRM очищена'); } }}><Trash2 className="w-4 h-4" aria-hidden="true" />Очистить</button>
+        <button className={`${btnGhost} text-red-300`} onClick={() => { void clearAll(); }}><Trash2 className="w-4 h-4" aria-hidden="true" />Очистить</button>
       </div>
       {message && <p role="status" className="md:col-span-2 text-sm text-indigo-200">{message}</p>}
     </div>
