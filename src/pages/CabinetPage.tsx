@@ -3,6 +3,7 @@
 // те же пять проверок защиты и список локальных моделей (на телефоне — с компьютера в домашней сети).
 // Проверки подписаны словами («включено / не включено»), а не только цветом иконки. Полное удаление
 // подтверждается в окне Светланы (askConfirm), и только после настоящего нажатия человеком.
+// Ошибка связи не оставляет кнопки выключенными: везде try/finally, технический текст ошибки не показывается.
 import { useEffect, useState, type MouseEvent } from 'react';
 import { Link2, Unlink, ShieldCheck, ShieldAlert, Trash2, RefreshCw } from 'lucide-react';
 import { linkDevice, unlinkLocal, loadMeta, sendHeartbeat, collectHeartbeat, normalizeLinkCode, type CabinetMeta, type Heartbeat } from '../services/cabinet/CabinetClient';
@@ -10,6 +11,7 @@ import { wipeAllLocalData } from '../services/security/WipeAll';
 import { userGesture } from '../services/security/ActionGate';
 import { isAndroidApp } from '../platform';
 import { askConfirm } from '../components/ConfirmDialog';
+import { safeErrorText } from '../services/safeErrorText';
 
 const card = 'rounded-xl border border-white/10 bg-white/5 p-5 space-y-3';
 const input = 'w-full px-3 py-2 rounded-lg bg-slate-900 border border-white/10 text-slate-100 font-mono tracking-widest uppercase';
@@ -23,7 +25,7 @@ const CHECKS: [keyof Heartbeat['status'], string][] = [
   ['paired_with', 'Подключён Svetlana-home'],
 ];
 
-const errText = (e: unknown): string => (typeof e === 'string' ? e : (e as { message?: string } | null)?.message) || 'отменено';
+const errText = (e: unknown): string => safeErrorText(e, 'отменено');
 
 export default function CabinetPage() {
   const android = isAndroidApp();
@@ -34,31 +36,52 @@ export default function CabinetPage() {
   const [code, setCode] = useState('');
   const [name, setName] = useState(android ? 'Мой телефон' : 'Мой компьютер');
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState('');
+  const [msg, setMsg] = useState<{ text: string; error: boolean } | null>(null);
+  const say = (text: string, error = false) => setMsg({ text, error });
 
-  const refresh = async () => { setHb(await collectHeartbeat()); setMeta(loadMeta()); };
+  /** Состояние защиты и привязки. Сбой не роняет страницу: остаётся прежнее состояние. */
+  const refresh = async () => {
+    try { setHb(await collectHeartbeat()); } catch { /* проверки покажутся при следующем обновлении */ }
+    try { setMeta(loadMeta()); } catch { /* хранилище недоступно */ }
+  };
   useEffect(() => { void refresh(); }, []);
 
   const onLink = async () => {
-    setMsg(''); setBusy(true);
+    setMsg(null); setBusy(true);
     try {
       normalizeLinkCode(code);
       await linkDevice({ code, name });
       setCode('');
-      await sendHeartbeat();
-      setMsg(`${device} привязан к личному кабинету.`);
-    } catch (e: any) { setMsg(e?.message ?? 'Не удалось привязать'); }
+      await sendHeartbeat().catch(() => undefined);
+      say(`${device} привязан к личному кабинету.`);
+    } catch (e) { say(safeErrorText(e, 'Не удалось привязать. Проверьте код и интернет.'), true); }
     finally { setBusy(false); await refresh(); }
   };
 
   const onSync = async () => {
     setBusy(true);
-    const r = await sendHeartbeat();
-    setMsg(r === 'ok' ? 'Состояние отправлено в кабинет.' : r === 'unlinked' ? 'Устройство отключено в кабинете.' : r === 'not_linked' ? `${device} ещё не привязан.` : 'Нет связи с сайтом, попробую позже.');
-    setBusy(false); await refresh();
+    try {
+      const r = await sendHeartbeat();
+      if (r === 'ok') say('Состояние отправлено в кабинет.');
+      else say(r === 'unlinked' ? 'Устройство отключено в кабинете.' : r === 'not_linked' ? `${device} ещё не привязан.` : 'Нет связи с сайтом, попробую позже.', true);
+    } catch {
+      say('Нет связи с сайтом, попробую позже.', true);
+    } finally {
+      setBusy(false);
+      await refresh();
+    }
   };
 
-  const onUnlink = async () => { await unlinkLocal(); setMsg(`Привязка удалена ${onDevice}. Отключите устройство и в кабинете.`); await refresh(); };
+  const onUnlink = async () => {
+    try {
+      await unlinkLocal();
+      say(`Привязка удалена ${onDevice}. Отключите устройство и в кабинете.`);
+    } catch (e) {
+      say(safeErrorText(e, 'Не удалось отвязать устройство. Попробуйте ещё раз.'), true);
+    } finally {
+      await refresh();
+    }
+  };
 
   const onWipe = async (e: MouseEvent) => {
     // Только настоящее нажатие человеком: голос, нейросеть или скрипт удалить данные не могут.
@@ -71,11 +94,11 @@ export default function CabinetPage() {
       n = await wipeAllLocalData();
     } catch (err) {
       // «Отмена» в окне системы: CRM, бизнес и прочие данные не тронуты.
-      setMsg(`Удаление остановлено: ${errText(err)}. Клиенты, финансы, записи и настройки остались ${onDevice}.`);
+      say(`Удаление остановлено: ${errText(err)}. Клиенты, финансы, записи и настройки остались ${onDevice}.`, true);
       setBusy(false);
       return;
     }
-    setMsg(`Удалено записей: ${n}. Приложение перезапустится.`);
+    say(`Удалено записей: ${n}. Приложение перезапустится.`);
     setTimeout(() => window.location.reload(), 800);
   };
 
@@ -85,11 +108,11 @@ export default function CabinetPage() {
         <h3 className="font-semibold flex items-center gap-2"><Link2 className="w-4 h-4" aria-hidden="true" />Личный кабинет</h3>
         {meta ? (
           <>
-            <p className="text-sm">{device} привязан {new Date(meta.linkedAt).toLocaleString('ru-RU')}. Последняя отправка: {meta.lastOk ? new Date(meta.lastOk).toLocaleString('ru-RU') : '—'}{meta.lastError ? ` (ошибка: ${meta.lastError})` : ''}.</p>
+            <p className="text-sm">{device} привязан {new Date(meta.linkedAt).toLocaleString('ru-RU')}. Последняя отправка: {meta.lastOk ? new Date(meta.lastOk).toLocaleString('ru-RU') : '—'}{meta.lastError ? ` (ошибка: ${safeErrorText(meta.lastError, 'нет связи')})` : ''}.</p>
             <p className="text-xs text-slate-400">В кабинет уходят только версия, флаги защиты и названия моделей. Клиенты, деньги, голос и переписка остаются {onDevice}.</p>
             <div className="flex flex-wrap gap-2">
-              <button disabled={busy} onClick={onSync} className={`${btn} bg-indigo-600 text-white`}><RefreshCw className="w-4 h-4" aria-hidden="true" />Обновить</button>
-              <button onClick={onUnlink} className={`${btn} bg-white/5 border border-white/10`}><Unlink className="w-4 h-4" aria-hidden="true" />Отвязать</button>
+              <button disabled={busy} aria-busy={busy} onClick={onSync} className={`${btn} bg-indigo-600 text-white disabled:opacity-50`}><RefreshCw className="w-4 h-4" aria-hidden="true" />Обновить</button>
+              <button disabled={busy} onClick={onUnlink} className={`${btn} bg-white/5 border border-white/10 disabled:opacity-50`}><Unlink className="w-4 h-4" aria-hidden="true" />Отвязать</button>
             </div>
           </>
         ) : (
@@ -97,10 +120,10 @@ export default function CabinetPage() {
             <p className="text-sm text-slate-400">На сайте откройте «Мои устройства» → «Получить код» и введите его здесь. Код действует 10 минут.</p>
             <input className={input} placeholder="XXXX-XXXX-XXXX" maxLength={14} value={code} onChange={e => setCode(e.target.value)} aria-label="Код из личного кабинета" />
             <input className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-white/10" maxLength={80} value={name} onChange={e => setName(e.target.value)} aria-label={android ? 'Название телефона' : 'Название компьютера'} />
-            <button disabled={busy || !code.trim()} onClick={onLink} className={`${btn} bg-indigo-600 text-white disabled:opacity-50`}><Link2 className="w-4 h-4" aria-hidden="true" />Привязать</button>
+            <button disabled={busy || !code.trim()} aria-busy={busy} onClick={onLink} className={`${btn} bg-indigo-600 text-white disabled:opacity-50`}><Link2 className="w-4 h-4" aria-hidden="true" />Привязать</button>
           </>
         )}
-        {msg && <p role="status" className="text-sm text-indigo-200 break-words">{msg}</p>}
+        {msg && <p role={msg.error ? 'alert' : 'status'} className={`text-sm break-words ${msg.error ? 'text-amber-300' : 'text-indigo-200'}`}>{msg.text}</p>}
       </div>
 
       <div className={card}>
