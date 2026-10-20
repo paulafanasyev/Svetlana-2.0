@@ -2,7 +2,9 @@
 // Настройки одинаковые на сайте, в Windows и в Android: запись своего голоса, модель распознавания на
 // устройстве (в приложениях), облачное распознавание (Groq/OpenAI), озвучка. В Android без записанного голоса
 // слушает распознавание самого телефона (ключ не нужен). Панель закрывается системной кнопкой «Назад» и Escape.
-// Панель настроек — модальное окно (useDialogFocus): фокус на «Закрыть», Tab не уходит на страницу под ним.
+// Панель настроек — модальное окно (useDialogFocus): фокус на «Закрыть», Tab не уходит на страницу под ним,
+// а затенение не даёт нажать на страницу мышью или пальцем (нажатие на затенение закрывает панель).
+// Уход со страницы отменяет прослушивание (cancel): запоздавшая фраза уже не выполнится как команда.
 import { useEffect, useRef, useState } from 'react';
 import { Mic, MicOff, Settings2, X, Volume2, VolumeX } from 'lucide-react';
 import { sttSupport, getCloudStt, setCloudStt, resetWebStt, STT_PRESETS, type Listener } from '../services/voice/SpeechEngine';
@@ -33,16 +35,28 @@ export default function VoiceButton() {
   const listenerRef = useRef<Listener | null>(null);
   const hideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
+  const aliveRef = useRef(true);
 
-  useEffect(() => () => { listenerRef.current?.stop(); if (hideRef.current) clearTimeout(hideRef.current); }, []);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      const l = listenerRef.current;
+      listenerRef.current = null;
+      if (l) { if (l.cancel) l.cancel(); else l.stop(); }
+      if (hideRef.current) clearTimeout(hideRef.current);
+    };
+  }, []);
 
   const show = (b: { heard?: string; reply?: string; error?: string }, ms = 12000) => {
+    if (!aliveRef.current) return;
     setBubble(b);
     if (hideRef.current) clearTimeout(hideRef.current);
     hideRef.current = setTimeout(() => setBubble(null), ms);
   };
 
   const handle = async (raw: string) => {
+    if (!aliveRef.current) return;
     const command = normalizeSpoken(raw);
     if (!command) return;
     const intent = detectCRMIntent(command);
@@ -54,6 +68,7 @@ export default function VoiceButton() {
     }
     try {
       const lines = await runCRMActions([intent], 'voice');
+      if (!aliveRef.current) return;
       const reply = lines.join('\n');
       show({ heard: command, reply }, 20000);
       speakText(reply);
@@ -70,7 +85,7 @@ export default function VoiceButton() {
       onPartial: t => show({ heard: t }, 30000),
       onFinal: t => { void handle(t); },
       onError: m => show({ error: m }),
-      onEnd: () => { listenerRef.current = null; setListening(false); },
+      onEnd: () => { listenerRef.current = null; if (aliveRef.current) setListening(false); },
     });
     listenerRef.current = l;
     setListening(!!l);
@@ -139,6 +154,8 @@ function VoiceSettings({ onClose }: { onClose: () => void }) {
   const now = s.mode === 'native' ? 'распознавание телефона' : s.mode === 'web' ? 'встроенное распознавание' : s.mode === 'cloud' ? 'облачное распознавание' : 'распознавание не настроено';
 
   return (
+    <>
+    <div data-testid="voice-settings-backdrop" aria-hidden="true" className="fixed inset-0 z-40 bg-black/40" onClick={onClose} />
     <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="voice-settings-title" className="fixed bottom-20 left-3 sm:left-5 z-50 w-[22rem] max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-y-auto rounded-xl bg-slate-900/98 border border-white/10 p-4 text-sm text-white shadow-2xl space-y-3 focus:outline-none">
       <div className="flex items-center justify-between">
         <h3 id="voice-settings-title" className="font-semibold">Голос Светланы</h3>
@@ -183,5 +200,6 @@ function VoiceSettings({ onClose }: { onClose: () => void }) {
       </div>
       <p className="text-[11px] text-slate-400">Ключ хранится только на этом устройстве. Запись голоса уходит в выбранный сервис только при нажатии «Голос».</p>
     </div>
+    </>
   );
 }

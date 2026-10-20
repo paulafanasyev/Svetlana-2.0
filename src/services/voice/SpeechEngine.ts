@@ -6,6 +6,8 @@
 // которую распознаёт GigaAM на самом телефоне или облако (listenRecorded): тогда голос проверяется как на компьютере,
 // причём по той же записи, из которой распознан текст (onAudio).
 // Режим «без рук» (continuous): после stop() запоздавшие результаты уже не отдаются: человек сказал «хватит».
+// Два способа остановить: stop() — «я договорил» (одна команда: сказанное до нажатия распознаётся),
+// cancel() — «отмена» (уход со страницы, закрытие): ни один результат после неё не отдаётся ни в одном режиме.
 
 import { getSecret, setSecret } from '../security/SecretStore';
 import { isAndroidApp } from '../../platform';
@@ -173,7 +175,11 @@ export interface ListenOptions {
   onError?: (message: string) => void;
   onEnd?: () => void;
 }
-export interface Listener { stop(): void; mode: SttMode }
+/**
+ * stop — «договорил»: в режиме одной команды сказанное до нажатия распознаётся.
+ * cancel — отмена: микрофон отпущен, ни onFinal, ни onError уже не будет (onEnd — один раз).
+ */
+export interface Listener { stop(): void; cancel?(): void; mode: SttMode }
 
 const WEB_ERRORS: Record<string, string> = {
   'not-allowed': 'Нет доступа к микрофону. Разрешите микрофон в настройках.',
@@ -193,18 +199,27 @@ const micError = (e: unknown): string =>
 /** Распознавание речи телефона (приложение для Android). Одна фраза за раз, телефон сам ждёт паузу. */
 function listenNative(opts: ListenOptions): Listener {
   let stopped = false;
+  let cancelled = false;
+  let ended = false;
+  const end = () => { if (ended) return; ended = true; opts.onEnd?.(); };
   opts.onPartial?.('Слушаю…');
   void androidListen()
     .then(text => {
+      if (cancelled) return;
       if (text) opts.onFinal(text);
       else if (!stopped) opts.onError?.(NOT_HEARD);
     })
     .catch(e => {
+      if (cancelled) return;
       const m = typeof e === 'string' ? e : (e as { message?: unknown } | null)?.message;
       if (!stopped && m) opts.onError?.(String(m).slice(0, 300));
     })
-    .finally(() => opts.onEnd?.());
-  return { mode: 'native', stop: () => { stopped = true; void androidStopListening().catch(() => undefined); } };
+    .finally(end);
+  return {
+    mode: 'native',
+    stop: () => { stopped = true; void androidStopListening().catch(() => undefined); },
+    cancel: () => { cancelled = true; stopped = true; void androidStopListening().catch(() => undefined); end(); },
+  };
 }
 
 function listenWeb(opts: ListenOptions): Listener {
@@ -215,7 +230,11 @@ function listenWeb(opts: ListenOptions): Listener {
   rec.continuous = !!opts.continuous;
   rec.maxAlternatives = 1;
   let stopped = false;
+  let cancelled = false;
+  let ended = false;
+  const end = () => { if (ended) return; ended = true; opts.onEnd?.(); };
   rec.onresult = (event: any) => {
+    if (cancelled) return;
     // «Без рук» остановлен: запоздавшие результаты уже не команды. В режиме одной фразы сказанное до «стоп» отдаём.
     if (stopped && opts.continuous) return;
     let interim = '';
@@ -227,6 +246,7 @@ function listenWeb(opts: ListenOptions): Listener {
     if (interim) opts.onPartial?.(interim);
   };
   rec.onerror = (e: any) => {
+    if (cancelled) return;
     const code = String(e?.error ?? '');
     if ((code === 'network' || code === 'service-not-allowed') && getCloudStt()) storage()?.setItem(WEB_BROKEN_KEY, '1');
     const msg = WEB_ERRORS[code] ?? `Ошибка распознавания: ${code}`;
@@ -234,7 +254,7 @@ function listenWeb(opts: ListenOptions): Listener {
   };
   rec.onend = () => {
     if (opts.continuous && !stopped) { try { rec.start(); return; } catch { /* already started */ } }
-    opts.onEnd?.();
+    end();
   };
   try {
     rec.start();
@@ -243,15 +263,24 @@ function listenWeb(opts: ListenOptions): Listener {
     stopped = true;
     rec.onresult = null; rec.onerror = null; rec.onend = null;
     opts.onError?.(micError(e));
-    opts.onEnd?.();
-    return { mode: 'web', stop: () => undefined };
+    end();
+    return { mode: 'web', stop: () => undefined, cancel: () => undefined };
   }
-  return { mode: 'web', stop: () => { stopped = true; try { rec.stop(); } catch { /* noop */ } } };
+  return {
+    mode: 'web',
+    stop: () => { stopped = true; try { rec.stop(); } catch { /* noop */ } },
+    cancel: () => {
+      cancelled = true; stopped = true;
+      try { (rec.abort ?? rec.stop).call(rec); } catch { /* noop */ }
+      end();
+    },
+  };
 }
 
 function listenCloud(opts: ListenOptions, cfg: CloudSttConfig): Listener {
   let stopped = false;
   let ended = false;
+  let cancelled = false;
   let recorder: any = null;
   let stream: MediaStream | null = null;
   let ctx: AudioContext | null = null;
@@ -276,7 +305,7 @@ function listenCloud(opts: ListenOptions, cfg: CloudSttConfig): Listener {
       if (recorder && recorder.state !== 'inactive') recorder.stop();
     } catch {
       // Запись не остановилась штатно: отпускаем микрофон и завершаем, а не висим в «Слушаю…».
-      if (!ended) opts.onError?.('Запись прервалась. Скажите ещё раз.');
+      if (!ended && !cancelled) opts.onError?.('Запись прервалась. Скажите ещё раз.');
       end();
     }
   };
@@ -292,14 +321,15 @@ function listenCloud(opts: ListenOptions, cfg: CloudSttConfig): Listener {
       recorder.onstop = async () => {
         cleanup();
         if (ended) return;
+        if (cancelled) { end(); return; }
         try {
           const blob = new Blob(chunks, { type: recorder.mimeType || type || 'audio/webm' });
           if (blob.size < 2000) { opts.onError?.(NOT_HEARD); return; }
           opts.onPartial?.('Распознаю…');
           const text = await transcribe(blob, cfg);
-          if (ended) return;
+          if (ended || cancelled) return;
           if (text) opts.onFinal(text); else opts.onError?.(NOT_HEARD);
-        } catch (e: any) { if (!ended) opts.onError?.(String(e?.message || 'Не удалось распознать').slice(0, 300)); } finally { end(); }
+        } catch (e: any) { if (!ended && !cancelled) opts.onError?.(String(e?.message || 'Не удалось распознать').slice(0, 300)); } finally { end(); }
       };
       recorder.start();
       opts.onPartial?.('Слушаю…');
@@ -327,12 +357,16 @@ function listenCloud(opts: ListenOptions, cfg: CloudSttConfig): Listener {
       }
       if (stopped) finish();
     } catch (e: any) {
-      if (!ended) opts.onError?.(micError(e));
+      if (!ended && !cancelled) opts.onError?.(micError(e));
       end();
     }
   })();
 
-  return { mode: 'cloud', stop: () => { stopped = true; finish(); } };
+  return {
+    mode: 'cloud',
+    stop: () => { stopped = true; finish(); },
+    cancel: () => { cancelled = true; stopped = true; finish(); end(); },
+  };
 }
 
 /** Пороги детектора речи для listenRecorded. */
@@ -361,6 +395,7 @@ export function listenRecorded(opts: ListenOptions, rec = recordedRecognizer()):
   const continuous = !!opts.continuous;
   let stopped = false;   // больше не слушаем
   let ended = false;     // onEnd отдан
+  let cancelled = false; // отмена: ни один результат больше не отдаём
   let pending = 0;       // фразы на распознавании
   let stream: MediaStream | null = null;
   let ctx: AudioContext | null = null;
@@ -397,11 +432,13 @@ export function listenRecorded(opts: ListenOptions, rec = recordedRecognizer()):
     rec.recognize(pcm, sr)
       .then(t => {
         const text = String(t ?? '').trim();
+        if (cancelled) return;
         // «Без рук» остановлен, пока фраза распознавалась: она уже не команда.
         if (ended || (continuous && stopped)) return;
         if (text) { opts.onAudio?.(pcm, sr); opts.onFinal(text); }
         else if (!continuous) opts.onError?.(NOT_HEARD);
       }, e => {
+        if (cancelled) return;
         if (ended || (continuous && stopped)) return;
         const m = typeof e === 'string' ? e : (e as { message?: unknown } | null)?.message;
         opts.onError?.(String(m || 'Не удалось распознать').slice(0, 300));
@@ -475,7 +512,7 @@ export function listenRecorded(opts: ListenOptions, rec = recordedRecognizer()):
       src.connect(proc); proc.connect(sink); sink.connect(c.destination);
       opts.onPartial?.('Слушаю…');
     } catch (e) {
-      if (!ended) opts.onError?.(micError(e));
+      if (!ended && !cancelled) opts.onError?.(micError(e));
       stopped = true;
       end();
     }
@@ -490,6 +527,12 @@ export function listenRecorded(opts: ListenOptions, rec = recordedRecognizer()):
       stopped = true;
       release();
       maybeEnd();
+    },
+    cancel: () => {
+      cancelled = true;
+      stopped = true;
+      seg = null; segLen = 0; voicedMs = 0;
+      end();
     },
   };
 }
