@@ -3,6 +3,9 @@
 // или по голосу выполняется только после явного подтверждения с показом точных параметров.
 // Голос строже: запись голоса владельца можно воспроизвести, поэтому по голосу даже чтение данных
 // (контакты, финансы, записи) показывается только после нажатия — воспроизведённая запись ничего не узнает.
+// Личные данные клиентов (имена, телефоны, долги, расписание) нейросеть получает только после нажатия:
+// иначе внедрённая в заметку или ответ внешнего сервиса команда могла бы молча вытащить базу клиентов в разговор.
+// Сводные цифры без имён (сводка CRM, налоги, свободные окна, поиск поддержки) по-прежнему без окна.
 
 import { safeJsonParse, stripControl, sanitizeArgs } from './SafeData';
 
@@ -86,6 +89,17 @@ const READ_ONLY = new Set([
   'biz_free_slots', 'biz_agenda', 'biz_booking_reminders',
 ]);
 
+/**
+ * Чтение личных данных клиентов: имена, телефоны, долги, визиты, лучшие клиенты.
+ * По просьбе нейросети — только после подтверждения (результат уйдёт в разговор с ней).
+ */
+const SENSITIVE_READ = new Set([
+  'crm_find_contacts', 'biz_receivables', 'biz_analytics', 'biz_agenda', 'biz_booking_reminders',
+]);
+
+/** Предупреждение в окне подтверждения, когда нейросеть просит личные данные клиентов. */
+export const SENSITIVE_READ_WARNING = 'Нейросеть увидит личные данные клиентов (имена, телефоны, суммы). Разрешайте, только если сами просили это показать.';
+
 const LABELS: Record<string, string> = {
   crm_add_contact: 'Добавить контакт', crm_update_contact: 'Изменить контакт', crm_add_note: 'Добавить заметку',
   crm_add_task: 'Создать задачу', crm_complete_task: 'Закрыть задачу', crm_create_deal: 'Создать сделку',
@@ -94,6 +108,9 @@ const LABELS: Record<string, string> = {
   biz_set_profile: 'Изменить бизнес-профиль', biz_add_income: 'Записать доход', biz_add_expense: 'Записать расход',
   biz_create_document: 'Создать документ', biz_mark_paid: 'Отметить счёт оплаченным',
   biz_book: 'Записать клиента', biz_cancel_booking: 'Отменить запись', biz_complete_booking: 'Отметить визит',
+  biz_receivables: 'Показать неоплаченные счета', biz_analytics: 'Показать аналитику по клиентам',
+  biz_agenda: 'Показать расписание', biz_booking_reminders: 'Показать напоминания клиентам',
+  biz_tax_summary: 'Показать налоги', biz_free_slots: 'Показать свободные окна',
 };
 
 /**
@@ -139,21 +156,28 @@ const ARG_LABELS: Record<string, string> = {
   amount: 'Сумма', client: 'Клиент', name: 'Имя', description: 'Описание', service: 'Услуга', type: 'Тип',
   invoice: 'Счёт', when: 'Когда', date: 'Дата', phone: 'Телефон', text: 'Текст', stage: 'Этап', regime: 'Режим',
   payerType: 'Плательщик', payMethod: 'Способ оплаты', category: 'Категория', title: 'Название', value: 'Сумма',
+  query: 'Поиск', status: 'Статус',
 };
 
 export function isReadOnlyTool(tool: string): boolean {
   return READ_ONLY.has(tool);
 }
 
+/** Чтение личных данных клиентов (для нейросети — только с подтверждением). */
+export function isSensitiveRead(tool: string): boolean {
+  return SENSITIVE_READ.has(tool);
+}
+
 /**
  * Нужно ли явное подтверждение. Команда пользователя (настоящий жест) — нет. Голос — всегда, даже для чтения
- * (запись голоса можно воспроизвести). Остальные источники — для всего, что меняет данные,
- * если правило инструмента (registerActionPolicy) явно не разрешило вызов без окна.
+ * (запись голоса можно воспроизвести). Нейросеть — для всего, что меняет данные, и для чтения личных
+ * данных клиентов. Неизвестный источник (локальная команда, написанная руками, результат модели не видит) —
+ * для всего, что меняет данные. Правило инструмента (registerActionPolicy) может явно разрешить вызов без окна.
  */
 export function needsConfirmation(tool: string, source: ActionSource, args?: Record<string, unknown>): boolean {
   if (source === 'user') return false;
   if (source === 'voice') return true;
-  if (READ_ONLY.has(tool)) return false;
+  if (READ_ONLY.has(tool)) return source === 'llm' && SENSITIVE_READ.has(tool);
   return !autoAllowed(tool, args);
 }
 
@@ -171,6 +195,7 @@ export function summarizeAction(req: ActionRequest): ActionSummary {
   if (what) lines.unshift(`Что будет: ${stripControl(what, false).slice(0, 400)}`);
   let warning: string | null = null;
   try { warning = WARN.get(req.tool)?.(req.args) ?? null; } catch { warning = null; }
+  if (!warning && SENSITIVE_READ.has(req.tool) && req.source !== 'user') warning = SENSITIVE_READ_WARNING;
   return {
     ...(warning ? { warning: stripControl(warning, false).slice(0, 400) } : {}),
     title: LABELS[req.tool] ?? DYNAMIC_LABELS.get(req.tool) ?? stripControl(req.tool, false),
