@@ -2,6 +2,8 @@
 // Безопасность: секреты (ключи, токены, пароли, коды из SMS, карты) вырезаются УЖЕ ПРИ ЗАПИСИ в память,
 // поэтому их нет ни в оперативной памяти, ни в истории, ни на диске. Телефоны сохраняются.
 // Все читающие методы отдают КОПИИ: изменить память в обход очистки секретов через полученный объект нельзя.
+// Устаревшие записи удаляются и из оперативной памяти (pruneLongTerm), а долгая память не растёт бесконечно:
+// сверх LONG_TERM_LIMIT уходят самые неважные и давно ненужные (предпочтения и факты — в последнюю очередь).
 import { safeJsonParse, stripControl, MAX_BYTES } from './security/SafeData';
 import { redactSecrets, redactDeep } from './security/Redact';
 
@@ -28,6 +30,8 @@ const DAY = 24 * 60 * 60 * 1000;
 /** Сколько храним на диске: переписку — 7 дней, записи о разговорах и действиях — 30 дней. */
 export const MESSAGE_TTL_MS = 7 * DAY;
 export const EPISODIC_TTL_MS = 30 * DAY;
+/** Не больше стольких записей долгой памяти: иначе хранилище браузера переполнится и память перестанет сохраняться. */
+export const LONG_TERM_LIMIT = 1000;
 const num = (v: unknown, def: number, min: number, max: number): number => (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : def);
 
 /** Глубокая копия (для данных, которые отдаём наружу). */
@@ -70,6 +74,26 @@ export function persistable(item: MemoryItem): MemoryItem {
   return { ...item, content: redactSecrets(item.content), metadata: item.metadata ? redactDeep(item.metadata) : undefined };
 }
 
+/** Предпочтения и факты ценнее записей о разговорах и действиях. */
+const keepRank = (i: MemoryItem): number => (i.type === 'preference' || i.type === 'fact' ? 1 : 0);
+
+/**
+ * Какие записи долгой памяти удалить: все устаревшие и, если записей больше limit, самые неважные
+ * (сначала разговоры и действия, затем меньшая важность, затем давнее всего нужные).
+ */
+export function pruneLongTerm(items: MemoryItem[], now = Date.now(), limit = LONG_TERM_LIMIT): string[] {
+  const drop = items.filter(i => isExpired(i, now)).map(i => i.id);
+  const gone = new Set(drop);
+  const alive = items.filter(i => !gone.has(i.id));
+  const extra = alive.length - Math.max(0, limit);
+  if (extra > 0) {
+    const order = [...alive].sort((a, b) =>
+      keepRank(a) - keepRank(b) || a.importance - b.importance || a.lastAccessed - b.lastAccessed);
+    for (const i of order.slice(0, extra)) drop.push(i.id);
+  }
+  return drop;
+}
+
 class Memory {
   private shortTermMemory: MemoryItem[] = [];
   private longTermMemory: Map<string, MemoryItem> = new Map();
@@ -80,6 +104,12 @@ class Memory {
 
   constructor() {
     this.loadFromStorage();
+  }
+
+  /** Удалить устаревшие и лишние записи долгой памяти (и в оперативной памяти, а не только на диске). */
+  private prune(now = Date.now()) {
+    for (const id of pruneLongTerm(Array.from(this.longTermMemory.values()), now)) this.longTermMemory.delete(id);
+    this.conversationContext.messages = this.conversationContext.messages.filter(m => now - m.timestamp <= MESSAGE_TTL_MS);
   }
 
   private loadFromStorage() {
@@ -106,8 +136,9 @@ class Memory {
           userMood: typeof ctx.userMood === 'string' ? stripControl(ctx.userMood).slice(0, 50) : undefined,
         };
       }
+      this.prune(now);
     } catch (e) {
-      console.error('Failed to load memory:', e);
+      console.error('Failed to load memory:', e instanceof Error ? e.name : 'error');
       this.longTermMemory = new Map();
       this.conversationContext = { messages: [] };
     }
@@ -117,22 +148,20 @@ class Memory {
     try {
       if (typeof localStorage === 'undefined') return;
       const now = Date.now();
+      this.prune(now);
       const ctx = this.conversationContext;
       const data = {
         longTerm: Array.from(this.longTermMemory.entries())
-          .filter(([, item]) => !isExpired(item, now))
           .map(([id, item]) => [id, persistable(item)]),
         conversationContext: {
-          messages: ctx.messages
-            .filter(m => now - m.timestamp <= MESSAGE_TTL_MS)
-            .map(m => ({ ...m, content: redactSecrets(m.content) })),
+          messages: ctx.messages.map(m => ({ ...m, content: redactSecrets(m.content) })),
           currentTopic: ctx.currentTopic ? redactSecrets(ctx.currentTopic) : undefined,
           userMood: ctx.userMood,
         },
       };
       localStorage.setItem(this.STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
-      console.error('Failed to save memory:', e);
+      console.error('Failed to save memory:', e instanceof Error ? e.name : 'error');
     }
   }
 
@@ -172,6 +201,8 @@ class Memory {
     });
 
     this.longTermMemory.set(memoryItem.id, memoryItem);
+    // В оперативной памяти тоже не больше LONG_TERM_LIMIT, даже если хранилища нет.
+    this.prune();
     this.saveToStorage();
 
     return copyItem(memoryItem);
@@ -179,6 +210,11 @@ class Memory {
 
   getFromLongTerm(id: string): MemoryItem | undefined {
     const item = this.longTermMemory.get(id);
+    if (item && isExpired(item)) {
+      this.longTermMemory.delete(id);
+      this.saveToStorage();
+      return undefined;
+    }
     if (item) {
       item.accessCount++;
       item.lastAccessed = Date.now();
@@ -188,7 +224,8 @@ class Memory {
   }
 
   getAllLongTerm(): MemoryItem[] {
-    return Array.from(this.longTermMemory.values()).map(copyItem);
+    const now = Date.now();
+    return Array.from(this.longTermMemory.values()).filter(i => !isExpired(i, now)).map(copyItem);
   }
 
   removeFromLongTerm(id: string) {
@@ -199,8 +236,9 @@ class Memory {
   retrieve(query: string, limit: number = 5): MemoryItem[] {
     const queryLower = query.toLowerCase();
     const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
+    const now = Date.now();
 
-    const scored = Array.from(this.longTermMemory.values()).map(item => {
+    const scored = Array.from(this.longTermMemory.values()).filter(item => !isExpired(item, now)).map(item => {
       let score = 0;
       const contentLower = item.content.toLowerCase();
 
@@ -210,7 +248,7 @@ class Memory {
         }
       }
 
-      const ageHours = (Date.now() - item.timestamp) / (1000 * 60 * 60);
+      const ageHours = (now - item.timestamp) / (1000 * 60 * 60);
       score += Math.max(0, 5 - ageHours / 24);
 
       score += item.importance * 5;
@@ -241,7 +279,8 @@ class Memory {
   }
 
   getConversationHistory(limit: number = 10): { role: string; content: string }[] {
-    return this.conversationContext.messages.slice(-limit).map(copyMessage);
+    const now = Date.now();
+    return this.conversationContext.messages.filter(m => now - m.timestamp <= MESSAGE_TTL_MS).slice(-limit).map(copyMessage);
   }
 
   setConversationContext(context: Partial<ConversationContext>) {
@@ -274,7 +313,9 @@ class Memory {
     this.shortTermMemory = [];
     this.longTermMemory.clear();
     this.conversationContext = { messages: [] };
-    if (typeof localStorage !== 'undefined') localStorage.removeItem(this.STORAGE_KEY);
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.removeItem(this.STORAGE_KEY);
+    } catch { /* хранилище недоступно: в оперативной памяти уже пусто */ }
   }
 }
 
