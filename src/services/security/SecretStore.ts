@@ -4,6 +4,7 @@
 // В localStorage остаётся лишь шифротекст: копия профиля браузера, резервная копия или другая программа,
 // читающая файлы хранилища, ключей не получат. Если IndexedDB/WebCrypto недоступны, ключ хранится только
 // в памяти до закрытия приложения (в открытом виде на диск не пишется никогда).
+// «Удалить все данные» побеждает начатую запись: секрет, чей setSecret начался до удаления, на диск уже не попадёт (epoch).
 
 interface KV { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem?(k: string): void }
 function storage(): KV | null { try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; } }
@@ -11,6 +12,8 @@ function storage(): KV | null { try { return typeof localStorage !== 'undefined'
 const PREFIX = 'svetlana_secret_v1:';
 const NAME_RE = /^[a-z0-9_.-]{1,64}$/;
 const memory = new Map<string, string>();
+/** Номер «эпохи»: растёт при каждом полном удалении. Запись из прошлой эпохи отбрасывается. */
+let epoch = 0;
 
 type KeyProvider = () => Promise<CryptoKey | null>;
 
@@ -57,11 +60,15 @@ function checkName(name: string): void { if (!NAME_RE.test(name)) throw new Erro
 /** Сохранить секрет. Пустое значение удаляет. Возвращает, где он хранится. */
 export async function setSecret(name: string, value: string | null | undefined, kv: KV | null = storage()): Promise<'encrypted' | 'memory' | 'deleted'> {
   checkName(name);
+  const myEpoch = epoch;
   if (!value) { memory.delete(name); kv?.removeItem?.(PREFIX + name); return 'deleted'; }
   const key = await masterKey();
+  // Пока ждали ключ, всё удалили: этот секрет сохранять нельзя.
+  if (myEpoch !== epoch) return 'deleted';
   if (!key || !kv) { memory.set(name, value); kv?.removeItem?.(PREFIX + name); return 'memory'; }
   const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
   const ct = new Uint8Array(await globalThis.crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(name) }, key, new TextEncoder().encode(value)));
+  if (myEpoch !== epoch) return 'deleted';
   kv.setItem(PREFIX + name, JSON.stringify({ v: 1, iv: b64(iv), ct: b64(ct) }));
   memory.delete(name);
   return 'encrypted';
@@ -99,6 +106,7 @@ export async function secretStorageMode(): Promise<'encrypted' | 'memory'> {
  * шифротекстов уже нет. Возвращает true, если база с ключом точно удалена.
  */
 export function clearAllSecrets(kv: KV | null = storage()): Promise<boolean> {
+  epoch++;
   memory.clear();
   keyPromise = null;
   if (kv && 'length' in (kv as any)) {
