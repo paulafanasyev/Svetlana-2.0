@@ -4,6 +4,8 @@
 // Все читающие методы отдают КОПИИ: изменить память в обход очистки секретов через полученный объект нельзя.
 // Устаревшие записи удаляются и из оперативной памяти (pruneLongTerm), а долгая память не растёт бесконечно:
 // сверх LONG_TERM_LIMIT уходят самые неважные и давно ненужные (предпочтения и факты — в последнюю очередь).
+// Хранилище переполнено: сначала уходят старые записи о разговорах и действиях (повтор записи), а если и так
+// не удалось — saveFailed в getStats() и подписчики onSaveError узнают об этом (молча не теряем).
 import { safeJsonParse, stripControl, MAX_BYTES } from './security/SafeData';
 import { redactSecrets, redactDeep } from './security/Redact';
 
@@ -32,6 +34,7 @@ export const MESSAGE_TTL_MS = 7 * DAY;
 export const EPISODIC_TTL_MS = 30 * DAY;
 /** Не больше стольких записей долгой памяти: иначе хранилище браузера переполнится и память перестанет сохраняться. */
 export const LONG_TERM_LIMIT = 1000;
+export const MEMORY_SAVE_FAILED = 'Память Светланы не сохраняется: хранилище устройства переполнено или недоступно. После перезапуска последние записи могут пропасть.';
 const num = (v: unknown, def: number, min: number, max: number): number => (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : def);
 
 /** Глубокая копия (для данных, которые отдаём наружу). */
@@ -94,28 +97,38 @@ export function pruneLongTerm(items: MemoryItem[], now = Date.now(), limit = LON
   return drop;
 }
 
-class Memory {
+interface KV { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem(k: string): void }
+function defaultStorage(): KV | null {
+  try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; }
+}
+
+export class Memory {
   private shortTermMemory: MemoryItem[] = [];
   private longTermMemory: Map<string, MemoryItem> = new Map();
   private conversationContext: ConversationContext = { messages: [] };
+  private saveFailed = false;
+  private saveErrorListeners = new Set<(message: string) => void>();
   
   private readonly SHORT_TERM_LIMIT = 50;
   private readonly STORAGE_KEY = 'svetlana_memory';
+  private readonly store: () => KV | null;
 
-  constructor() {
+  constructor(store: () => KV | null = defaultStorage) {
+    this.store = store;
     this.loadFromStorage();
   }
 
   /** Удалить устаревшие и лишние записи долгой памяти (и в оперативной памяти, а не только на диске). */
-  private prune(now = Date.now()) {
-    for (const id of pruneLongTerm(Array.from(this.longTermMemory.values()), now)) this.longTermMemory.delete(id);
+  private prune(now = Date.now(), limit = LONG_TERM_LIMIT) {
+    for (const id of pruneLongTerm(Array.from(this.longTermMemory.values()), now, limit)) this.longTermMemory.delete(id);
     this.conversationContext.messages = this.conversationContext.messages.filter(m => now - m.timestamp <= MESSAGE_TTL_MS);
   }
 
   private loadFromStorage() {
     try {
-      if (typeof localStorage === 'undefined') return;
-      const stored = localStorage.getItem(this.STORAGE_KEY);
+      const kv = this.store();
+      if (!kv) return;
+      const stored = kv.getItem(this.STORAGE_KEY);
       if (!stored) return;
       const data = safeJsonParse(stored, MAX_BYTES.storage) as { longTerm?: unknown; conversationContext?: unknown } | null;
       if (!data || typeof data !== 'object') return;
@@ -144,25 +157,56 @@ class Memory {
     }
   }
 
-  private saveToStorage() {
+  private serialize(): string {
+    const ctx = this.conversationContext;
+    return JSON.stringify({
+      longTerm: Array.from(this.longTermMemory.entries()).map(([id, item]) => [id, persistable(item)]),
+      conversationContext: {
+        messages: ctx.messages.map(m => ({ ...m, content: redactSecrets(m.content) })),
+        currentTopic: ctx.currentTopic ? redactSecrets(ctx.currentTopic) : undefined,
+        userMood: ctx.userMood,
+      },
+    });
+  }
+
+  /** Сохранить на диск. Не влезло — освобождаем место и пробуем ещё раз; не вышло — сообщаем. */
+  private saveToStorage(): boolean {
+    const kv = this.store();
+    if (!kv) return true;
+    const now = Date.now();
+    this.prune(now);
+    const attempt = () => { kv.setItem(this.STORAGE_KEY, this.serialize()); };
     try {
-      if (typeof localStorage === 'undefined') return;
-      const now = Date.now();
-      this.prune(now);
-      const ctx = this.conversationContext;
-      const data = {
-        longTerm: Array.from(this.longTermMemory.entries())
-          .map(([id, item]) => [id, persistable(item)]),
-        conversationContext: {
-          messages: ctx.messages.map(m => ({ ...m, content: redactSecrets(m.content) })),
-          currentTopic: ctx.currentTopic ? redactSecrets(ctx.currentTopic) : undefined,
-          userMood: ctx.userMood,
-        },
-      };
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(data));
-    } catch (e) {
-      console.error('Failed to save memory:', e instanceof Error ? e.name : 'error');
+      attempt();
+      this.saveFailed = false;
+      return true;
+    } catch {
+      try {
+        // Освобождаем место: половина лимита (сначала разговоры и действия) и последние 10 сообщений.
+        this.prune(now, Math.max(50, Math.floor(this.longTermMemory.size / 2)));
+        this.conversationContext.messages = this.conversationContext.messages.slice(-10);
+        attempt();
+        this.saveFailed = false;
+        return true;
+      } catch (e) {
+        const first = !this.saveFailed;
+        this.saveFailed = true;
+        console.error('Failed to save memory:', e instanceof Error ? e.name : 'error');
+        if (first) for (const l of [...this.saveErrorListeners]) { try { l(MEMORY_SAVE_FAILED); } catch { /* подписчик не ломает память */ } }
+        return false;
+      }
     }
+  }
+
+  /** Узнать, что память перестала сохраняться (сообщение приходит один раз, пока сбой не пройдёт). */
+  onSaveError(listener: (message: string) => void): () => void {
+    this.saveErrorListeners.add(listener);
+    return () => { this.saveErrorListeners.delete(listener); };
+  }
+
+  /** true — последнее сохранение на диск удалось. */
+  isPersisted(): boolean {
+    return !this.saveFailed;
   }
 
   addToShortTerm(item: Omit<MemoryItem, 'id' | 'timestamp' | 'accessCount' | 'lastAccessed'>) {
@@ -306,6 +350,7 @@ class Memory {
       shortTermCount: this.shortTermMemory.length,
       longTermCount: this.longTermMemory.size,
       conversationMessages: this.conversationContext.messages.length,
+      saveFailed: this.saveFailed,
     };
   }
 
@@ -313,8 +358,9 @@ class Memory {
     this.shortTermMemory = [];
     this.longTermMemory.clear();
     this.conversationContext = { messages: [] };
+    this.saveFailed = false;
     try {
-      if (typeof localStorage !== 'undefined') localStorage.removeItem(this.STORAGE_KEY);
+      this.store()?.removeItem(this.STORAGE_KEY);
     } catch { /* хранилище недоступно: в оперативной памяти уже пусто */ }
   }
 }
