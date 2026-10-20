@@ -95,21 +95,44 @@ export function sttSupport(): { web: boolean; cloud: boolean; recorder: boolean;
 }
 export function resetWebStt(): void { storage()?.removeItem?.(WEB_BROKEN_KEY); }
 
-export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: any }) => Promise<{ ok: boolean; status: number; json(): Promise<any>; text(): Promise<string> }>;
+export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: any; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; json(): Promise<any>; text(): Promise<string> }>;
 
-/** Отправляет запись в Whisper-совместимый API и возвращает текст. */
-export async function transcribe(audio: Blob, cfg: CloudSttConfig, fetchImpl: FetchLike = fetch as unknown as FetchLike): Promise<string> {
+/** Сколько ждать ответ облачного распознавания: дольше кнопка микрофона не должна висеть в «Распознаю…». */
+export const STT_TIMEOUT_MS = 45_000;
+export const STT_TIMEOUT_TEXT = 'Сервис распознавания не ответил вовремя. Скажите ещё раз.';
+const STT_OFFLINE_TEXT = 'Нет связи с сервисом распознавания. Проверьте интернет.';
+
+/** Отправляет запись в Whisper-совместимый API и возвращает текст. Зависший запрос обрывается по таймауту. */
+export async function transcribe(audio: Blob, cfg: CloudSttConfig, fetchImpl: FetchLike = fetch as unknown as FetchLike, timeoutMs = STT_TIMEOUT_MS): Promise<string> {
   const form = new FormData();
   const ext = /wav/.test(audio.type) ? 'wav' : /mp4|m4a|aac/.test(audio.type) ? 'm4a' : /ogg/.test(audio.type) ? 'ogg' : 'webm';
   form.append('file', audio, `voice.${ext}`);
   form.append('model', cfg.model);
   form.append('language', 'ru');
   form.append('response_format', 'json');
-  const res = await fetchImpl(`${cfg.baseUrl}/audio/transcriptions`, { method: 'POST', headers: { Authorization: `Bearer ${cfg.apiKey}` }, body: form });
-  if (res.status === 401 || res.status === 403) throw new Error('Сервис распознавания отклонил ключ. Проверьте ключ в настройках голоса.');
-  if (!res.ok) throw new Error(`Сервис распознавания недоступен (код ${res.status})`);
-  const json = await res.json();
-  return String(json?.text ?? '').trim();
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => { timedOut = true; ctrl?.abort(); reject(new Error(STT_TIMEOUT_TEXT)); }, timeoutMs);
+  });
+  try {
+    const request = (async () => {
+      let res: Awaited<ReturnType<FetchLike>>;
+      try {
+        res = await fetchImpl(`${cfg.baseUrl}/audio/transcriptions`, { method: 'POST', headers: { Authorization: `Bearer ${cfg.apiKey}` }, body: form, signal: ctrl?.signal });
+      } catch {
+        throw new Error(timedOut ? STT_TIMEOUT_TEXT : STT_OFFLINE_TEXT);
+      }
+      if (res.status === 401 || res.status === 403) throw new Error('Сервис распознавания отклонил ключ. Проверьте ключ в настройках голоса.');
+      if (!res.ok) throw new Error(`Сервис распознавания недоступен (код ${res.status})`);
+      const json = await res.json().catch(() => null);
+      return String(json?.text ?? '').trim();
+    })();
+    return await Promise.race([request, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /** PCM (-1..1) в WAV 16 бит моно: так облачное распознавание получает ровно тот звук, по которому проверен голос. */
@@ -225,35 +248,55 @@ function listenWeb(opts: ListenOptions): Listener {
 
 function listenCloud(opts: ListenOptions, cfg: CloudSttConfig): Listener {
   let stopped = false;
+  let ended = false;
   let recorder: any = null;
   let stream: MediaStream | null = null;
   let ctx: AudioContext | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
   const chunks: Blob[] = [];
   const cleanup = () => {
-    if (timer) clearInterval(timer);
+    if (timer) { clearInterval(timer); timer = null; }
     stream?.getTracks().forEach(t => t.stop());
+    stream = null;
     void ctx?.close().catch(() => undefined);
+    ctx = null;
   };
-  const finish = () => { if (recorder && recorder.state !== 'inactive') recorder.stop(); };
+  /** onEnd — ровно один раз, чтобы кнопка микрофона не зависала и не мигала. */
+  const end = () => {
+    if (ended) return;
+    ended = true;
+    cleanup();
+    opts.onEnd?.();
+  };
+  const finish = () => {
+    try {
+      if (recorder && recorder.state !== 'inactive') recorder.stop();
+    } catch {
+      // Запись не остановилась штатно: отпускаем микрофон и завершаем, а не висим в «Слушаю…».
+      if (!ended) opts.onError?.('Запись прервалась. Скажите ещё раз.');
+      end();
+    }
+  };
 
   (async () => {
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (stopped) { cleanup(); opts.onEnd?.(); return; }
+      if (stopped) { end(); return; }
       const MR = (globalThis as any).MediaRecorder;
       const type = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find(t => MR.isTypeSupported?.(t)) ?? '';
       recorder = new MR(stream, type ? { mimeType: type } : undefined);
       recorder.ondataavailable = (e: any) => { if (e.data?.size) chunks.push(e.data); };
       recorder.onstop = async () => {
         cleanup();
+        if (ended) return;
         try {
           const blob = new Blob(chunks, { type: recorder.mimeType || type || 'audio/webm' });
           if (blob.size < 2000) { opts.onError?.(NOT_HEARD); return; }
           opts.onPartial?.('Распознаю…');
           const text = await transcribe(blob, cfg);
+          if (ended) return;
           if (text) opts.onFinal(text); else opts.onError?.(NOT_HEARD);
-        } catch (e: any) { opts.onError?.(e?.message || 'Не удалось распознать'); } finally { opts.onEnd?.(); }
+        } catch (e: any) { if (!ended) opts.onError?.(String(e?.message || 'Не удалось распознать').slice(0, 300)); } finally { end(); }
       };
       recorder.start();
       opts.onPartial?.('Слушаю…');
@@ -279,10 +322,10 @@ function listenCloud(opts: ListenOptions, cfg: CloudSttConfig): Listener {
       } else {
         timer = setInterval(() => { if (Date.now() - started > 8000) finish(); }, 200);
       }
+      if (stopped) finish();
     } catch (e: any) {
-      cleanup();
-      opts.onError?.(micError(e));
-      opts.onEnd?.();
+      if (!ended) opts.onError?.(micError(e));
+      end();
     }
   })();
 
