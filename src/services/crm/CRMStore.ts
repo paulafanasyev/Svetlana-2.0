@@ -1,5 +1,7 @@
 // Svetlana CRM — local-first store (localStorage on web/Windows, in-memory in tests).
 // Contacts, companies-as-text, deals with a pipeline, activities (notes, calls, meetings, tasks).
+// Наружу отдаются только КОПИИ: экран или инструмент ИИ не может изменить контакт или сделку в обход проверок
+// и сохранения (такое изменение жило бы до перезапуска или попало бы в файл со следующим чужим сохранением).
 import { safeJsonParse, csvSafe, MAX_BYTES } from '../security/SafeData';
 
 export type ContactStatus = 'lead' | 'client' | 'partner' | 'other';
@@ -127,6 +129,11 @@ function newId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}${random}`;
 }
 
+/** Копии для выдачи наружу. */
+const copyContact = (c: CRMContact): CRMContact => ({ ...c, phones: [...c.phones], emails: [...c.emails], tags: [...c.tags] });
+const copyDeal = (d: CRMDeal): CRMDeal => ({ ...d });
+const copyActivity = (a: CRMActivity): CRMActivity => ({ ...a });
+
 /** Digits only, last 10 digits — "+7 (912) 345-67-89" and "89123456789" match. */
 export function normalizePhone(phone: string): string {
   const digits = phone.replace(/\D/g, '');
@@ -229,7 +236,9 @@ export class CRMStore {
       throw new Error(CRM_SAVE_FAILED);
     }
     this.saved = next;
-    this.listeners.forEach(l => l());
+    for (const l of [...this.listeners]) {
+      try { l(); } catch { /* ошибка одного экрана не отменяет сохранение */ }
+    }
   }
 
   subscribe(listener: () => void): () => void {
@@ -239,6 +248,27 @@ export class CRMStore {
 
   snapshot(): CRMData {
     return JSON.parse(JSON.stringify(this.data)) as CRMData;
+  }
+
+  // ---------- внутренний доступ к самим записям (только для методов хранилища) ----------
+  private contact(id: string): CRMContact | undefined {
+    return this.data.contacts.find(c => c.id === id);
+  }
+
+  private deal(id: string): CRMDeal | undefined {
+    return this.data.deals.find(d => d.id === id);
+  }
+
+  private duplicateOf(candidate: { phones?: string[]; emails?: string[]; phoneContactId?: string }): CRMContact | undefined {
+    if (candidate.phoneContactId) {
+      const byId = this.data.contacts.find(c => c.phoneContactId === candidate.phoneContactId);
+      if (byId) return byId;
+    }
+    const phones = new Set((candidate.phones ?? []).map(normalizePhone).filter(p => p.length >= 5));
+    const emails = new Set((candidate.emails ?? []).map(normalizeEmail).filter(Boolean));
+    return this.data.contacts.find(c =>
+      c.phones.some(p => phones.has(normalizePhone(p))) || c.emails.some(e => emails.has(normalizeEmail(e))),
+    );
   }
 
   // ---------- contacts ----------
@@ -255,30 +285,26 @@ export class CRMStore {
         if (c.tags.some(t => t.toLowerCase().includes(q))) return true;
         return qPhone.length >= 3 && c.phones.some(p => normalizePhone(p).includes(qPhone));
       })
-      .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+      .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+      .map(copyContact);
   }
 
   getContact(id: string): CRMContact | undefined {
-    return this.data.contacts.find(c => c.id === id);
+    const c = this.contact(id);
+    return c ? copyContact(c) : undefined;
   }
 
   findContactByName(name: string): CRMContact | undefined {
     const n = name.trim().toLowerCase();
     if (!n) return undefined;
-    return this.data.contacts.find(c => c.name.toLowerCase() === n)
-      ?? this.data.contacts.find(c => c.name.toLowerCase().includes(n));
+    const c = this.data.contacts.find(x => x.name.toLowerCase() === n)
+      ?? this.data.contacts.find(x => x.name.toLowerCase().includes(n));
+    return c ? copyContact(c) : undefined;
   }
 
   findDuplicate(candidate: { phones?: string[]; emails?: string[]; phoneContactId?: string }): CRMContact | undefined {
-    if (candidate.phoneContactId) {
-      const byId = this.data.contacts.find(c => c.phoneContactId === candidate.phoneContactId);
-      if (byId) return byId;
-    }
-    const phones = new Set((candidate.phones ?? []).map(normalizePhone).filter(p => p.length >= 5));
-    const emails = new Set((candidate.emails ?? []).map(normalizeEmail).filter(Boolean));
-    return this.data.contacts.find(c =>
-      c.phones.some(p => phones.has(normalizePhone(p))) || c.emails.some(e => emails.has(normalizeEmail(e))),
-    );
+    const c = this.duplicateOf(candidate);
+    return c ? copyContact(c) : undefined;
   }
 
   addContact(input: Partial<Omit<CRMContact, 'id' | 'createdAt' | 'updatedAt'>> & { name: string }): CRMContact {
@@ -303,11 +329,11 @@ export class CRMStore {
     };
     this.data.contacts.push(contact);
     this.commit();
-    return contact;
+    return this.getContact(contact.id) ?? copyContact(contact);
   }
 
   updateContact(id: string, patch: Partial<Omit<CRMContact, 'id' | 'createdAt'>>): CRMContact {
-    const contact = this.getContact(id);
+    const contact = this.contact(id);
     if (!contact) throw new Error(`Контакт не найден: ${id}`);
     if (patch.name !== undefined && !patch.name.trim()) throw new Error('Имя контакта обязательно');
     Object.assign(contact, patch, {
@@ -317,7 +343,7 @@ export class CRMStore {
       updatedAt: this.clock(),
     });
     this.commit();
-    return contact;
+    return this.getContact(id) ?? copyContact(contact);
   }
 
   deleteContact(id: string): void {
@@ -339,7 +365,7 @@ export class CRMStore {
       const phones = uniq(cand.phones ?? []);
       const emails = uniq((cand.emails ?? []).map(normalizeEmail));
       if (!name && phones.length === 0 && emails.length === 0) { report.skipped++; continue; }
-      const existing = this.findDuplicate({ phones, emails, phoneContactId: cand.phoneContactId });
+      const existing = this.duplicateOf({ phones, emails, phoneContactId: cand.phoneContactId });
       if (existing) {
         const knownPhones = new Set(existing.phones.map(normalizePhone));
         const newPhones = phones.filter(p => !knownPhones.has(normalizePhone(p)));
@@ -386,17 +412,19 @@ export class CRMStore {
       .filter(d => !filter.stage || d.stage === filter.stage)
       .filter(d => !filter.contactId || d.contactId === filter.contactId)
       .filter(d => filter.open === undefined || (filter.open ? d.stage !== 'won' && d.stage !== 'lost' : d.stage === 'won' || d.stage === 'lost'))
-      .sort((a, b) => b.updatedAt - a.updatedAt);
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .map(copyDeal);
   }
 
   getDeal(id: string): CRMDeal | undefined {
-    return this.data.deals.find(d => d.id === id);
+    const d = this.deal(id);
+    return d ? copyDeal(d) : undefined;
   }
 
   addDeal(input: { title: string; contactId?: string; amount?: number; currency?: string; stage?: DealStage; expectedClose?: number }): CRMDeal {
     const title = input.title.trim();
     if (!title) throw new Error('Название сделки обязательно');
-    if (input.contactId && !this.getContact(input.contactId)) throw new Error(`Контакт не найден: ${input.contactId}`);
+    if (input.contactId && !this.contact(input.contactId)) throw new Error(`Контакт не найден: ${input.contactId}`);
     const amount = Number(input.amount ?? 0);
     if (!Number.isFinite(amount) || amount < 0) throw new Error('Сумма сделки должна быть неотрицательным числом');
     const now = this.clock();
@@ -409,11 +437,11 @@ export class CRMStore {
     };
     this.data.deals.push(deal);
     this.commit();
-    return deal;
+    return this.getDeal(deal.id) ?? copyDeal(deal);
   }
 
   updateDeal(id: string, patch: Partial<Omit<CRMDeal, 'id' | 'createdAt'>>): CRMDeal {
-    const deal = this.getDeal(id);
+    const deal = this.deal(id);
     if (!deal) throw new Error(`Сделка не найдена: ${id}`);
     if (patch.stage && !DEAL_STAGES.includes(patch.stage)) throw new Error(`Неизвестный этап: ${patch.stage}`);
     if (patch.amount !== undefined && (!Number.isFinite(patch.amount) || patch.amount < 0)) throw new Error('Сумма сделки должна быть неотрицательным числом');
@@ -424,7 +452,7 @@ export class CRMStore {
     if (isClosed && !wasClosed) deal.closedAt = now;
     if (!isClosed) deal.closedAt = undefined;
     this.commit();
-    return deal;
+    return this.getDeal(id) ?? copyDeal(deal);
   }
 
   moveDeal(id: string, stage: DealStage): CRMDeal {
@@ -448,15 +476,16 @@ export class CRMStore {
       .filter(a => !filter.openTasks || (a.type === 'task' && !a.done))
       .sort((a, b) => filter.openTasks
         ? (a.dueAt ?? Number.MAX_SAFE_INTEGER) - (b.dueAt ?? Number.MAX_SAFE_INTEGER)
-        : b.createdAt - a.createdAt);
+        : b.createdAt - a.createdAt)
+      .map(copyActivity);
   }
 
   addActivity(input: { type: ActivityType; text: string; contactId?: string; dealId?: string; dueAt?: number }): CRMActivity {
     const text = input.text.trim();
     if (!text) throw new Error('Текст обязателен');
     if (!ACTIVITY_TYPES.includes(input.type)) throw new Error(`Неизвестный тип: ${input.type}`);
-    if (input.contactId && !this.getContact(input.contactId)) throw new Error(`Контакт не найден: ${input.contactId}`);
-    if (input.dealId && !this.getDeal(input.dealId)) throw new Error(`Сделка не найдена: ${input.dealId}`);
+    if (input.contactId && !this.contact(input.contactId)) throw new Error(`Контакт не найден: ${input.contactId}`);
+    if (input.dealId && !this.deal(input.dealId)) throw new Error(`Сделка не найдена: ${input.dealId}`);
     const now = this.clock();
     const activity: CRMActivity = {
       id: newId('a'), type: input.type, text, contactId: input.contactId, dealId: input.dealId,
@@ -464,11 +493,11 @@ export class CRMStore {
     };
     this.data.activities.push(activity);
     if (input.contactId && input.type !== 'task' && input.type !== 'note') {
-      const contact = this.getContact(input.contactId);
+      const contact = this.contact(input.contactId);
       if (contact) contact.lastContactAt = now;
     }
     this.commit();
-    return activity;
+    return copyActivity(this.data.activities.find(a => a.id === activity.id) ?? activity);
   }
 
   setActivityDone(id: string, done: boolean): CRMActivity {
@@ -477,7 +506,7 @@ export class CRMStore {
     activity.done = done;
     activity.completedAt = done ? this.clock() : undefined;
     this.commit();
-    return activity;
+    return copyActivity(this.data.activities.find(a => a.id === id) ?? activity);
   }
 
   deleteActivity(id: string): void {
