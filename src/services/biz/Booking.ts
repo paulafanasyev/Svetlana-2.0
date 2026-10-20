@@ -1,4 +1,6 @@
 // Svetlana Business — запись клиентов: услуги, рабочие часы, свободные окна, записи, напоминания. Local-first.
+// Сохранение «всё или ничего»: если записать на диск не удалось, изменение отменяется и в памяти
+// (иначе запись «есть» до перезапуска и молча пропадает после него).
 import { safeJsonParse, stripControl, MAX_BYTES } from '../security/SafeData';
 import type { KeyValueStorage } from '../crm/CRMStore';
 
@@ -33,6 +35,7 @@ interface BookingData { version: 1; services: Service[]; schedule: Schedule; app
 
 export const BOOKING_STATUS_LABELS: Record<BookingStatus, string> = { booked: 'Записан', done: 'Пришёл', cancelled: 'Отменена', noshow: 'Не пришёл' };
 export const WEEKDAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+export const BOOKING_SAVE_FAILED = 'Не удалось сохранить запись: память устройства переполнена или недоступна. Изменение отменено.';
 
 const STORAGE_KEY = 'svetlana_booking_v1';
 const MIN = 60_000;
@@ -185,6 +188,8 @@ export class BookingStore {
   private readonly storage: KeyValueStorage;
   private readonly clock: () => number;
   private data: BookingData;
+  /** Последнее успешно сохранённое состояние: к нему откатываемся, если запись на диск не удалась. */
+  private saved: string;
   private listeners = new Set<() => void>();
 
   constructor(storage: KeyValueStorage = defaultStorage(), clock: () => number = Date.now) {
@@ -196,11 +201,21 @@ export class BookingStore {
     } catch {
       this.data = emptyData();
     }
+    this.saved = JSON.stringify(this.data);
   }
 
   private commit(): void {
-    this.storage.setItem(STORAGE_KEY, JSON.stringify(this.data));
-    this.listeners.forEach(l => l());
+    const next = JSON.stringify(this.data);
+    try {
+      this.storage.setItem(STORAGE_KEY, next);
+    } catch {
+      try { this.data = sanitize(JSON.parse(this.saved)); } catch { this.data = emptyData(); }
+      throw new Error(BOOKING_SAVE_FAILED);
+    }
+    this.saved = next;
+    for (const l of [...this.listeners]) {
+      try { l(); } catch { /* ошибка подписчика не отменяет сохранение */ }
+    }
   }
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
