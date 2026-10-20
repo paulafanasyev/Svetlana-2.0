@@ -14,7 +14,7 @@ describe('voice cancel', () => {
     expect(engine).toContain('if (cancelled) { end(); return; }');
   });
   it('the voice button cancels on unmount and ignores results after it', () => {
-    expect(button).toContain('l.cancel ? l.cancel() : l.stop()');
+    expect(button).toContain('if (l.cancel) l.cancel(); else l.stop();');
     expect(button).toContain('if (!aliveRef.current) return;');
   });
   it('voice settings have a backdrop so the page behind cannot be clicked', () => {
