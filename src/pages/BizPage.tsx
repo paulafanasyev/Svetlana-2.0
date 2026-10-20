@@ -1,4 +1,6 @@
 // Svetlana Business — деньги, документы, должники, налоги, господдержка, профиль.
+// Доступность: у каждого поля есть подпись, ошибки читаются сразу (role=alert).
+// Подтверждения и ввод номера чека — своё окно: в приложении системные confirm/prompt могут молча не сработать.
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
   Wallet, FileText, AlertTriangle, Calculator, Landmark, UserCog, Plus, Trash2, Printer, Download,
@@ -14,6 +16,7 @@ import {
   findSupport, regionalSearchUrl, SUPPORT_KIND_LABELS, SECTOR_LABELS, FLAG_LABELS, RUSSIAN_REGIONS, type SupportKind,
 } from '../services/biz/SupportCatalog';
 import { crmStore } from '../services/crm/CRMStore';
+import { askConfirm, askText, showCopyText } from '../components/ConfirmDialog';
 
 type Tab = 'money' | 'docs' | 'debts' | 'taxes' | 'support' | 'profile';
 
@@ -53,8 +56,8 @@ function CopyButton({ text, label = 'Копировать' }: { text: string; la
   const [done, setDone] = useState(false);
   return (
     <button className={btnGhost} onClick={async () => {
-      try { await navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 1500); } catch { window.prompt('Скопируйте текст:', text); }
-    }}>{done ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}{done ? 'Скопировано' : label}</button>
+      try { await navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 1500); } catch { void showCopyText('Скопируйте текст:', text); }
+    }}>{done ? <Check className="w-4 h-4" aria-hidden="true" /> : <Copy className="w-4 h-4" aria-hidden="true" />}<span role={done ? 'status' : undefined}>{done ? 'Скопировано' : label}</span></button>
   );
 }
 
@@ -66,7 +69,7 @@ function PaidButton({ docId, label = 'Оплачен' }: { docId: string; label?
   const pay = () => {
     setErr(null);
     if (npd && !method) { setErr('Выберите, как заплатили'); return; }
-    try { bizStore.markPaid(docId, { payMethod: method || undefined }); } catch (e: any) { setErr(e?.message || 'Ошибка'); }
+    try { bizStore.markPaid(docId, { payMethod: method || undefined }); } catch (e: any) { setErr(e?.message || 'Не удалось отметить оплату'); }
   };
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5">
@@ -76,8 +79,8 @@ function PaidButton({ docId, label = 'Оплачен' }: { docId: string; label?
           {(Object.keys(PAY_METHOD_LABELS) as PayMethod[]).map(m => <option key={m} value={m}>{PAY_METHOD_LABELS[m]}</option>)}
         </select>
       )}
-      <button className={btnPrimary} onClick={pay}><Check className="w-4 h-4" />{label}</button>
-      {err && <span className="text-xs text-amber-300">{err}</span>}
+      <button className={btnPrimary} onClick={pay}><Check className="w-4 h-4" aria-hidden="true" />{label}</button>
+      {err && <span role="alert" className="text-xs text-amber-300">{err}</span>}
     </span>
   );
 }
@@ -116,6 +119,20 @@ function MoneyTab() {
     } catch (err: any) { setError(err?.message || 'Не удалось сохранить'); }
   };
 
+  const askReceipt = async (id: string) => {
+    const n = await askText('Чек выбит в «Мой налог»? Номер чека (можно пусто):', { okText: 'Чек выбит', value: '' });
+    if (n === null) return;
+    setError(null);
+    try { bizStore.setReceipt(id, n); } catch (err: any) { setError(err?.message || 'Не удалось сохранить чек'); }
+  };
+
+  const removeEntry = async (id: string, what: string) => {
+    const ok = await askConfirm(`Удалить запись${what ? ` «${what}»` : ''}?`, { okText: 'Удалить' });
+    if (!ok) return;
+    setError(null);
+    try { bizStore.deleteEntry(id); } catch (err: any) { setError(err?.message || 'Не удалось удалить запись'); }
+  };
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -124,17 +141,17 @@ function MoneyTab() {
         <Stat label="Доход за год" value={formatRub(o.yearIncome)} />
         <Stat label="Прибыль за год" value={formatRub(o.profitYear)} />
       </div>
-      <form onSubmit={add} className={`${card} p-4 grid grid-cols-1 md:grid-cols-6 gap-3`}>
-        <select className={input} value={kind} onChange={e => setKind(e.target.value as EntryKind)}>
+      <form onSubmit={add} className={`${card} p-4 grid grid-cols-1 md:grid-cols-6 gap-3`} aria-label="Новая запись дохода или расхода">
+        <select className={input} aria-label="Доход или расход" value={kind} onChange={e => setKind(e.target.value as EntryKind)}>
           <option value="income">Доход</option><option value="expense">Расход</option>
         </select>
-        <input className={input} placeholder="Сумма, ₽ *" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} />
-        <input className={`${input} md:col-span-2`} placeholder="За что" value={description} onChange={e => setDescription(e.target.value)} />
-        <input className={input} placeholder={kind === 'income' ? 'Клиент' : 'Кому'} list="biz-clients" value={client} onChange={e => setClient(e.target.value)} />
-        <input type="date" className={input} value={day} onChange={e => setDay(e.target.value)} />
+        <input className={input} placeholder="Сумма, ₽ *" aria-label="Сумма в рублях (обязательно)" aria-required="true" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} />
+        <input className={`${input} md:col-span-2`} placeholder="За что" aria-label="За что" value={description} onChange={e => setDescription(e.target.value)} />
+        <input className={input} placeholder={kind === 'income' ? 'Клиент' : 'Кому'} aria-label={kind === 'income' ? 'Клиент' : 'Кому заплатили'} list="biz-clients" value={client} onChange={e => setClient(e.target.value)} />
+        <input type="date" className={input} aria-label="Дата (пусто — сегодня)" value={day} onChange={e => setDay(e.target.value)} />
         <datalist id="biz-clients">{contacts.map(c => <option key={c.id} value={c.name} />)}</datalist>
         {kind === 'income' && (
-          <select className={`${input} md:col-span-2`} value={payerType} onChange={e => setPayerType(e.target.value as PayerType)}>
+          <select className={`${input} md:col-span-2`} aria-label="Кто платит" value={payerType} onChange={e => setPayerType(e.target.value as PayerType)}>
             <option value="person">Платит физлицо{profile.regime === 'npd' ? ' (НПД 4%)' : ''}</option>
             <option value="company">Платит юрлицо или ИП{profile.regime === 'npd' ? ' (НПД 6%)' : ''}</option>
           </select>
@@ -144,21 +161,21 @@ function MoneyTab() {
             {(Object.keys(PAY_METHOD_LABELS) as PayMethod[]).map(m => <option key={m} value={m}>{PAY_METHOD_LABELS[m]}{m === 'transfer' ? ' (чек до 9-го числа)' : ' (чек в момент оплаты)'}</option>)}
           </select>
         )}
-        <button type="submit" className={`${btnPrimary} justify-center`} disabled={!amount.trim()}><Plus className="w-4 h-4" />Записать</button>
-        {error && <p className="md:col-span-6 text-sm text-red-400">{error}</p>}
+        <button type="submit" className={`${btnPrimary} justify-center`} disabled={!amount.trim()}><Plus className="w-4 h-4" aria-hidden="true" />Записать</button>
+        {error && <p role="alert" className="md:col-span-6 text-sm text-red-400">{error}</p>}
       </form>
       <div className="flex flex-wrap gap-2">
-        <button className={btnGhost} onClick={() => download(`kudir-${new Date().getFullYear()}.csv`, '\uFEFF' + bizStore.exportLedgerCSV(new Date().getFullYear()), 'text/csv;charset=utf-8')}><Download className="w-4 h-4" />Книга доходов и расходов (CSV)</button>
-        {profile.regime === 'npd' && <a className={btnGhost} href={MY_TAX_URL} target="_blank" rel="noreferrer"><Receipt className="w-4 h-4" />Открыть «Мой налог»</a>}
+        <button className={btnGhost} onClick={() => download(`kudir-${new Date().getFullYear()}.csv`, '\uFEFF' + bizStore.exportLedgerCSV(new Date().getFullYear()), 'text/csv;charset=utf-8')}><Download className="w-4 h-4" aria-hidden="true" />Книга доходов и расходов (CSV)</button>
+        {profile.regime === 'npd' && <a className={btnGhost} href={MY_TAX_URL} target="_blank" rel="noreferrer"><Receipt className="w-4 h-4" aria-hidden="true" />Открыть «Мой налог»</a>}
       </div>
       <div className={`${card} divide-y divide-white/5`}>
-        {entries.length === 0 && <p className="p-4 text-sm text-slate-500">Пока пусто. Скажите Светлане: «Получил 5000 от Петрова за урок».</p>}
+        {entries.length === 0 && <p className="p-4 text-sm text-slate-400">Пока пусто. Скажите Светлане: «Получил 5000 от Петрова за урок».</p>}
         {entries.map(e => (
           // На телефоне две строки: дата, описание и сумма сверху, пометки и удаление снизу. На широком экране одна.
           <div key={e.id} className="px-4 py-2.5 text-sm flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
             <div className="flex items-center gap-3 min-w-0 sm:flex-1">
               <span className="w-20 sm:w-24 shrink-0 text-slate-400">{date(e.date)}</span>
-              <span className={`flex-1 min-w-0 truncate ${isTaxable(e) ? '' : 'text-slate-500 line-through'}`}>{e.description}{e.counterparty ? ` · ${e.counterparty}` : ''}</span>
+              <span className={`flex-1 min-w-0 truncate ${isTaxable(e) ? '' : 'text-slate-400 line-through'}`}>{e.description}{e.counterparty ? ` · ${e.counterparty}` : ''}{isTaxable(e) ? '' : <span className="sr-only"> (не учитывается в налоге)</span>}</span>
               <span className={`shrink-0 sm:w-32 text-right font-medium ${e.kind === 'income' ? 'text-emerald-300' : 'text-red-300'}`}>{e.kind === 'income' ? '+' : '−'}{formatRub(e.amount)}</span>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-3 sm:shrink-0">
@@ -166,19 +183,16 @@ function MoneyTab() {
                 {isTaxable(e) ? (e.kind === 'income' ? 'не доход?' : 'не расход?') : 'учитывать'}
               </button>
               {e.kind === 'expense' && isTaxable(e) && profile.regime === 'usn15' && (
-                <button className={`py-1 text-xs hover:underline ${e.noDocs ? 'text-amber-300' : 'text-slate-400'}`} title="Расход уменьшает налог УСН 15% только при подтверждающих документах: чек, акт, накладная, выписка" onClick={() => bizStore.setNoDocs(e.id, !e.noDocs)}>
+                <button className={`py-1 text-xs hover:underline ${e.noDocs ? 'text-amber-300' : 'text-slate-400'}`} aria-pressed={!e.noDocs} title="Расход уменьшает налог УСН 15% только при подтверждающих документах: чек, акт, накладная, выписка" onClick={() => bizStore.setNoDocs(e.id, !e.noDocs)}>
                   {e.noDocs ? 'нет документов' : 'есть документы'}
                 </button>
               )}
               {e.kind === 'income' && isTaxable(e) && profile.regime === 'npd' && (
                 e.receipt === 'issued'
-                  ? <span className="text-xs text-emerald-300">чек {e.receiptNumber ?? '✓'}</span>
-                  : <button className="py-1 text-xs text-amber-300 hover:underline" onClick={() => {
-                      const n = window.prompt('Чек выбит в «Мой налог»? Номер чека (можно пусто):', '');
-                      if (n !== null) bizStore.setReceipt(e.id, n);
-                    }}>нет чека</button>
+                  ? <span className="text-xs text-emerald-300">чек {e.receiptNumber ?? 'выбит'}</span>
+                  : <button className="py-1 text-xs text-amber-300 hover:underline" onClick={() => { void askReceipt(e.id); }}>нет чека</button>
               )}
-              <button onClick={() => { if (window.confirm('Удалить запись?')) bizStore.deleteEntry(e.id); }} className="p-1.5 text-slate-500 hover:text-red-300" aria-label="Удалить"><Trash2 className="w-4 h-4" /></button>
+              <button onClick={() => { void removeEntry(e.id, e.description); }} className="p-1.5 text-slate-400 hover:text-red-300" aria-label={`Удалить запись: ${e.description || formatRub(e.amount)}`}><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
             </div>
           </div>
         ))}
@@ -217,39 +231,52 @@ function DocsTab() {
     } catch (err: any) { setError(err?.message || 'Не удалось создать документ'); }
   };
 
+  const removeDoc = async (id: string, title: string) => {
+    const ok = await askConfirm(`Удалить ${title}?`, { okText: 'Удалить' });
+    if (!ok) return;
+    setError(null);
+    try { bizStore.deleteDocument(id); } catch (err: any) { setError(err?.message || 'Не удалось удалить документ'); }
+  };
+
+  const markSent = (id: string) => {
+    setError(null);
+    try { bizStore.setDocumentStatus(id, 'sent'); } catch (err: any) { setError(err?.message || 'Не удалось изменить статус'); }
+  };
+
   return (
     <div className="space-y-4">
       {!profile.fullName && <p className="text-sm text-amber-300">Заполните профиль (ФИО, ИНН, банк), чтобы реквизиты попали в документы.</p>}
-      <form onSubmit={add} className={`${card} p-4 grid grid-cols-1 md:grid-cols-4 gap-3`}>
-        <select className={input} value={type} onChange={e => setType(e.target.value as DocType)}>
+      <form onSubmit={add} className={`${card} p-4 grid grid-cols-1 md:grid-cols-4 gap-3`} aria-label="Новый документ">
+        <select className={input} aria-label="Вид документа" value={type} onChange={e => setType(e.target.value as DocType)}>
           <option value="invoice">Счёт на оплату</option><option value="act">Акт оказанных услуг</option><option value="contract">Договор оказания услуг</option>
         </select>
-        <input className={input} placeholder="Клиент *" list="biz-doc-clients" value={client} onChange={e => setClient(e.target.value)} />
+        <input className={input} placeholder="Клиент *" aria-label="Клиент (обязательно)" aria-required="true" list="biz-doc-clients" value={client} onChange={e => setClient(e.target.value)} />
         <datalist id="biz-doc-clients">{contacts.map(c => <option key={c.id} value={c.name} />)}</datalist>
-        <input className={`${input} md:col-span-2`} placeholder="Реквизиты клиента (ИНН, адрес) — необязательно" value={details} onChange={e => setDetails(e.target.value)} />
-        <input className={`${input} md:col-span-2`} placeholder="Услуга *" value={service} onChange={e => setService(e.target.value)} />
-        <input className={input} placeholder="Кол-во" inputMode="decimal" value={qty} onChange={e => setQty(e.target.value)} />
-        <input className={input} placeholder="Цена, ₽ *" inputMode="decimal" value={price} onChange={e => setPrice(e.target.value)} />
-        <input className={`${input} md:col-span-3`} placeholder="Основание (например, «Договор № 1 от 01.10.2026»)" value={basis} onChange={e => setBasis(e.target.value)} />
-        <button type="submit" className={`${btnPrimary} justify-center`} disabled={!client.trim() || !service.trim() || !price.trim()}><Plus className="w-4 h-4" />Создать</button>
-        {error && <p className="md:col-span-4 text-sm text-red-400">{error}</p>}
+        <input className={`${input} md:col-span-2`} placeholder="Реквизиты клиента (ИНН, адрес) — необязательно" aria-label="Реквизиты клиента, необязательно" value={details} onChange={e => setDetails(e.target.value)} />
+        <input className={`${input} md:col-span-2`} placeholder="Услуга *" aria-label="Услуга (обязательно)" aria-required="true" value={service} onChange={e => setService(e.target.value)} />
+        <input className={input} placeholder="Кол-во" aria-label="Количество" inputMode="decimal" value={qty} onChange={e => setQty(e.target.value)} />
+        <input className={input} placeholder="Цена, ₽ *" aria-label="Цена в рублях (обязательно)" aria-required="true" inputMode="decimal" value={price} onChange={e => setPrice(e.target.value)} />
+        <input className={`${input} md:col-span-3`} placeholder="Основание (например, «Договор № 1 от 01.10.2026»)" aria-label="Основание, необязательно" value={basis} onChange={e => setBasis(e.target.value)} />
+        <button type="submit" className={`${btnPrimary} justify-center`} disabled={!client.trim() || !service.trim() || !price.trim()}><Plus className="w-4 h-4" aria-hidden="true" />Создать</button>
+        {error && <p role="alert" className="md:col-span-4 text-sm text-red-400">{error}</p>}
       </form>
       <div className={`${card} divide-y divide-white/5`}>
-        {docs.length === 0 && <p className="p-4 text-sm text-slate-500">Документов нет. Скажите Светлане: «Выставь счёт Иванову на 15000 за дизайн».</p>}
+        {docs.length === 0 && <p className="p-4 text-sm text-slate-400">Документов нет. Скажите Светлане: «Выставь счёт Иванову на 15000 за дизайн».</p>}
         {docs.map(d => {
           const html = () => renderDocumentHTML(d, bizStore.getProfile());
+          const title = `${DOC_LABELS[d.type]} № ${d.number} от ${date(d.date)}`;
           return (
             <div key={d.id} className="px-4 py-3 text-sm flex flex-wrap items-center gap-2">
               <div className="flex-1 min-w-[220px]">
-                <p className="font-medium">{DOC_LABELS[d.type]} № {d.number} от {date(d.date)} · {d.clientName}</p>
+                <p className="font-medium">{title} · {d.clientName}</p>
                 <p className="text-xs text-slate-400">{formatRub(d.total)} · {DOC_STATUS_LABELS[d.status]}{d.dueDate && d.status !== 'paid' ? ` · оплатить до ${date(d.dueDate)}` : ''}</p>
               </div>
-              <button className={btnGhost} onClick={() => printHTML(html())}><Printer className="w-4 h-4" />Печать / PDF</button>
-              <button className={btnGhost} onClick={() => download(`${DOC_LABELS[d.type]}-${d.number}.html`, html(), 'text/html;charset=utf-8')}><Download className="w-4 h-4" />Файл</button>
+              <button className={btnGhost} onClick={() => printHTML(html())} aria-label={`Печать или PDF: ${title}`}><Printer className="w-4 h-4" aria-hidden="true" />Печать / PDF</button>
+              <button className={btnGhost} onClick={() => download(`${DOC_LABELS[d.type]}-${d.number}.html`, html(), 'text/html;charset=utf-8')} aria-label={`Скачать файл: ${title}`}><Download className="w-4 h-4" aria-hidden="true" />Файл</button>
               {d.type === 'invoice' && d.status !== 'cancelled' && profile.account && (() => { try { return <CopyButton text={paymentString(profile, d.total, `Оплата по счёту № ${d.number} от ${date(d.date)}`)} label="Строка для QR" />; } catch (err: any) { return <span className="text-xs text-amber-300">{err?.message}</span>; } })()}
-              {d.type === 'invoice' && d.status === 'draft' && <button className={btnGhost} onClick={() => bizStore.setDocumentStatus(d.id, 'sent')}><Send className="w-4 h-4" />Отправлен</button>}
+              {d.type === 'invoice' && d.status === 'draft' && <button className={btnGhost} onClick={() => markSent(d.id)}><Send className="w-4 h-4" aria-hidden="true" />Отправлен</button>}
               {d.type === 'invoice' && d.status !== 'paid' && d.status !== 'cancelled' && <PaidButton docId={d.id} />}
-              <button onClick={() => { if (window.confirm('Удалить документ?')) bizStore.deleteDocument(d.id); }} className="p-1 text-slate-500 hover:text-red-300" aria-label="Удалить"><Trash2 className="w-4 h-4" /></button>
+              <button onClick={() => { void removeDoc(d.id, title); }} className="p-2 text-slate-400 hover:text-red-300" aria-label={`Удалить: ${title}`}><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
             </div>
           );
         })}
@@ -283,7 +310,7 @@ function DebtsTab() {
             <p className="text-sm text-slate-300 whitespace-pre-line break-words bg-black/20 rounded-lg p-3">{text}</p>
             <div className="flex flex-wrap gap-2">
               <CopyButton text={text} />
-              <a className={btnGhost} href={`https://t.me/share/url?url=&text=${encodeURIComponent(text)}`} target="_blank" rel="noreferrer"><Send className="w-4 h-4" />Telegram</a>
+              <a className={btnGhost} href={`https://t.me/share/url?url=&text=${encodeURIComponent(text)}`} target="_blank" rel="noreferrer"><Send className="w-4 h-4" aria-hidden="true" />Telegram</a>
               {phone && <a className={btnGhost} href={`https://wa.me/${phone.replace('+', '')}?text=${encodeURIComponent(text)}`} target="_blank" rel="noreferrer">WhatsApp</a>}
               {phone && <a className={btnGhost} href={`sms:${phone}?body=${encodeURIComponent(text)}`}>SMS</a>}
               <PaidButton docId={d.id} label="Оплатили" />
@@ -316,7 +343,7 @@ function TaxesTab() {
             </div>
             <div className={`${card} p-4`}>
               <p className="text-sm mb-2">Лимит дохода НПД: {formatRub(n.income)} из {formatRub(NPD_LIMIT)}</p>
-              <div className="h-2.5 rounded-full bg-white/5 overflow-hidden"><div className={`h-full ${n.income > NPD_LIMIT * 0.85 ? 'bg-red-400' : 'bg-emerald-400/70'}`} style={{ width: `${Math.min(100, (n.income / NPD_LIMIT) * 100)}%` }} /></div>
+              <div className="h-2.5 rounded-full bg-white/5 overflow-hidden" aria-hidden="true"><div className={`h-full ${n.income > NPD_LIMIT * 0.85 ? 'bg-red-400' : 'bg-emerald-400/70'}`} style={{ width: `${Math.min(100, (n.income / NPD_LIMIT) * 100)}%` }} /></div>
               {n.limitExceeded && <p className="text-sm text-red-300 mt-2">Доход превысил 2,4 млн ₽: право на НПД утрачено с даты превышения. {/^\d{12}$/.test(profile.inn) && profile.ogrn ? 'ИП может в течение 20 дней подать уведомление о переходе на УСН, иначе — общий режим.' : 'Без статуса ИП дальнейший доход облагается НДФЛ по прогрессивной шкале (13–22%); чтобы работать на УСН, зарегистрируйте ИП.'}</p>}
               {!n.limitExceeded && n.income === NPD_LIMIT && <p className="text-sm text-amber-300 mt-2">Лимит исчерпан ровно: любой следующий доход в этом году лишит права на НПД.</p>}
             </div>
@@ -328,9 +355,9 @@ function TaxesTab() {
                   <span>налог {formatRub(m.tax)}{m.payable ? ` → к оплате ${formatRub(m.payable)} до ${date(m.dueDate)}` : ' (меньше 100 ₽, перенос)'}</span>
                 </div>
               ))}
-              {n.months.length === 0 && <p className="p-4 text-sm text-slate-500">Доходов в этом году нет.</p>}
+              {n.months.length === 0 && <p className="p-4 text-sm text-slate-400">Доходов в этом году нет.</p>}
             </div>
-            <a className={btnGhost} href={MY_TAX_URL} target="_blank" rel="noreferrer"><ExternalLink className="w-4 h-4" />«Мой налог» — выбить чеки и оплатить</a>
+            <a className={btnGhost} href={MY_TAX_URL} target="_blank" rel="noreferrer"><ExternalLink className="w-4 h-4" aria-hidden="true" />«Мой налог» — выбить чеки и оплатить</a>
           </>
         );
       })()}
@@ -361,9 +388,9 @@ function TaxesTab() {
       {profile.regime === 'ooo' && <p className="text-sm text-slate-300">Для ООО Светлана ведёт доходы, документы и должников; бухгалтерскую и налоговую отчётность ООО лучше доверить бухгалтеру или сервису.</p>}
       <div className={`${card} p-4`}>
         <h4 className="font-semibold mb-2">Ближайшие сроки</h4>
-        {deadlines.length === 0 && <p className="text-sm text-slate-500">Нет сроков на ближайшие 4 месяца (или режим не выбран).</p>}
+        {deadlines.length === 0 && <p className="text-sm text-slate-400">Нет сроков на ближайшие 4 месяца (или режим не выбран).</p>}
         {deadlines.map(dl => <p key={`${dl.date}-${dl.title}`} className="text-sm"><b>{date(dl.date)}</b> · {dl.title}{dl.details ? <span className="text-slate-400"> — {dl.details}</span> : null}</p>)}
-        <p className="text-xs text-slate-500 mt-2">Если срок выпадает на выходной, он переносится на следующий рабочий день. Расчёты — оценка, не замена бухгалтеру.</p>
+        <p className="text-xs text-slate-400 mt-2">Если срок выпадает на выходной, он переносится на следующий рабочий день. Расчёты — оценка, не замена бухгалтеру.</p>
       </div>
     </div>
   );
@@ -382,16 +409,17 @@ function SupportTab({ goProfile }: { goProfile: () => void }) {
     <div className="space-y-4 max-w-5xl">
       <div className={`${card} p-4 flex flex-wrap items-center gap-3 text-sm`}>
         <span>Подбор для: <b>{REGIME_LABELS[profile.regime]}</b>{profile.region ? <>, <b>{profile.region}</b></> : ', регион не выбран'}</span>
-        <button className={btnGhost} onClick={goProfile}><UserCog className="w-4 h-4" />Изменить профиль</button>
-        <a className={btnPrimary} href={regionalSearchUrl(profile, now)} target="_blank" rel="noreferrer"><ExternalLink className="w-4 h-4" />Найти программы региона</a>
+        <button className={btnGhost} onClick={goProfile}><UserCog className="w-4 h-4" aria-hidden="true" />Изменить профиль</button>
+        <a className={btnPrimary} href={regionalSearchUrl(profile, now)} target="_blank" rel="noreferrer"><ExternalLink className="w-4 h-4" aria-hidden="true" />Найти программы региона</a>
       </div>
       <div className="flex flex-wrap gap-2">
-        <select className={`${input} sm:w-56`} value={kind} onChange={e => setKind(e.target.value as SupportKind | '')}>
+        <select className={`${input} sm:w-56`} aria-label="Вид поддержки" value={kind} onChange={e => setKind(e.target.value as SupportKind | '')}>
           <option value="">Все виды поддержки</option>
           {(Object.keys(SUPPORT_KIND_LABELS) as SupportKind[]).map(k => <option key={k} value={k}>{SUPPORT_KIND_LABELS[k]}</option>)}
         </select>
-        <input className={`${input} sm:w-64`} placeholder="Поиск" value={query} onChange={e => setQuery(e.target.value)} />
+        <input type="search" className={`${input} sm:w-64`} placeholder="Поиск" aria-label="Поиск по мерам поддержки" value={query} onChange={e => setQuery(e.target.value)} />
       </div>
+      <p className="sr-only" role="status">Найдено мер поддержки: {matches.length}</p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {matches.map(({ measure: m, reasons }) => (
           <div key={m.id} className={`${card} p-4 space-y-2`}>
@@ -403,46 +431,89 @@ function SupportTab({ goProfile }: { goProfile: () => void }) {
             <p className="text-sm text-slate-300">{m.summary}</p>
             {reasons.length > 0 && <p className="text-xs text-amber-200">Почему вам: {reasons.join('; ')}</p>}
             <p className="text-xs text-slate-400">Как получить: {m.howTo}</p>
-            <a className="text-sm text-indigo-300 hover:underline inline-flex items-center gap-1" href={m.url} target="_blank" rel="noreferrer">{m.provider} <ExternalLink className="w-3.5 h-3.5" /></a>
+            <a className="text-sm text-indigo-300 hover:underline inline-flex items-center gap-1" href={m.url} target="_blank" rel="noreferrer">{m.provider} <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" /></a>
           </div>
         ))}
-        {matches.length === 0 && <p className="text-sm text-slate-500">Под ваш профиль ничего не нашлось. Уточните режим, возраст, отрасли и статусы в профиле.</p>}
+        {matches.length === 0 && <p className="text-sm text-slate-400">Под ваш профиль ничего не нашлось. Уточните режим, возраст, отрасли и статусы в профиле.</p>}
       </div>
-      <p className="text-xs text-slate-500">Каталог содержит основные федеральные программы. Суммы и условия меняются ежегодно и различаются по регионам: перед подачей сверяйте на официальном сайте или в центре «Мой бизнес».</p>
+      <p className="text-xs text-slate-400">Каталог содержит основные федеральные программы. Суммы и условия меняются ежегодно и различаются по регионам: перед подачей сверяйте на официальном сайте или в центре «Мой бизнес».</p>
     </div>
   );
 }
 
 // ---------------- profile ----------------
 
+/** Числовые поля профиля хранятся в форме строкой: «12 000» или «6,5» не превращаются молча в 0. */
+type NumKey = 'fixedContributions' | 'contributionsPaid' | 'patentCost' | 'birthYear' | 'usnRate';
+const NUM_LABELS: Record<NumKey, string> = {
+  fixedContributions: 'Фиксированные взносы',
+  contributionsPaid: 'Уже уплачено взносов',
+  patentCost: 'Стоимость патента',
+  birthYear: 'Год рождения',
+  usnRate: 'Ставка УСН',
+};
+
+/** Пусто → undefined, не число или меньше нуля → null. */
+export function parseProfileNumber(raw: string): number | undefined | null {
+  const t = raw.replace(/\s/g, '').replace(',', '.');
+  if (!t) return undefined;
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function initialProfile(): BizProfile {
+  const p = bizStore.getProfile();
+  const y = new Date().getFullYear();
+  return p.fixedContributionsYear === y ? p : { ...p, fixedContributions: contributionsFor(y).fixed };
+}
+
+function numText(v: number | undefined): string { return v === undefined || v === null || !Number.isFinite(v) ? '' : String(v); }
+
 function ProfileTab() {
   useBizVersion();
-  const [draft, setDraft] = useState<BizProfile>(() => {
-    const p = bizStore.getProfile();
-    const y = new Date().getFullYear();
-    return p.fixedContributionsYear === y ? p : { ...p, fixedContributions: contributionsFor(y).fixed };
+  const [draft, setDraft] = useState<BizProfile>(initialProfile);
+  const [nums, setNums] = useState<Record<NumKey, string>>(() => {
+    const p = initialProfile();
+    return {
+      fixedContributions: numText(p.fixedContributions),
+      contributionsPaid: numText(p.contributionsPaid),
+      patentCost: numText(p.patentCost),
+      birthYear: p.birthYear ? String(p.birthYear) : '',
+      usnRate: numText(p.usnRate),
+    };
   });
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ text: string; error: boolean } | null>(null);
   const set = (k: keyof BizProfile) => (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setDraft(d => ({ ...d, [k]: e.target.value }));
+  const setNum = (k: NumKey) => (e: ChangeEvent<HTMLInputElement>) => setNums(n => ({ ...n, [k]: e.target.value }));
   const toggle = (k: 'sectors' | 'flags', v: string) => setDraft(d => ({ ...d, [k]: d[k].includes(v) ? d[k].filter(x => x !== v) : [...d[k], v] }));
 
   const save = (e: FormEvent) => {
     e.preventDefault(); setMsg(null);
+    const parsed = {} as Record<NumKey, number | undefined>;
+    for (const k of Object.keys(NUM_LABELS) as NumKey[]) {
+      const v = parseProfileNumber(nums[k]);
+      if (v === null) { setMsg({ text: `${NUM_LABELS[k]}: укажите число цифрами`, error: true }); return; }
+      parsed[k] = v;
+    }
+    if (parsed.birthYear !== undefined && parsed.birthYear !== 0 && (!Number.isInteger(parsed.birthYear) || parsed.birthYear < 1900 || parsed.birthYear > new Date().getFullYear())) {
+      setMsg({ text: 'Год рождения: четыре цифры, например 1990', error: true }); return;
+    }
     try {
       bizStore.updateProfile({
         ...draft,
-        birthYear: draft.birthYear ? Number(draft.birthYear) : undefined,
-        fixedContributions: Number(draft.fixedContributions) || 0,
+        birthYear: parsed.birthYear || undefined,
+        fixedContributions: parsed.fixedContributions ?? 0,
         fixedContributionsYear: new Date().getFullYear(),
-        contributionsPaid: Number(draft.contributionsPaid) || 0,
-        patentCost: Number(draft.patentCost) || 0,
+        contributionsPaid: parsed.contributionsPaid ?? 0,
+        patentCost: parsed.patentCost ?? 0,
+        usnRate: parsed.usnRate,
       });
-      setMsg('Сохранено');
-    } catch (err: any) { setMsg(err?.message || 'Ошибка'); }
+      setMsg({ text: 'Сохранено', error: false });
+    } catch (err: any) { setMsg({ text: err?.message || 'Не удалось сохранить профиль', error: true }); }
   };
 
   return (
-    <form onSubmit={save} className="space-y-4 max-w-4xl">
+    <form onSubmit={save} className="space-y-4 max-w-4xl" aria-label="Профиль бизнеса">
       <div className={`${card} p-4 grid grid-cols-1 md:grid-cols-2 gap-3`}>
         <label className="text-sm space-y-1"><span className="text-slate-400">Налоговый режим</span>
           <select className={input} value={draft.regime} onChange={e => setDraft(d => ({ ...d, regime: e.target.value as TaxRegime }))}>
@@ -453,23 +524,23 @@ function ProfileTab() {
           <input className={input} list="ru-regions" placeholder="Начните вводить" value={draft.region} onChange={set('region')} />
           <datalist id="ru-regions">{RUSSIAN_REGIONS.map(r => <option key={r} value={r} />)}</datalist>
         </label>
-        <input className={input} placeholder="ФИО или название" value={draft.fullName} onChange={set('fullName')} />
-        <input className={input} placeholder="ИНН" inputMode="numeric" value={draft.inn} onChange={set('inn')} />
-        <input className={input} placeholder="ОГРНИП / ОГРН (если есть)" value={draft.ogrn} onChange={set('ogrn')} />
-        <input className={input} placeholder="Адрес" value={draft.address} onChange={set('address')} />
-        <input className={input} placeholder="Телефон" value={draft.phone} onChange={set('phone')} />
-        <input className={input} placeholder="E-mail" value={draft.email} onChange={set('email')} />
-        <input className={input} placeholder="Банк" value={draft.bankName} onChange={set('bankName')} />
-        <input className={input} placeholder="БИК" inputMode="numeric" value={draft.bik} onChange={set('bik')} />
-        <input className={input} placeholder="Расчётный счёт (20 цифр)" inputMode="numeric" value={draft.account} onChange={set('account')} />
-        <input className={input} placeholder="Корр. счёт" inputMode="numeric" value={draft.corrAccount} onChange={set('corrAccount')} />
-        <input className={input} placeholder="Год рождения (для молодёжных грантов)" inputMode="numeric" value={draft.birthYear ?? ''} onChange={e => setDraft(d => ({ ...d, birthYear: e.target.value ? Number(e.target.value) : undefined }))} />
+        <input className={input} placeholder="ФИО или название" aria-label="ФИО или название" value={draft.fullName} onChange={set('fullName')} />
+        <input className={input} placeholder="ИНН" aria-label="ИНН" inputMode="numeric" value={draft.inn} onChange={set('inn')} />
+        <input className={input} placeholder="ОГРНИП / ОГРН (если есть)" aria-label="ОГРНИП или ОГРН, если есть" value={draft.ogrn} onChange={set('ogrn')} />
+        <input className={input} placeholder="Адрес" aria-label="Адрес" value={draft.address} onChange={set('address')} />
+        <input className={input} placeholder="Телефон" aria-label="Телефон" inputMode="tel" value={draft.phone} onChange={set('phone')} />
+        <input className={input} placeholder="E-mail" aria-label="E-mail" inputMode="email" value={draft.email} onChange={set('email')} />
+        <input className={input} placeholder="Банк" aria-label="Банк" value={draft.bankName} onChange={set('bankName')} />
+        <input className={input} placeholder="БИК" aria-label="БИК" inputMode="numeric" value={draft.bik} onChange={set('bik')} />
+        <input className={input} placeholder="Расчётный счёт (20 цифр)" aria-label="Расчётный счёт, 20 цифр" inputMode="numeric" value={draft.account} onChange={set('account')} />
+        <input className={input} placeholder="Корр. счёт" aria-label="Корреспондентский счёт" inputMode="numeric" value={draft.corrAccount} onChange={set('corrAccount')} />
+        <input className={input} placeholder="Год рождения (для молодёжных грантов)" aria-label="Год рождения, для молодёжных грантов" inputMode="numeric" value={nums.birthYear} onChange={setNum('birthYear')} />
         {(draft.regime === 'usn6' || draft.regime === 'usn15' || draft.regime === 'patent') && (
           <>
             <label className="text-sm space-y-1"><span className="text-slate-400">Фиксированные взносы ИП за год, ₽</span>
-              <input className={input} inputMode="numeric" value={draft.fixedContributions} onChange={e => setDraft(d => ({ ...d, fixedContributions: Number(e.target.value) || 0 }))} /></label>
+              <input className={input} inputMode="decimal" value={nums.fixedContributions} onChange={setNum('fixedContributions')} /></label>
             <label className="text-sm space-y-1"><span className="text-slate-400">Уже уплачено взносов в этом году, ₽</span>
-              <input className={input} inputMode="numeric" value={draft.contributionsPaid} onChange={e => setDraft(d => ({ ...d, contributionsPaid: Number(e.target.value) || 0 }))} /></label>
+              <input className={input} inputMode="decimal" value={nums.contributionsPaid} onChange={setNum('contributionsPaid')} /></label>
           </>
         )}
         {(draft.regime === 'usn6' || draft.regime === 'usn15' || draft.regime === 'patent' || draft.regime === 'ooo') && (
@@ -482,7 +553,7 @@ function ProfileTab() {
           const l = draft.regime === 'usn15' ? USN_RATE_LIMITS.usn15 : USN_RATE_LIMITS.usn6;
           return (
             <label className="text-sm space-y-1"><span className="text-slate-400">Ставка УСН в вашем регионе, % (пусто — {l.base}%; допустимо {l.min}–{l.max}%)</span>
-              <input className={input} inputMode="decimal" placeholder={String(l.base)} value={draft.usnRate ?? ''} onChange={e => setDraft(d => ({ ...d, usnRate: e.target.value.trim() ? Number(e.target.value.replace(',', '.')) : undefined }))} /></label>
+              <input className={input} inputMode="decimal" placeholder={String(l.base)} value={nums.usnRate} onChange={setNum('usnRate')} /></label>
           );
         })()}
         {draft.regime === 'usn15' && (
@@ -500,26 +571,26 @@ function ProfileTab() {
             <label className="text-sm space-y-1"><span className="text-slate-400">Патент действует с</span>
               <input className={input} type="date" value={draft.patentStart} onChange={set('patentStart')} /></label>
             <label className="text-sm space-y-1"><span className="text-slate-400">по</span>
-              <input className={input} type="date" value={draft.patentEnd} onChange={set('patentEnd')} /></label>
+              <input className={input} type="date" aria-label="Патент действует по" value={draft.patentEnd} onChange={set('patentEnd')} /></label>
             <label className="text-sm space-y-1"><span className="text-slate-400">Стоимость патента, ₽ (калькулятор на patent.nalog.ru)</span>
-              <input className={input} inputMode="numeric" value={draft.patentCost} onChange={e => setDraft(d => ({ ...d, patentCost: Number(e.target.value) || 0 }))} /></label>
+              <input className={input} inputMode="decimal" value={nums.patentCost} onChange={setNum('patentCost')} /></label>
           </>
         )}
       </div>
       <div className={`${card} p-4`}>
-        <p className="text-sm text-slate-400 mb-2">Сферы деятельности</p>
-        <div className="flex flex-wrap gap-2">{Object.entries(SECTOR_LABELS).map(([k, l]) => (
-          <button type="button" key={k} onClick={() => toggle('sectors', k)} className={`px-3 py-1.5 rounded-full text-xs border ${draft.sectors.includes(k) ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-white/5 border-white/10 text-slate-300'}`}>{l}</button>
+        <p id="biz-sectors" className="text-sm text-slate-400 mb-2">Сферы деятельности</p>
+        <div className="flex flex-wrap gap-2" role="group" aria-labelledby="biz-sectors">{Object.entries(SECTOR_LABELS).map(([k, l]) => (
+          <button type="button" key={k} onClick={() => toggle('sectors', k)} aria-pressed={draft.sectors.includes(k)} className={`px-3 py-1.5 rounded-full text-xs border ${draft.sectors.includes(k) ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-white/5 border-white/10 text-slate-300'}`}>{l}</button>
         ))}</div>
-        <p className="text-sm text-slate-400 mt-4 mb-2">Особые статусы (влияют на подбор поддержки, хранятся только на устройстве)</p>
-        <div className="flex flex-wrap gap-2">{Object.entries(FLAG_LABELS).map(([k, l]) => (
-          <button type="button" key={k} onClick={() => toggle('flags', k)} className={`px-3 py-1.5 rounded-full text-xs border ${draft.flags.includes(k) ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-white/5 border-white/10 text-slate-300'}`}>{l}</button>
+        <p id="biz-flags" className="text-sm text-slate-400 mt-4 mb-2">Особые статусы (влияют на подбор поддержки, хранятся только на устройстве)</p>
+        <div className="flex flex-wrap gap-2" role="group" aria-labelledby="biz-flags">{Object.entries(FLAG_LABELS).map(([k, l]) => (
+          <button type="button" key={k} onClick={() => toggle('flags', k)} aria-pressed={draft.flags.includes(k)} className={`px-3 py-1.5 rounded-full text-xs border ${draft.flags.includes(k) ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-white/5 border-white/10 text-slate-300'}`}>{l}</button>
         ))}</div>
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <button type="submit" className={btnPrimary}>Сохранить профиль</button>
-        <button type="button" className={btnGhost} onClick={() => download(`biz-backup-${new Date().toISOString().slice(0, 10)}.json`, bizStore.exportJSON(), 'application/json')}><Download className="w-4 h-4" />Резервная копия</button>
-        {msg && <span className="text-sm text-indigo-200">{msg}</span>}
+        <button type="button" className={btnGhost} onClick={() => download(`biz-backup-${new Date().toISOString().slice(0, 10)}.json`, bizStore.exportJSON(), 'application/json')}><Download className="w-4 h-4" aria-hidden="true" />Резервная копия</button>
+        {msg && <span role={msg.error ? 'alert' : 'status'} className={`text-sm ${msg.error ? 'text-red-400' : 'text-indigo-200'}`}>{msg.text}</span>}
       </div>
     </form>
   );
@@ -541,11 +612,11 @@ export default function BizPage() {
   ];
   return (
     <div className="space-y-5 text-white">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Разделы бизнеса">
         {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} className={`${btn} ${tab === t.id ? 'bg-indigo-600 text-white' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}>
-            <t.icon className="w-4 h-4" />{t.label}
-            {t.badge ? <span className="ml-1 px-1.5 rounded-full bg-black/30 text-xs">{t.badge}</span> : null}
+          <button key={t.id} onClick={() => setTab(t.id)} aria-pressed={tab === t.id} className={`${btn} ${tab === t.id ? 'bg-indigo-600 text-white' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}>
+            <t.icon className="w-4 h-4" aria-hidden="true" />{t.label}
+            {t.badge ? <span className="ml-1 px-1.5 rounded-full bg-black/30 text-xs" aria-label={`неоплаченных: ${t.badge}`}>{t.badge}</span> : null}
           </button>
         ))}
       </div>
