@@ -1,9 +1,11 @@
 // Svetlana Business — запись клиентов: день, новая запись по свободным окнам, напоминания, услуги и рабочие часы.
 // Доступность: у полей есть подписи, выбранное время — aria-pressed, результат действия читается как статус, ошибка — как alert.
+// Визит отмечается через completeAppointment: доход записывается один раз и убирается, если отметка не сохранилась.
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { CalendarClock, ChevronLeft, ChevronRight, Check, X, UserX, Copy, Bell, Plus, Trash2, Download, Settings } from 'lucide-react';
 import { bookingStore, startOfDay, timeOf, dayLabel, toICS, toMinutes, WEEKDAY_LABELS, BOOKING_STATUS_LABELS, type Appointment, type WorkDay, type BookingStatus } from '../services/biz/Booking';
-import { bizStore, formatRub } from '../services/biz/BizStore';
+import { formatRub } from '../services/biz/BizStore';
+import { completeAppointment } from '../services/biz/BookingTools';
 import { crmStore } from '../services/crm/CRMStore';
 import { askConfirm, showCopyText } from '../components/ConfirmDialog';
 
@@ -13,6 +15,8 @@ const btn = 'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-
 const btnPrimary = `${btn} bg-indigo-600 hover:bg-indigo-700 text-white`;
 const btnGhost = `${btn} bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10`;
 const card = 'rounded-xl bg-white/5 border border-white/10 p-4 space-y-3';
+/** Строка расписания: подпись и два поля времени в сетке, на узком экране не вылезает за край. */
+const scheduleRow = 'grid grid-cols-[3.5rem_minmax(0,1fr)_minmax(0,1fr)] items-center gap-2 text-sm';
 
 type Msg = { text: string; error: boolean } | null;
 
@@ -104,10 +108,8 @@ export default function BookingPage() {
   const complete = (a: Appointment) => {
     setDayMsg(null);
     try {
-      let entryId: string | undefined;
-      if (a.price > 0) entryId = bizStore.addEntry({ kind: 'income', amount: a.price, description: a.serviceName, counterparty: a.clientName, contactId: a.contactId, payerType: 'person', date: Math.min(Date.now(), a.end) }).id;
-      bookingStore.setStatus(a.id, 'done', entryId);
-      setDayMsg({ text: a.price > 0 ? `${a.clientName}: доход ${formatRub(a.price)} записан` : `${a.clientName}: визит отмечен`, error: false });
+      const r = completeAppointment(a, undefined);
+      setDayMsg({ text: r.income > 0 ? `${a.clientName}: доход ${formatRub(r.income)} записан` : `${a.clientName}: визит отмечен`, error: false });
     } catch (err: any) { setDayMsg({ text: err?.message || 'Не удалось отметить визит', error: true }); }
   };
 
@@ -249,14 +251,14 @@ function BookingSettings({ version }: { version: number }) {
       <section className={card} aria-label="Рабочие часы">
         <h3 className="font-semibold">Рабочие часы</h3>
         {schedule.days.map((d, i) => (
-          <div key={WEEKDAY_LABELS[i]} className="flex items-center gap-2 text-sm">
-            <label className="flex items-center gap-2 w-14 shrink-0"><input type="checkbox" checked={d.enabled} onChange={e => setDayField(i, { enabled: e.target.checked })} aria-label={`${WEEKDAY_LABELS[i]}: рабочий день`} />{WEEKDAY_LABELS[i]}</label>
+          <div key={WEEKDAY_LABELS[i]} className={scheduleRow}>
+            <label className="flex items-center gap-2 min-w-0"><input type="checkbox" checked={d.enabled} onChange={e => setDayField(i, { enabled: e.target.checked })} aria-label={`${WEEKDAY_LABELS[i]}: рабочий день`} />{WEEKDAY_LABELS[i]}</label>
             <input className={input} type="time" value={d.start} disabled={!d.enabled} onChange={e => setDayField(i, { start: e.target.value })} aria-label={`${WEEKDAY_LABELS[i]}: начало`} />
             <input className={input} type="time" value={d.end} disabled={!d.enabled} onChange={e => setDayField(i, { end: e.target.value })} aria-label={`${WEEKDAY_LABELS[i]}: конец`} />
           </div>
         ))}
-        <div className="flex items-center gap-2 text-sm">
-          <span className="w-14 shrink-0">Обед</span>
+        <div className={scheduleRow}>
+          <span>Обед</span>
           <input className={input} type="time" value={schedule.breakStart} onChange={e => setSchedule(s => ({ ...s, breakStart: e.target.value }))} aria-label="Обед: начало" />
           <input className={input} type="time" value={schedule.breakEnd} onChange={e => setSchedule(s => ({ ...s, breakEnd: e.target.value }))} aria-label="Обед: конец" />
         </div>
