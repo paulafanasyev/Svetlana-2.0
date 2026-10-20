@@ -1,3 +1,5 @@
+// Чат со Светланой. Для экранного диктора переписка — журнал (role="log"): зачитываются только новые
+// реплики, у каждой подпись «Вы» или «Светлана». С «Уменьшить движение» чат прокручивается без анимации.
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Avatar, { VoiceControl, useSpeech } from '../components/Avatar';
@@ -43,6 +45,14 @@ export function voiceLabels(platform: 'windows' | 'android' | 'web', voices: num
   const stt = platform === 'windows' ? 'Облачное распознавание (Groq или OpenAI, кнопка «Голос» → настройки)' : 'Распознавание браузера (Web Speech) или облачное';
   const tts = platform === 'windows' ? 'Голоса Windows' : 'Голоса браузера';
   return { stt, tts, ok: voices > 0, status: voices > 0 ? `Голосов: ${voices}` : 'Голоса не найдены' };
+}
+
+/** Подпись реплики для экранного диктора. */
+export const speakerLabel = (role: Message['role']): string => (role === 'user' ? 'Вы:' : 'Светлана:');
+
+/** Прокрутка без анимации, если в системе включено «Уменьшить движение». */
+function scrollBehavior(): ScrollBehavior {
+  try { return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'; } catch { return 'auto'; }
 }
 
 const SYSTEM_PROMPT = `Ты — Светлана 2.0, AI-ассистент с эмоциями и характером. Ты общаешься на русском языке.
@@ -111,7 +121,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
   }, []);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: scrollBehavior() });
   }, [messages]);
 
   useEffect(() => {
@@ -262,18 +272,18 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-3">
-          <Sparkles className="w-6 h-6 text-pink-400" />
+          <Sparkles className="w-6 h-6 text-pink-400" aria-hidden="true" />
           <h2 className="text-xl sm:text-2xl font-bold">Чат со Светланой</h2>
         </div>
         <div className="flex items-center gap-3">
           {usable ? (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/15">
-              <Zap className="w-3.5 h-3.5 text-indigo-300" />
+              <Zap className="w-3.5 h-3.5 text-indigo-300" aria-hidden="true" />
               <span className="text-xs text-sv-text">{usable.name}</span>
             </div>
           ) : (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-500/10 border border-red-500/20">
-              <WifiOff className="w-3.5 h-3.5 text-red-400" />
+              <WifiOff className="w-3.5 h-3.5 text-red-400" aria-hidden="true" />
               <span className="text-xs text-red-400">ИИ не выбран</span>
             </div>
           )}
@@ -284,16 +294,17 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
             aria-pressed={showServices}
             className="flex items-center gap-1.5 p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted text-xs"
           >
-            <Plug className="w-4 h-4" />
+            <Plug className="w-4 h-4" aria-hidden="true" />
             <span className="hidden sm:inline">Сервисы</span>
           </button>
           <button
             onClick={() => setShowSettings(!showSettings)}
             title="Настройки голоса"
             aria-label="Настройки голоса"
+            aria-expanded={showSettings}
             className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted"
           >
-            <Settings className="w-4 h-4" />
+            <Settings className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
       </div>
@@ -335,14 +346,14 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                 <div className="w-8 h-8 shrink-0 rounded-full overflow-hidden border-2 border-indigo-500/30">
                   <img
                     src={AVATAR_SRC}
-                    alt="Светлана"
+                    alt=""
                     className="w-full h-full object-cover"
                   />
                 </div>
                 <div className="min-w-0">
                   <h3 className="text-sm font-semibold">Светлана</h3>
                   <p className={`text-xs flex items-center gap-1 truncate ${usable ? 'text-sv-muted' : 'text-yellow-400'}`}>
-                    {usable ? <Wifi className="w-3 h-3 shrink-0" /> : <WifiOff className="w-3 h-3 shrink-0" />}
+                    {usable ? <Wifi className="w-3 h-3 shrink-0" aria-hidden="true" /> : <WifiOff className="w-3 h-3 shrink-0" aria-hidden="true" />}
                     {usable ? `Отвечает через: ${usable.name}` : 'ИИ не выбран (CRM доступна)'}
                   </p>
                 </div>
@@ -355,7 +366,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                   aria-label="Новый чат"
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-sv-muted disabled:opacity-50"
                 >
-                  <RotateCcw className="w-4 h-4" />
+                  <RotateCcw className="w-4 h-4" aria-hidden="true" />
                   <span className="hidden sm:inline">Новый чат</span>
                 </button>
                 <button
@@ -364,12 +375,19 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                   aria-label={isSpeaking ? 'Остановить голос' : 'Проверить голос'}
                   className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted"
                 >
-                  {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                  {isSpeaking ? <VolumeX className="w-4 h-4" aria-hidden="true" /> : <Volume2 className="w-4 h-4" aria-hidden="true" />}
                 </button>
               </div>
             </div>
 
-            <div className="flex-1 p-3 sm:p-4 overflow-y-auto space-y-3 min-h-[300px] sm:min-h-[400px] max-h-[60vh] sm:max-h-[500px]" aria-live="polite">
+            <div
+              className="flex-1 p-3 sm:p-4 overflow-y-auto space-y-3 min-h-[300px] sm:min-h-[400px] max-h-[60vh] sm:max-h-[500px]"
+              role="log"
+              aria-label="Переписка со Светланой"
+              aria-live="polite"
+              aria-relevant="additions"
+              tabIndex={0}
+            >
               <AnimatePresence>
                 {messages.map((msg, i) => (
                   <motion.div
@@ -394,9 +412,9 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                           {msg.emotion === 'talking' && '💬'}
                         </span>
                       )}
-                      <p className="text-sm whitespace-pre-line break-words">{msg.content}</p>
+                      <p className="text-sm whitespace-pre-line break-words"><span className="sr-only">{speakerLabel(msg.role)} </span>{msg.content}</p>
                       {msg.provider && (
-                        <p className="text-xs text-sv-muted mt-1 opacity-50">{msg.provider}</p>
+                        <p className="text-xs text-sv-muted mt-1 opacity-50" aria-hidden="true">{msg.provider}</p>
                       )}
                     </div>
                   </motion.div>
@@ -407,9 +425,10 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
+                  role="status"
                   className="flex items-center gap-2 text-sm text-sv-muted"
                 >
-                  <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                  <Loader2 className="w-4 h-4 animate-spin text-indigo-400" aria-hidden="true" />
                   Светлана думает...
                 </motion.div>
               )}
@@ -434,11 +453,11 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                   aria-label="Отправить"
                   className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white transition-colors"
                 >
-                  <Send className="w-4 h-4" />
+                  <Send className="w-4 h-4" aria-hidden="true" />
                 </button>
               </div>
 
-              <div className="flex flex-wrap gap-2 mt-3">
+              <div className="flex flex-wrap gap-2 mt-3" role="group" aria-label="Быстрые команды">
                 {quick.map(phrase => (
                   <button
                     key={phrase}
@@ -475,7 +494,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                       : 'bg-white/5 border border-white/5 hover:bg-white/10'
                   } ${btn.color}`}
                 >
-                  <btn.icon className="w-3.5 h-3.5" />
+                  <btn.icon className="w-3.5 h-3.5" aria-hidden="true" />
                   {btn.label}
                 </button>
               ))}
@@ -496,20 +515,20 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
           className="glass-card rounded-xl p-5 sm:p-6"
         >
           <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Settings className="w-5 h-5 text-sv-muted" />
+            <Settings className="w-5 h-5 text-sv-muted" aria-hidden="true" />
             Настройки голоса
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-              <h4 className="text-sm font-medium text-cyan-400 mb-2 flex items-center gap-1.5"><Mic className="w-4 h-4" />Распознавание речи</h4>
+              <h4 className="text-sm font-medium text-cyan-400 mb-2 flex items-center gap-1.5"><Mic className="w-4 h-4" aria-hidden="true" />Распознавание речи</h4>
               <p data-testid="stt-label" className="text-xs text-sv-muted mb-2">{labels.stt}</p>
               <p className="text-xs text-sv-muted mt-2">Язык: русский (ru-RU)</p>
             </div>
             <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-              <h4 className="text-sm font-medium text-purple-400 mb-2 flex items-center gap-1.5"><Volume2 className="w-4 h-4" />Синтез речи</h4>
+              <h4 className="text-sm font-medium text-purple-400 mb-2 flex items-center gap-1.5"><Volume2 className="w-4 h-4" aria-hidden="true" />Синтез речи</h4>
               <p data-testid="tts-label" className="text-xs text-sv-muted mb-2">{labels.tts}</p>
               <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${labels.ok ? 'bg-emerald-400' : 'bg-yellow-400'}`} />
+                <span className={`w-2 h-2 rounded-full ${labels.ok ? 'bg-emerald-400' : 'bg-yellow-400'}`} aria-hidden="true" />
                 <span className={`text-xs ${labels.ok ? 'text-emerald-400' : 'text-yellow-400'}`}>{labels.status}</span>
               </div>
             </div>
@@ -517,7 +536,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
               <h4 className="text-sm font-medium text-yellow-400 mb-2">ИИ</h4>
               <p className="text-xs text-sv-muted mb-2">Сейчас: {usable?.name || 'не выбран'}</p>
               <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${usable ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                <span className={`w-2 h-2 rounded-full ${usable ? 'bg-emerald-400' : 'bg-red-400'}`} aria-hidden="true" />
                 <span className={`text-xs ${usable ? 'text-emerald-400' : 'text-red-400'}`}>
                   {usable ? 'Выбран' : 'Не настроен'}
                 </span>
@@ -530,7 +549,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
       {/* Emotion System (только большой экран: на телефоне это лишняя прокрутка) */}
       <div className="hidden sm:block glass-card rounded-xl p-5 sm:p-6">
         <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Heart className="w-5 h-5 text-pink-400" />
+          <Heart className="w-5 h-5 text-pink-400" aria-hidden="true" />
           Система эмоций
         </h3>
         <p className="text-sm text-sv-muted mb-4">
