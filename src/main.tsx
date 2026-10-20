@@ -1,6 +1,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { MotionConfig } from "framer-motion";
 import "./index.css";
+import "./reducedMotion.css";
 import DesktopShell from "./DesktopShell";
 import CRMLauncher from "./components/CRMLauncher";
 import { installAndroidDownloads } from "./services/AndroidFiles";
@@ -11,9 +13,10 @@ import { installBackButton } from "./services/BackStack";
 installAndroidDownloads();
 installBackButton();
 
+// MotionConfig reducedMotion="user": если в системе включено «Уменьшить движение», аватар и панели не двигаются.
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <>
+  <MotionConfig reducedMotion="user">
     <DesktopShell />
     <CRMLauncher />
-  </>
+  </MotionConfig>
 );

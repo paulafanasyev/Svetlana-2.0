@@ -2,7 +2,8 @@
 // Настройки одинаковые на сайте, в Windows и в Android: запись своего голоса, модель распознавания на
 // устройстве (в приложениях), облачное распознавание (Groq/OpenAI), озвучка. В Android без записанного голоса
 // слушает распознавание самого телефона (ключ не нужен). Панель закрывается системной кнопкой «Назад» и Escape.
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+// Панель настроек — модальное окно (useDialogFocus): фокус на «Закрыть», Tab не уходит на страницу под ним.
+import { useEffect, useRef, useState } from 'react';
 import { Mic, MicOff, Settings2, X, Volume2, VolumeX } from 'lucide-react';
 import { sttSupport, getCloudStt, setCloudStt, resetWebStt, STT_PRESETS, type Listener } from '../services/voice/SpeechEngine';
 import { listenCommand } from './Avatar';
@@ -12,6 +13,7 @@ import { speakText, stopSpeaking, isMuted, setMuted, ttsAvailable } from '../ser
 import { detectCRMIntent, runCRMActions } from '../services/crm/CRMTools';
 import { isAndroidApp } from '../platform';
 import { onBack } from '../services/BackStack';
+import { useDialogFocus } from './useDialogFocus';
 
 const input = 'w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-indigo-500/50';
 
@@ -113,10 +115,11 @@ function VoiceSettings({ onClose }: { onClose: () => void }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const s = sttSupport();
 
   useEffect(() => onBack(onClose), []);
-  useEffect(() => { closeRef.current?.focus(); }, []);
+  useDialogFocus(panelRef, onClose, closeRef);
 
   const save = () => {
     setErr(null);
@@ -133,14 +136,10 @@ function VoiceSettings({ onClose }: { onClose: () => void }) {
       : 'Облачное распознавание отключено.');
   };
 
-  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key === 'Escape') { e.stopPropagation(); onClose(); }
-  };
-
   const now = s.mode === 'native' ? 'распознавание телефона' : s.mode === 'web' ? 'встроенное распознавание' : s.mode === 'cloud' ? 'облачное распознавание' : 'распознавание не настроено';
 
   return (
-    <div role="dialog" aria-labelledby="voice-settings-title" onKeyDown={onKeyDown} className="fixed bottom-20 left-3 sm:left-5 z-50 w-[22rem] max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-y-auto rounded-xl bg-slate-900/98 border border-white/10 p-4 text-sm text-white shadow-2xl space-y-3">
+    <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="voice-settings-title" className="fixed bottom-20 left-3 sm:left-5 z-50 w-[22rem] max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-y-auto rounded-xl bg-slate-900/98 border border-white/10 p-4 text-sm text-white shadow-2xl space-y-3 focus:outline-none">
       <div className="flex items-center justify-between">
         <h3 id="voice-settings-title" className="font-semibold">Голос Светланы</h3>
         <button ref={closeRef} onClick={onClose} className="text-slate-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400 rounded" aria-label="Закрыть настройки голоса"><X className="w-4 h-4" aria-hidden="true" /></button>
