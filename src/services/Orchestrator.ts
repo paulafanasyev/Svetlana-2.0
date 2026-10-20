@@ -5,6 +5,7 @@
 // - проверка результата учитывает изменение экрана; при неудаче мы только смотрим ещё раз,
 //   а НЕ повторяем действие (дважды отправленное сообщение или платёж хуже ошибки);
 // - одновременно идёт одна задача; reset() отменяет текущую (после отмены ни одно действие не запускается);
+//   если в момент сброса действие уже выполняется, новая задача ждёт его окончания (два действия сразу не идут);
 // - настройки из хранилища проверяются (sanitizeOrchestratorConfig), ошибка подписчика не ломает задачу.
 
 import { planner, type Task, type TaskStep } from './Planner';
@@ -68,6 +69,10 @@ class Orchestrator {
   /** Номер текущего запуска: reset() его меняет, и старый запуск останавливается на ближайшей проверке. */
   private runId = 0;
   private running = false;
+  /** Какой запуск держит «занято» (0 — никакой). */
+  private holder = 0;
+  /** Идёт действие инструмента: сброс не снимает «занято», пока оно не закончится. */
+  private acting = false;
 
   private listeners: ((event: AgentEvent) => void)[] = [];
 
@@ -122,6 +127,10 @@ class Orchestrator {
     return { success: false, error: ORCH_CANCELLED };
   }
 
+  private release(id: number) {
+    if (this.holder === id) { this.holder = 0; this.running = false; }
+  }
+
   isRunning(): boolean {
     return this.running;
   }
@@ -131,6 +140,7 @@ class Orchestrator {
     if (this.running) return { success: false, error: ORCH_BUSY };
     const id = ++this.runId;
     this.running = true;
+    this.holder = id;
     try {
       // 1. UNDERSTAND
       this.setState('understanding');
@@ -179,7 +189,7 @@ class Orchestrator {
       this.emit({ type: 'error', state: 'error', detail: message, data: { error: message } });
       return { success: false, error: message };
     } finally {
-      if (this.alive(id)) this.running = false;
+      this.release(id);
     }
   }
 
@@ -255,7 +265,13 @@ class Orchestrator {
     avatarStateMachine.setExecuting();
     this.emit({ type: 'act', state: 'acting', detail: `Executing tool: ${tool.name}`, data: { tool: tool.id, params: step.parameters } });
 
-    const actionResult = await toolRegistry.executeTool(tool.id, step.parameters || {});
+    let actionResult: Awaited<ReturnType<typeof toolRegistry.executeTool>>;
+    this.acting = true;
+    try {
+      actionResult = await toolRegistry.executeTool(tool.id, step.parameters || {});
+    } finally {
+      this.acting = false;
+    }
 
     this.emit({ type: 'act_result', state: 'acting', detail: `Result: ${actionResult.success ? 'SUCCESS' : 'FAILED'}`, data: { result: actionResult } });
 
@@ -353,10 +369,13 @@ class Orchestrator {
     this.saveConfig();
   }
 
-  /** Отменить текущую задачу и вернуться в ожидание: незапущенные действия уже не выполнятся. */
+  /**
+   * Отменить текущую задачу и вернуться в ожидание: незапущенные действия уже не выполнятся.
+   * Если действие уже выполняется, «занято» снимается, когда оно закончится: вторая задача не стартует поверх него.
+   */
   reset() {
     this.runId++;
-    this.running = false;
+    if (!this.acting) { this.holder = 0; this.running = false; }
     this.state = 'idle';
     this.currentTask = null;
   }

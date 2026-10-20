@@ -5,6 +5,7 @@
 // распознавание речи самого телефона (режим «native»), а с записанным голосом — запись с микрофона,
 // которую распознаёт GigaAM на самом телефоне или облако (listenRecorded): тогда голос проверяется как на компьютере,
 // причём по той же записи, из которой распознан текст (onAudio).
+// Режим «без рук» (continuous): после stop() запоздавшие результаты уже не отдаются: человек сказал «хватит».
 
 import { getSecret, setSecret } from '../security/SecretStore';
 import { isAndroidApp } from '../../platform';
@@ -215,6 +216,8 @@ function listenWeb(opts: ListenOptions): Listener {
   rec.maxAlternatives = 1;
   let stopped = false;
   rec.onresult = (event: any) => {
+    // «Без рук» остановлен: запоздавшие результаты уже не команды. В режиме одной фразы сказанное до «стоп» отдаём.
+    if (stopped && opts.continuous) return;
     let interim = '';
     for (let i = event.resultIndex; i < event.results.length; i++) {
       const r = event.results[i];
@@ -394,11 +397,12 @@ export function listenRecorded(opts: ListenOptions, rec = recordedRecognizer()):
     rec.recognize(pcm, sr)
       .then(t => {
         const text = String(t ?? '').trim();
-        if (ended) return;
+        // «Без рук» остановлен, пока фраза распознавалась: она уже не команда.
+        if (ended || (continuous && stopped)) return;
         if (text) { opts.onAudio?.(pcm, sr); opts.onFinal(text); }
         else if (!continuous) opts.onError?.(NOT_HEARD);
       }, e => {
-        if (ended) return;
+        if (ended || (continuous && stopped)) return;
         const m = typeof e === 'string' ? e : (e as { message?: unknown } | null)?.message;
         opts.onError?.(String(m || 'Не удалось распознать').slice(0, 300));
       })

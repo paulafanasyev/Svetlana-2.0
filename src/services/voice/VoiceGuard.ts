@@ -4,6 +4,8 @@
 // цифры и голос проверяются по одному и тому же звуку. Без записанного голоса управление выключено.
 // В Android фразы слушает запись (listenRecorded: GigaAM на телефоне или облако), и голос сверяется по
 // тому же звуку, из которого распознан текст (вторая запись не открывается).
+// Режим «без рук» после «стоп»: фраза, которая дошла или допроверилась позже, не выполняется (человек уже сказал «хватит»).
+// Режим «нажал и сказал»: фраза, сказанная до отпускания кнопки, по-прежнему выполняется.
 import { listen, listenRecorded, recordedRecognizer, getCloudStt, transcribe, pcmToWav, type ListenOptions, type Listener } from './SpeechEngine';
 import { computeVoicePrint, loadTemplate, verifyPrint, type VerifyResult, type VoicePrint, type VoiceTemplate } from './VoicePrint';
 import { speakText, stopSpeaking } from './Tts';
@@ -147,6 +149,9 @@ export function createVoiceGuard(d: GuardDeps) {
     let cap: PcmCapture | null = null;
     let challenge: { cancel(): void } | null = null;
 
+    /** Дальше команды не выполняются: сессия закрыта или режим «без рук» остановлен. */
+    const halted = () => closed || (stopped && !!opts.continuous);
+
     const quiet = (msg: string) => { if (!opts.continuous) opts.onError?.(msg); };
 
     const finish = () => {
@@ -197,7 +202,7 @@ export function createVoiceGuard(d: GuardDeps) {
           .catch(() => null);
       const l = d.listen({
         continuous: opts.continuous,
-        onPartial: t => { if (gen === mainGen && !challenge) opts.onPartial?.(t); },
+        onPartial: t => { if (gen === mainGen && !challenge && !halted()) opts.onPartial?.(t); },
         onError: m => { if (gen === mainGen && !challenge) opts.onError?.(m); },
         onAudio: (pcm, sampleRate) => { if (gen === mainGen) heard = { pcm, sampleRate }; },
         onFinal: text => {
@@ -220,7 +225,7 @@ export function createVoiceGuard(d: GuardDeps) {
     };
 
     const onPhrase = (text: string, capP: Promise<PcmCapture | null>) => {
-      if (closed || challenge) return;
+      if (halted() || challenge) return;
       if (opts.accept && !opts.accept(text)) {
         void capP.then(c => c?.take(0)); // звук отброшенной фразы не должен попасть в проверку следующей
         return;
@@ -229,7 +234,7 @@ export function createVoiceGuard(d: GuardDeps) {
       void (async () => {
         try {
           const c = await capP;
-          if (closed) return;
+          if (halted()) return;
           if (!c) { quiet('Нет доступа к микрофону для проверки голоса. Команда не выполнена.'); return; }
           const { pcm, sampleRate } = c.take(8);
           const t = currentTemplate();
@@ -239,8 +244,9 @@ export function createVoiceGuard(d: GuardDeps) {
           const r = d.verify(print, t);
           onVerify?.(r);
           if (!r.ok) { failure(r.reason ?? 'Голос не узнан. Команда не выполнена.', false); return; }
+          if (halted()) return;
           if (d.trust.isValid(tplKey)) { d.trust.touch(); opts.onFinal(text); return; }
-          if (closed || challenge) return;
+          if (challenge) return;
           runChallenge(text);
         } finally { busy--; settle(); }
       })();
@@ -273,7 +279,7 @@ export function createVoiceGuard(d: GuardDeps) {
         if (done) return;
         cleanup();
         if (closed) return;
-        if (ok) { d.lockout.reset(); d.trust.start(tplKey); opts.onFinal(command); }
+        if (ok) { d.lockout.reset(); d.trust.start(tplKey); if (!halted()) opts.onFinal(command); }
         else if (counts) failure(msg!, true);
         else { d.trust.end(); if (msg) opts.onError?.(msg); }
         settle();

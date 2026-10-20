@@ -13,6 +13,30 @@ function fail(error: string): ToolResult { return { success: false, error }; }
 
 const DAY = 86_400_000;
 
+/** Визит уже отмечен: второй раз доход не записывается (повтор команды, двойное нажатие, ИИ повторил вызов). */
+export const BOOKING_ALREADY_DONE = 'Этот визит уже отмечен, доход второй раз не записываю.';
+
+/**
+ * Клиент пришёл и оплатил: доход в книгу и отметка «пришёл» вместе. Если отметка не сохранилась,
+ * доход убирается обратно, чтобы после повторной попытки не было двух одинаковых доходов.
+ */
+export function completeAppointment(a: Appointment, amountIn: number | undefined, store: BookingStore = bookingStore, biz: BizStore = bizStore): { appointment: Appointment; income: number } {
+  const current = store.getAppointment(a.id) ?? a;
+  if (current.status === 'done') throw new Error(BOOKING_ALREADY_DONE);
+  const amount = Number(amountIn ?? current.price);
+  if (!Number.isFinite(amount) || amount < 0) throw new Error('Сумму укажите цифрами, например 1500');
+  let entryId: string | undefined;
+  if (amount > 0) {
+    entryId = biz.addEntry({ kind: 'income', amount, description: current.serviceName, counterparty: current.clientName, contactId: current.contactId, payerType: 'person', date: Math.min(store.now(), current.end) }).id;
+  }
+  try {
+    return { appointment: store.setStatus(current.id, 'done', entryId), income: amount > 0 ? amount : 0 };
+  } catch (e) {
+    if (entryId) { try { biz.deleteEntry(entryId); } catch { /* книга тоже не сохраняется: ошибку покажет вызвавший */ } }
+    throw e;
+  }
+}
+
 function resolveDay(value: unknown, now: number): number | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined;
   return parseWhen(value, now).day;
@@ -103,13 +127,14 @@ export function createBookingTools(store: BookingStore = bookingStore, resolve: 
       async execute(p) {
         const a = findAppt(p);
         if (!a) return fail(`Не нашла предстоящую запись: ${p.client ?? p.id}`);
-        return ok(brief(store.setStatus(a.id, 'cancelled'), store.now()));
+        try { return ok(brief(store.setStatus(a.id, 'cancelled'), store.now())); }
+        catch (e: any) { return fail(e?.message || 'Не удалось отменить запись'); }
       },
       isAvailable: always,
     },
     {
       id: 'biz_complete_booking', name: 'Booking: client came and paid', category: 'data', riskLevel: 'low',
-      description: 'Mark a booking as done; by default records the income in the business ledger.',
+      description: 'Mark a booking as done; by default records the income in the business ledger (once).',
       inputSchema: { type: 'object', properties: {
         client: { type: 'string', description: 'Client name' }, id: { type: 'string', description: 'Booking id' },
         amount: { type: 'number', description: 'Paid amount, default service price' },
@@ -118,14 +143,12 @@ export function createBookingTools(store: BookingStore = bookingStore, resolve: 
       async execute(p) {
         const a = findAppt(p);
         if (!a) return fail(`Не нашла запись: ${p.client ?? p.id}`);
-        if (p.noshow) return ok(brief(store.setStatus(a.id, 'noshow'), store.now()));
-        const amount = Number(p.amount ?? a.price);
-        let entryId: string | undefined;
-        if (amount > 0) {
-          const e = biz.addEntry({ kind: 'income', amount, description: a.serviceName, counterparty: a.clientName, contactId: a.contactId, payerType: 'person', date: Math.min(store.now(), a.end) });
-          entryId = e.id;
-        }
-        return ok({ ...brief(store.setStatus(a.id, 'done', entryId), store.now()), income: amount > 0 ? amount : 0 });
+        if (a.status === 'done') return fail(BOOKING_ALREADY_DONE);
+        try {
+          if (p.noshow) return ok(brief(store.setStatus(a.id, 'noshow'), store.now()));
+          const r = completeAppointment(a, p.amount === undefined || p.amount === null ? undefined : Number(p.amount), store, biz);
+          return ok({ ...brief(r.appointment, store.now()), income: r.income });
+        } catch (e: any) { return fail(e?.message || 'Не удалось отметить визит'); }
       },
       isAvailable: always,
     },
