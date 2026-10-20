@@ -14,7 +14,11 @@ describe('chat accessibility', () => {
   it('every message says who wrote it and the thinking indicator is a status', () => {
     expect(page).toContain('<span className="sr-only">{speakerLabel(msg.role)} </span>');
     expect(page).toContain("role === 'user' ? 'Вы:' : 'Светлана:'");
-    expect(page).toMatch(/role="status"[\s\S]{0,200}Светлана думает/);
+    // Текст «Светлана думает» лежит внутри того же блока, что и role="status".
+    const start = page.indexOf('role="status"');
+    expect(start).toBeGreaterThan(-1);
+    const block = page.slice(start, page.indexOf('</motion.div>', start));
+    expect(block).toContain('Светлана думает');
   });
   it('scrolling respects reduced motion', () => {
     expect(page).toContain('prefers-reduced-motion: reduce');
