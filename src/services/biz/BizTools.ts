@@ -1,8 +1,11 @@
 // Svetlana Business — AI tools, offline chat commands and prompt context.
+// Доход по команде записывается один раз: та же сумма, клиент и назначение в течение 2 минут — это повтор команды
+// (ИИ прислал действие дважды или человек повторил фразу), и второй раз доход не добавляется. Сбой записи
+// в историю клиента (CRM) не выдаётся за ошибку: доход уже записан, иначе ИИ повторил бы команду.
 import type { Tool, ToolResult } from '../ToolRegistry';
 import { toolRegistry } from '../ToolRegistry';
 import { crmStore, type CRMContact } from '../crm/CRMStore';
-import { bizStore, BizStore, REGIME_LABELS, formatRub, type PayerType, type TaxRegime, type DocType } from './BizStore';
+import { bizStore, BizStore, REGIME_LABELS, formatRub, type PayerType, type TaxRegime, type DocType, type LedgerEntry } from './BizStore';
 import { findSupport, regionalSearchUrl, SUPPORT_KIND_LABELS, type SupportKind } from './SupportCatalog';
 import { checkCounterparty, reportText } from './Counterparty';
 import { computeAnalytics, analyticsText } from './Analytics';
@@ -55,6 +58,22 @@ function clientFrom(p: Record<string, any>): { name: string; contactId?: string 
   return { name: contact?.name ?? name, contactId: contact?.id };
 }
 
+/** Сколько считаем одинаковую команду «записать доход» повтором, а не новым доходом. */
+export const DUPLICATE_WINDOW_MS = 120_000;
+
+/** Тот же доход (сумма, клиент, назначение), записанный только что без счёта. */
+export function recentDuplicateIncome(store: BizStore, amount: number, client: string | undefined, description: string): LedgerEntry | undefined {
+  const now = store.now();
+  const sum = Math.round(amount * 100) / 100;
+  const desc = description.trim() || 'Доход';
+  const who = client?.trim() || '';
+  return store.listEntries({ kind: 'income' }).find(e => {
+    const age = now - e.createdAt;
+    return age >= 0 && age <= DUPLICATE_WINDOW_MS && !e.documentId && e.amount === sum
+      && (e.counterparty ?? '') === who && e.description === desc;
+  });
+}
+
 export function createBizTools(store: BizStore = bizStore): Tool[] {
   const always = async () => true;
   return [
@@ -96,12 +115,23 @@ export function createBizTools(store: BizStore = bizStore): Tool[] {
       async execute(p) {
         try {
           const c = clientFrom(p);
+          const description = String(p.description ?? '');
+          const dup = recentDuplicateIncome(store, Number(p.amount), c.name, description);
+          if (dup) {
+            return ok({ id: dup.id, amount: dup.amount, client: c.name, payerType: dup.payerType, receipt: dup.receipt, linked: !!dup.contactId, duplicate: true });
+          }
           const e = store.addEntry({
-            kind: 'income', amount: Number(p.amount), description: p.description ?? '', date: parseDate(p.date),
+            kind: 'income', amount: Number(p.amount), description, date: parseDate(p.date),
             payerType: p.payerType ?? guessPayerType(c.name), contactId: c.contactId, counterparty: c.name || undefined, payMethod: p.payMethod,
           });
-          if (c.contactId) crmStore.addActivity({ type: 'note', text: `Оплата ${formatRub(e.amount)}${e.description ? `: ${e.description}` : ''}`, contactId: c.contactId });
-          return ok({ id: e.id, amount: e.amount, client: c.name, payerType: e.payerType, receipt: e.receipt, linked: !!c.contactId });
+          let linked = false;
+          if (c.contactId) {
+            try {
+              crmStore.addActivity({ type: 'note', text: `Оплата ${formatRub(e.amount)}${e.description ? `: ${e.description}` : ''}`, contactId: c.contactId });
+              linked = true;
+            } catch { /* доход уже записан: сбой истории клиента не должен вызывать повторную запись */ }
+          }
+          return ok({ id: e.id, amount: e.amount, client: c.name, payerType: e.payerType, receipt: e.receipt, linked });
         } catch (err: any) { return fail(err?.message || 'Не удалось записать доход'); }
       },
       isAvailable: always,
@@ -288,6 +318,7 @@ export function describeBizResult(tool: string, result: ToolResult): string {
   switch (tool) {
     case 'biz_set_profile': return `✅ Профиль: ${d.regime}${d.region ? `, ${d.region}` : ''}.`;
     case 'biz_add_income':
+      if (d.duplicate) return `ℹ️ Доход ${formatRub(d.amount)}${d.client ? ` от ${d.client}` : ''} уже записан только что, второй раз не добавляю. Если это другая оплата, добавьте её в «Бизнес» → Деньги.`;
       return `✅ Доход ${formatRub(d.amount)}${d.client ? ` от ${d.client}` : ''} записан${d.linked ? ' и добавлен в историю клиента' : ''}.`
         + (d.receipt === 'pending' ? `\n🧾 Не забудьте чек в «Мой налог» (${d.payerType === 'company' ? 'юрлицо/ИП, 6%' : 'физлицо, 4%'}).` : '');
     case 'biz_add_expense': return `✅ Расход ${formatRub(d.amount)}${d.description ? ` (${d.description})` : ''} записан.`;
