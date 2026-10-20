@@ -2,6 +2,7 @@
 // receivables and Russian tax estimates (НПД, УСН). Local-first, like the CRM.
 // Запись всё или ничего (как CRMStore): если хранилище не приняло изменение, данные возвращаются к последнему
 // сохранённому состоянию и бросается BIZ_SAVE_FAILED: экран не покажет доход, который исчезнет после перезапуска.
+// Наружу отдаются только КОПИИ записей и документов: экран или инструмент ИИ не может изменить данные в обход проверок и сохранения.
 import type { KeyValueStorage } from '../crm/CRMStore';
 import { safeJsonParse, csvSafe, stripControl, MAX_BYTES } from '../security/SafeData';
 import { contributionsFor, onePercent, dueDate, npdReceiptDeadline, vatStatusUsn, patentPayments, usnRate, USN_RATE_LIMITS, type VatStatus, type PayMethod } from './TaxRules';
@@ -164,6 +165,10 @@ function defaultStorage(): KeyValueStorage {
 function newId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
+
+/** Копии для выдачи наружу: изменение копии не меняет данные хранилища. */
+const copyEntry = (e: LedgerEntry): LedgerEntry => ({ ...e });
+const copyDoc = (d: BizDocument): BizDocument => ({ ...d, items: d.items.map(i => ({ ...i })) });
 
 export function round2(n: number): number {
   return Math.round((n + (n >= 0 ? Number.EPSILON : -Number.EPSILON)) * 100) / 100;
@@ -349,6 +354,8 @@ export class BizStore {
     money(patch.contributionsPaid, 'Уплаченные взносы', 10_000_000);
     money(patch.patentCost, 'Стоимость патента', 100_000_000);
     const clean: Partial<BizProfile> = { ...patch };
+    if (patch.sectors) clean.sectors = [...patch.sectors];
+    if (patch.flags) clean.flags = [...patch.flags];
     if (patch.birthYear !== undefined && patch.birthYear !== null) {
       const y = Number(patch.birthYear);
       if (y === 0) clean.birthYear = undefined;
@@ -366,7 +373,8 @@ export class BizStore {
       .filter(e => !filter.kind || e.kind === filter.kind)
       .filter(e => filter.year === undefined || new Date(e.date).getFullYear() === filter.year)
       .filter(e => !filter.contactId || e.contactId === filter.contactId)
-      .sort((a, b) => b.date - a.date);
+      .sort((a, b) => b.date - a.date)
+      .map(copyEntry);
   }
 
   /** Проверенная запись книги (ещё не добавлена). */
@@ -397,7 +405,7 @@ export class BizStore {
     const entry = this.makeEntry(input);
     this.data.ledger.push(entry);
     this.commit();
-    return entry;
+    return copyEntry(entry);
   }
 
   /** Отметить, что операция не доход/не расход для налога (перевод себе, займ, возврат) — или вернуть в базу. */
@@ -407,7 +415,7 @@ export class BizStore {
     e.taxable = taxable ? undefined : false;
     if (e.kind === 'income' && this.data.profile.regime === 'npd' && e.receipt !== 'issued') e.receipt = taxable ? 'pending' : 'none';
     this.commit();
-    return e;
+    return this.entryCopy(id, e);
   }
 
   /** Расход без подтверждающих документов (чек, акт, накладная, выписка) не уменьшает базу УСН 15%. */
@@ -416,7 +424,7 @@ export class BizStore {
     if (!e) throw new Error(`Расход не найден: ${id}`);
     e.noDocs = noDocs ? true : undefined;
     this.commit();
-    return e;
+    return this.entryCopy(id, e);
   }
 
   setReceipt(id: string, receiptNumber: string): LedgerEntry {
@@ -425,7 +433,12 @@ export class BizStore {
     e.receipt = 'issued';
     e.receiptNumber = receiptNumber.trim() || undefined;
     this.commit();
-    return e;
+    return this.entryCopy(id, e);
+  }
+
+  /** Копия записи такой, какой она лежит в данных после сохранения. */
+  private entryCopy(id: string, fallback: LedgerEntry): LedgerEntry {
+    return copyEntry(this.data.ledger.find(x => x.id === id) ?? fallback);
   }
 
   deleteEntry(id: string): void {
@@ -452,11 +465,18 @@ export class BizStore {
       .filter(d => !filter.type || d.type === filter.type)
       .filter(d => !filter.status || d.status === filter.status)
       .filter(d => !filter.contactId || d.contactId === filter.contactId)
-      .sort((a, b) => b.date - a.date);
+      .sort((a, b) => b.date - a.date)
+      .map(copyDoc);
+  }
+
+  /** Сам документ в данных (только для методов хранилища). */
+  private doc(id: string): BizDocument | undefined {
+    return this.data.documents.find(d => d.id === id);
   }
 
   getDocument(id: string): BizDocument | undefined {
-    return this.data.documents.find(d => d.id === id);
+    const d = this.doc(id);
+    return d ? copyDoc(d) : undefined;
   }
 
   private nextNumber(type: DocType, date: number): string {
@@ -489,7 +509,7 @@ export class BizStore {
     };
     this.data.documents.push(doc);
     this.commit();
-    return doc;
+    return this.getDocument(doc.id) ?? copyDoc(doc);
   }
 
   /** НДС для нового документа: ставка и основание «Без НДС». */
@@ -514,19 +534,19 @@ export class BizStore {
   }
 
   setDocumentStatus(id: string, status: DocStatus): BizDocument {
-    const d = this.getDocument(id);
+    const d = this.doc(id);
     if (!d) throw new Error(`Документ не найден: ${id}`);
     if (status === 'paid') throw new Error('Оплату отмечайте кнопкой «Оплачен»: так доход попадёт в учёт');
     if (d.status !== status && !DOC_TRANSITIONS[d.status].includes(status)) throw new Error(`Нельзя перевести документ из «${DOC_STATUS_LABELS[d.status]}» в «${DOC_STATUS_LABELS[status]}»`);
     d.status = status;
     d.updatedAt = this.clock();
     this.commit();
-    return d;
+    return this.getDocument(id) ?? copyDoc(d);
   }
 
   /** Marks an invoice paid and records the income (once). Доход и отметка «оплачен» сохраняются одной записью. */
   markPaid(id: string, opts: { date?: number; payerType?: PayerType; payMethod?: PayMethod } = {}): { document: BizDocument; entry: LedgerEntry } {
-    const d = this.getDocument(id);
+    const d = this.doc(id);
     if (!d) throw new Error(`Документ не найден: ${id}`);
     if (d.type !== 'invoice') throw new Error('Оплаченным можно отметить только счёт');
     if (d.status === 'cancelled') throw new Error('Счёт отменён. Сначала верните его в черновик.');
@@ -539,7 +559,7 @@ export class BizStore {
         d.updatedAt = this.clock();
         this.commit();
       }
-      return { document: d, entry: existing };
+      return { document: this.getDocument(id) ?? copyDoc(d), entry: this.entryCopy(existing.id, existing) };
     }
     const looksCompany = /^(ооо|ао|пао|зао|ип|оао|нко|ано)(?=\s|$|«|")/i.test(d.clientName.trim());
     const entry = this.makeEntry({
@@ -552,8 +572,8 @@ export class BizStore {
     d.paidAt = entry.date;
     d.updatedAt = this.clock();
     this.commit();
-    // После удачной записи отдаём то, что реально лежит в данных.
-    return { document: this.getDocument(id) ?? d, entry: this.data.ledger.find(e => e.id === entry.id) ?? entry };
+    // После удачной записи отдаём копии того, что реально лежит в данных.
+    return { document: this.getDocument(id) ?? copyDoc(d), entry: this.entryCopy(entry.id, entry) };
   }
 
   deleteDocument(id: string): void {
@@ -568,12 +588,12 @@ export class BizStore {
     const now = this.clock();
     return this.data.documents
       .filter(d => d.type === 'invoice' && (d.status === 'draft' || d.status === 'sent'))
-      .map(d => ({ document: d, daysOverdue: d.dueDate && d.dueDate < now ? Math.floor((now - d.dueDate) / DAY) : 0 }))
+      .map(d => ({ document: copyDoc(d), daysOverdue: d.dueDate && d.dueDate < now ? Math.floor((now - d.dueDate) / DAY) : 0 }))
       .sort((a, b) => b.daysOverdue - a.daysOverdue || a.document.date - b.document.date);
   }
 
   reminderText(id: string): string {
-    const d = this.getDocument(id);
+    const d = this.doc(id);
     if (!d) throw new Error(`Документ не найден: ${id}`);
     const p = this.data.profile;
     const due = d.dueDate ? ` (срок оплаты был ${new Date(d.dueDate).toLocaleDateString('ru-RU')})` : '';
@@ -730,7 +750,7 @@ export class BizStore {
   /** Доходы НПД, по которым срок чека прошёл: наличные и карта — сразу при оплате, перевод — 9-е число следующего месяца. */
   overdueReceipts(): LedgerEntry[] {
     const now = this.clock();
-    return this.data.ledger.filter(e => e.kind === 'income' && e.receipt === 'pending' && npdReceiptDeadline(e.date, e.payMethod) < now);
+    return this.data.ledger.filter(e => e.kind === 'income' && e.receipt === 'pending' && npdReceiptDeadline(e.date, e.payMethod) < now).map(copyEntry);
   }
 
   /** Money overview for the current month and year. */
