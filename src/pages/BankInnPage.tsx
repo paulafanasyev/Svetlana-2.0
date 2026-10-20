@@ -1,5 +1,6 @@
 // Svetlana Business — проверка контрагентов по ИНН, реквизиты по ИНН/БИК, импорт банковской выписки 1С.
 // Доступность: у каждого поля подпись, результат — role=status, ошибка — role=alert, выбор файла доступен с клавиатуры.
+// Ошибки сети и внешних сервисов показываются понятной фразой (safeErrorText), а не техническим текстом.
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import { assertFileSize, MAX_BYTES } from '../services/security/SafeData';
 import { ShieldCheck, Search, UserPlus, Upload, KeyRound, Building2, ExternalLink } from 'lucide-react';
@@ -10,6 +11,7 @@ import {
 } from '../services/biz/Counterparty';
 import { decodeStatement, parse1C, importStatement } from '../services/biz/BankStatement';
 import { crmStore } from '../services/crm/CRMStore';
+import { safeErrorText } from '../services/safeErrorText';
 
 const input = 'w-full min-w-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-indigo-500/50';
 const btn = 'inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50';
@@ -35,7 +37,7 @@ function CheckCard() {
   const run = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true); setMsg(null); setReport(null);
-    try { setReport(await checkCounterparty(inn)); } catch (err: any) { setMsg({ text: err?.message || 'Проверка не удалась', error: true }); } finally { setBusy(false); }
+    try { setReport(await checkCounterparty(inn)); } catch (err) { setMsg({ text: safeErrorText(err, 'Проверка не удалась. Проверьте интернет и ключ DaData.'), error: true }); } finally { setBusy(false); }
   };
 
   const addToCrm = () => {
@@ -48,7 +50,7 @@ function CheckCard() {
       if (existing) { setMsg({ text: `«${existing.name}» уже есть в CRM`, error: false }); return; }
       crmStore.addContact({ name: p.name, company: p.name, status: 'client', tags: ['контрагент'], notes, source: 'manual' });
       setMsg({ text: `«${p.name}» добавлен в CRM`, error: false });
-    } catch (err: any) { setMsg({ text: err?.message || 'Не удалось добавить в CRM', error: true }); }
+    } catch (err) { setMsg({ text: safeErrorText(err, 'Не удалось добавить в CRM'), error: true }); }
   };
 
   return (
@@ -105,7 +107,7 @@ function MyDetailsCard() {
         bizStore.updateProfile({ inn: p.inn, fullName: p.name, ogrn: p.ogrn ?? '', address: p.address ?? '' });
         setMsg({ text: `Профиль заполнен: ${p.name}`, error: false });
       }
-    } catch (err: any) { setMsg({ text: err?.message || 'Не получилось заполнить по ИНН', error: true }); } finally { setBusy(false); }
+    } catch (err) { setMsg({ text: safeErrorText(err, 'Не получилось заполнить по ИНН. Проверьте интернет и ключ DaData.'), error: true }); } finally { setBusy(false); }
   };
 
   const fillBank = async () => {
@@ -116,7 +118,7 @@ function MyDetailsCard() {
       if (!b) throw new Error('Банк с таким БИК не найден');
       bizStore.updateProfile({ bik: b.bik, bankName: b.name, corrAccount: b.corrAccount });
       setMsg({ text: `Банк: ${b.name}, к/с ${b.corrAccount}`, error: false });
-    } catch (err: any) { setMsg({ text: err?.message || 'Не получилось найти банк', error: true }); } finally { setBusy(false); }
+    } catch (err) { setMsg({ text: safeErrorText(err, 'Не получилось найти банк. Проверьте интернет и ключ DaData.'), error: true }); } finally { setBusy(false); }
   };
 
   return (
@@ -153,7 +155,7 @@ function StatementCard() {
           + (bizStore.getProfile().regime === 'npd' && r.incomes ? ' Не забудьте выбить чеки в «Мой налог» за поступления от клиентов.' : ''),
         error: false,
       });
-    } catch (err: any) { setMsg({ text: err?.message || 'Не удалось прочитать выписку', error: true }); }
+    } catch (err) { setMsg({ text: safeErrorText(err, 'Не удалось прочитать выписку. Нужен файл выгрузки в формате 1С (.txt).'), error: true }); }
   };
   return (
     <section className={card} aria-labelledby="bank-statement-title">
@@ -181,7 +183,7 @@ function KeyCard() {
   }, []);
   const save = async () => {
     setErr(null);
-    try { await setDadataKey(key); setSaved(true); } catch (e: any) { setSaved(false); setErr(e?.message || 'Не удалось сохранить ключ'); }
+    try { await setDadataKey(key); setSaved(true); } catch (e) { setSaved(false); setErr(safeErrorText(e, 'Не удалось сохранить ключ')); }
   };
   return (
     <section className={card} aria-labelledby="bank-key-title">
