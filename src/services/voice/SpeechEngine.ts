@@ -8,6 +8,8 @@
 // Режим «без рук» (continuous): после stop() запоздавшие результаты уже не отдаются: человек сказал «хватит».
 // Два способа остановить: stop() — «я договорил» (одна команда: сказанное до нажатия распознаётся),
 // cancel() — «отмена» (уход со страницы, закрытие): ни один результат после неё не отдаётся ни в одном режиме.
+// В режиме «без рук» на распознавании не больше MAX_PENDING фраз: фраза сверх этого не теряется молча,
+// человек слышит «повторите чуть позже» (STT_BUSY_TEXT).
 
 import { getSecret, setSecret } from '../security/SecretStore';
 import { isAndroidApp } from '../../platform';
@@ -104,6 +106,8 @@ export type FetchLike = (url: string, init: { method: string; headers: Record<st
 export const STT_TIMEOUT_MS = 45_000;
 export const STT_TIMEOUT_TEXT = 'Сервис распознавания не ответил вовремя. Скажите ещё раз.';
 const STT_OFFLINE_TEXT = 'Нет связи с сервисом распознавания. Проверьте интернет.';
+/** «Без рук»: прошлые фразы ещё распознаются, новую поставить в очередь нельзя: человек об этом узнаёт. */
+export const STT_BUSY_TEXT = 'Не успеваю: прошлые фразы ещё распознаются. Повторите последнюю чуть позже.';
 
 /** Отправляет запись в Whisper-совместимый API и возвращает текст. Зависший запрос обрывается по таймауту. */
 export async function transcribe(audio: Blob, cfg: CloudSttConfig, fetchImpl: FetchLike = fetch as unknown as FetchLike, timeoutMs = STT_TIMEOUT_MS): Promise<string> {
@@ -426,7 +430,7 @@ export function listenRecorded(opts: ListenOptions, rec = recordedRecognizer()):
   const maybeEnd = () => { if (stopped && pending === 0) end(); };
 
   const recognize = (pcm: Float32Array, sr: number) => {
-    if (pending >= MAX_PENDING) return;
+    if (pending >= MAX_PENDING) { if (!cancelled && !ended) opts.onError?.(STT_BUSY_TEXT); return; }
     pending++;
     opts.onPartial?.('Распознаю…');
     rec.recognize(pcm, sr)
