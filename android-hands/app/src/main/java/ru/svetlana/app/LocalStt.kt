@@ -36,7 +36,8 @@ import kotlin.math.sin
  * Модель скачивается только после нативного подтверждения, только по https и только с Hugging Face
  * (каждое перенаправление проверяется), сверяется по SHA-256 после загрузки и перед каждой загрузкой
  * в память; файл лежит в закрытой папке приложения (писать туда может только само приложение).
- * Размер, длина звука и частота запросов ограничены.
+ * Размер, длина звука и частота запросов ограничены. Загрузку можно остановить (cancelInstall: соединение
+ * рвётся, недокачанный файл удаляется), а загруженную в память модель отпустить (release, при закрытии экрана).
  */
 object LocalStt {
     private const val MODEL_URL = "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_ctc.int8.onnx"
@@ -54,11 +55,16 @@ object LocalStt {
     private const val BLANK = 33
     private const val TRANSCRIBE_PER_MINUTE = 20
     private const val UNEXPECTED = "Неожиданный ответ модели"
+    const val INSTALL_STOPPED = "Загрузка модели остановлена"
 
     private val downloading = AtomicBoolean(false)
     @Volatile private var downloaded = 0L
     @Volatile private var total = 0L
     @Volatile private var error: String? = null
+    /** Человек нажал «Остановить загрузку». */
+    @Volatile private var cancel = false
+    /** Текущее соединение загрузки: его рвём при остановке, чтобы не ждать очередного куска. */
+    @Volatile private var activeConn: HttpURLConnection? = null
     private val engineLock = Any()
     private var session: OrtSession? = null
     private val dsp by lazy { Dsp() }
@@ -83,6 +89,7 @@ object LocalStt {
             val q = "Скачать модель распознавания речи GigaAM-v3 (около $MODEL_SIZE_MB МБ) с Hugging Face?\n\n" +
                 "После этого цифры для проверки голоса и команды распознаются прямо на телефоне: запись никуда не отправляется. Лучше по Wi‑Fi."
             if (!confirm(q)) throw SecureAi.Fail(SecureAi.CANCELLED)
+            cancel = false
             downloaded = 0
             total = 0
             error = null
@@ -91,12 +98,34 @@ object LocalStt {
             error = (e.message ?: "Ошибка загрузки").take(300)
             throw e
         } finally {
+            cancel = false
+            activeConn = null
             downloading.set(false)
+        }
+    }
+
+    /** Остановить идущую загрузку (без подтверждения: на диске ничего не меняется). true, если загрузка шла. */
+    fun cancelInstall(): Boolean {
+        if (!downloading.get()) return false
+        cancel = true
+        runCatching { activeConn?.disconnect() }
+        return true
+    }
+
+    /** Отпустить модель из памяти (экран закрыт): дожидается идущего распознавания. Вызывать не из главного потока. */
+    fun release() {
+        synchronized(engineLock) {
+            runCatching { session?.close() }
+            session = null
         }
     }
 
     private fun allowedHost(h: String) =
         h == "huggingface.co" || h.endsWith(".huggingface.co") || h == "hf.co" || h.endsWith(".hf.co")
+
+    private fun stopIfCancelled() {
+        if (cancel) throw SecureAi.Fail(INSTALL_STOPPED)
+    }
 
     private fun download(dest: File) {
         val dir = dest.parentFile ?: throw SecureAi.Fail("Некорректный путь к модели")
@@ -107,10 +136,12 @@ object LocalStt {
             var hops = 0
             var conn: HttpURLConnection
             while (true) {
+                stopIfCancelled()
                 if (url.protocol != "https" || !allowedHost(url.host.lowercase())) {
                     throw SecureAi.Fail("Модель можно скачать только с Hugging Face по https")
                 }
                 conn = url.openConnection() as HttpURLConnection
+                activeConn = conn
                 conn.instanceFollowRedirects = false
                 conn.connectTimeout = 20_000
                 conn.readTimeout = 60_000
@@ -140,6 +171,7 @@ object LocalStt {
                 try {
                     val buf = ByteArray(1 shl 16)
                     while (true) {
+                        stopIfCancelled()
                         val n = inp.read(buf)
                         if (n < 0) break
                         got += n
@@ -148,6 +180,7 @@ object LocalStt {
                         out.write(buf, 0, n)
                         downloaded = got
                     }
+                    stopIfCancelled()
                     out.fd.sync()
                 } finally {
                     runCatching { out.close() }
@@ -163,6 +196,8 @@ object LocalStt {
         } catch (e: SecureAi.Fail) {
             throw e
         } catch (e: java.io.IOException) {
+            // Соединение оборвали мы сами (кнопка «Остановить»): это не «нет связи».
+            if (cancel) throw SecureAi.Fail(INSTALL_STOPPED)
             throw SecureAi.Fail("Нет связи с Hugging Face: проверьте интернет и попробуйте ещё раз")
         } finally {
             if (part.exists()) part.delete()
@@ -175,10 +210,7 @@ object LocalStt {
         if (!f.isFile) return
         if (downloading.get()) throw SecureAi.Fail("Дождитесь окончания загрузки")
         if (!confirm("Удалить модель распознавания речи с телефона?")) throw SecureAi.Fail(SecureAi.CANCELLED)
-        synchronized(engineLock) {
-            runCatching { session?.close() }
-            session = null
-        }
+        release()
         if (!f.delete()) throw SecureAi.Fail("Не удалось удалить модель")
     }
 
