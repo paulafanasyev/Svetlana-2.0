@@ -3,6 +3,7 @@
 // её загрузку можно остановить.
 // Результат проверки — простыми словами (без чисел «отличие/порог»), сообщения зачитываются диктором (role=status),
 // удаление записи голоса подтверждается в окне Светланы (askConfirm).
+// Ошибка нативной части (status.error) показывается через safeErrorText: технический английский текст заменяется понятной фразой.
 import { useEffect, useState } from 'react';
 import { Mic, Trash2, Download, Cpu, X } from 'lucide-react';
 import { recordPrint } from '../services/voice/VoiceGuard';
@@ -18,6 +19,7 @@ const PHRASES = [
   'Запиши Иванову на стрижку в пятницу в пятнадцать тридцать.',
 ];
 const MIC_ERROR = 'Нет доступа к микрофону';
+const MODEL_ERROR = 'Модель речи не скачалась: проверьте интернет и свободное место, затем попробуйте ещё раз.';
 
 export default function VoiceEnroll() {
   const [enrolled, setEnrolled] = useState(() => !!loadTemplate());
@@ -127,7 +129,7 @@ function LocalSttCard() {
       {!status.downloading && status.installed && (
         <button disabled={busy} onClick={() => run(localSttRemove)} className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-50 text-xs inline-flex items-center gap-1.5"><Trash2 className="w-3.5 h-3.5" aria-hidden="true" />Удалить модель</button>
       )}
-      {(err || status.error) && !status.downloading && <p role="alert" className="text-[11px] text-amber-300">{err || status.error}</p>}
+      {(err || status.error) && !status.downloading && <p role="alert" className="text-[11px] text-amber-300">{err || safeErrorText(status.error, MODEL_ERROR)}</p>}
     </div>
   );
 }
