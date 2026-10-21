@@ -11,6 +11,9 @@ import java.net.URL
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.UUID
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import javax.net.ssl.HttpsURLConnection
 
@@ -21,6 +24,8 @@ import javax.net.ssl.HttpsURLConnection
  * Ключ хранится зашифрованным ключом из Android Keystore (SecretStore) и никогда не возвращается в
  * JavaScript: у страницы есть только «сохранить», «есть ли ключ» и «сделать запрос». Запрос идёт только на
  * фиксированный официальный адрес выбранного сервиса, без редиректов, с ограничением размера и времени.
+ * На весь запрос (вход GigaChat, повтор с новым токеном и чтение ответа) — один общий срок NET_BUDGET_MS,
+ * как NET_BUDGET в secure_ai.rs: медленный сервер не держит приложение по часу каплями.
  * Любое изменение ключа и отправка переписки в облако подтверждаются в НАТИВНОМ окне телефона;
  * разрешение привязано к провайдеру, модели и случайному ID разговора (128 бит SecureRandom), 15 минут и 30 запросов.
  *
@@ -77,6 +82,9 @@ object SecureAi {
     const val CONVERSATION_TTL_MS = 24 * 60 * 60 * 1000L
     const val MAX_CONVERSATIONS = 32
     const val CONVERSATIONS_PER_MINUTE = 10
+    /** Общий срок на весь запрос к облаку после подтверждения (как NET_BUDGET в secure_ai.rs). */
+    const val NET_BUDGET_MS = 150_000L
+    const val NET_TIMEOUT = "Облачный ИИ не ответил вовремя (дольше 150 секунд). Проверьте интернет и попробуйте ещё раз."
     const val CONVERSATION_UNKNOWN = "CONVERSATION_UNKNOWN: разговор не выдан приложением или устарел"
     const val TOO_BIG_RESPONSE = "Ответ слишком большой"
     const val CANCELLED = "Отменено пользователем"
@@ -104,8 +112,19 @@ object SecureAi {
     @Volatile
     private var generation = 0L
     private val active = HashSet<HttpsURLConnection>()
+    /** Сторож срока: когда общий срок запроса вышел, рвёт соединение (один фоновый поток). */
+    private val watchdog: ScheduledExecutorService by lazy {
+        Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "svetlana-net-deadline").apply { isDaemon = true } }
+    }
 
     private fun now() = SystemClock.elapsedRealtime()
+
+    /** Сколько миллисекунд осталось до общего срока; срок вышел — NET_TIMEOUT. */
+    private fun timeLeft(deadline: Long): Long {
+        val left = deadline - now()
+        if (left <= 0) throw Fail(NET_TIMEOUT)
+        return left
+    }
 
     fun providerOfSecret(name: String): String? {
         if (!name.startsWith("ai.")) return null
@@ -311,8 +330,10 @@ object SecureAi {
             if (generation != gen) throw Fail(WIPED)
             SecretStore.get(ctx, storeName(p))
         } ?: throw Fail(if (p == CUSTOM) CUSTOM_NOT_SET else "API-ключ не задан")
-        if (p == CUSTOM) return postCustom(parseCustom(key) ?: throw Fail(CUSTOM_NOT_SET), bodyBytes, gen)
-        return post(p, model, key, bodyBytes, gen)
+        // Срок считается после окна подтверждения: время раздумий человека его не съедает.
+        val deadline = now() + NET_BUDGET_MS
+        if (p == CUSTOM) return postCustom(parseCustom(key) ?: throw Fail(CUSTOM_NOT_SET), bodyBytes, gen, deadline)
+        return post(p, model, key, bodyBytes, gen, deadline)
     }
 
     // ---------- строгая схема тела запроса (как validate_body в secure_ai.rs) ----------
@@ -435,8 +456,8 @@ object SecureAi {
         else -> throw Fail("Этот облачный сервис не поддерживается")
     }
 
-    private fun post(p: String, model: String, key: String, body: ByteArray, gen: Long): String {
-        if (p == "gigachat") return gigachat(key, body, gen)
+    private fun post(p: String, model: String, key: String, body: ByteArray, gen: Long, deadline: Long): String {
+        if (p == "gigachat") return gigachat(key, body, gen, deadline)
         val headers = LinkedHashMap<String, String>()
         headers["Content-Type"] = "application/json"
         when (p) {
@@ -447,17 +468,17 @@ object SecureAi {
             "google" -> headers["x-goog-api-key"] = key
             else -> headers["Authorization"] = "Bearer $key"
         }
-        val (code, text) = exchange(endpoint(p, model), headers, body, gen, MAX_RESPONSE)
+        val (code, text) = exchange(endpoint(p, model), headers, body, gen, MAX_RESPONSE, deadline)
         // Некоторые сервисы повторяют ключ в тексте ошибки: до страницы он не доходит.
         if (code !in 200..299) throw Fail("HTTP $code: ${ErrorText.scrub(text, listOf(key))}")
         return text
     }
 
     /** Свой ИИ: OpenAI-совместимый /chat/completions по адресу из хранилища (те же лимиты, без редиректов). */
-    private fun postCustom(c: CustomAi, body: ByteArray, gen: Long): String {
+    private fun postCustom(c: CustomAi, body: ByteArray, gen: Long, deadline: Long): String {
         val headers = linkedMapOf("Content-Type" to "application/json", "Accept" to "application/json")
         if (c.key.isNotEmpty()) headers["Authorization"] = "Bearer ${c.key}"
-        val (code, text) = exchange(c.endpoint + COMPLETIONS, headers, body, gen, MAX_RESPONSE)
+        val (code, text) = exchange(c.endpoint + COMPLETIONS, headers, body, gen, MAX_RESPONSE, deadline)
         if (code !in 200..299) throw Fail("Свой ИИ: HTTP $code: ${ErrorText.scrub(text, listOf(c.key))}")
         return text
     }
@@ -474,7 +495,7 @@ object SecureAi {
         return t
     }
 
-    private fun gigachatToken(key: String, gen: Long): String {
+    private fun gigachatToken(key: String, gen: Long, deadline: Long): String {
         val h = sha256(key)
         gigaToken?.let { if (it.keyHash == h && it.gen == gen && now() - it.at < GIGACHAT_TOKEN_TTL_MS) return it.token }
         val headers = linkedMapOf(
@@ -483,7 +504,7 @@ object SecureAi {
             "Content-Type" to "application/x-www-form-urlencoded",
             "Accept" to "application/json",
         )
-        val (code, text) = exchange(GIGACHAT_OAUTH, headers, "scope=$GIGACHAT_SCOPE".toByteArray(Charsets.UTF_8), gen, MAX_TOKEN_RESPONSE)
+        val (code, text) = exchange(GIGACHAT_OAUTH, headers, "scope=$GIGACHAT_SCOPE".toByteArray(Charsets.UTF_8), gen, MAX_TOKEN_RESPONSE, deadline)
         if (code == 400 || code == 401 || code == 403) throw Fail(GIGACHAT_BAD_KEY)
         if (code !in 200..299) throw Fail("GigaChat: вход не удался, HTTP $code")
         val token = parseGigaToken(text) ?: throw Fail("GigaChat: в ответе нет токена")
@@ -494,17 +515,17 @@ object SecureAi {
         return token
     }
 
-    /** Запрос к GigaChat. Если токен устарел раньше срока (401) — один повтор с новым токеном. */
-    private fun gigachat(key: String, body: ByteArray, gen: Long): String {
+    /** Запрос к GigaChat. Если токен устарел раньше срока (401) — один повтор с новым токеном (в том же общем сроке). */
+    private fun gigachat(key: String, body: ByteArray, gen: Long, deadline: Long): String {
         if (!validGigachatKey(key)) throw Fail(GIGACHAT_BAD_KEY)
         for (attempt in 0..1) {
-            val token = gigachatToken(key, gen)
+            val token = gigachatToken(key, gen, deadline)
             val headers = linkedMapOf(
                 "Authorization" to "Bearer $token",
                 "Content-Type" to "application/json",
                 "Accept" to "application/json",
             )
-            val (code, text) = exchange(GIGACHAT_CHAT, headers, body, gen, MAX_RESPONSE)
+            val (code, text) = exchange(GIGACHAT_CHAT, headers, body, gen, MAX_RESPONSE, deadline)
             when {
                 code == 401 && attempt == 0 -> gigaToken = null
                 code == 401 -> throw Fail(GIGACHAT_BAD_KEY)
@@ -516,9 +537,14 @@ object SecureAi {
         throw Fail(GIGACHAT_BAD_KEY)
     }
 
-    /** Один HTTPS-запрос: без редиректов, под «забором» полного удаления, ответ читается по частям до [max]. */
-    private fun exchange(url: String, headers: Map<String, String>, body: ByteArray, gen: Long, max: Int): Pair<Int, String> {
+    /**
+     * Один HTTPS-запрос: без редиректов, под «забором» полного удаления, ответ читается по частям до [max].
+     * Таймауты не больше остатка общего срока [deadline]; сторож рвёт соединение, если ответ идёт каплями.
+     */
+    private fun exchange(url: String, headers: Map<String, String>, body: ByteArray, gen: Long, max: Int, deadline: Long): Pair<Int, String> {
+        val left = timeLeft(deadline)
         val c = URL(url).openConnection() as? HttpsURLConnection ?: throw Fail("Разрешены только https-адреса")
+        val guard = watchdog.schedule({ runCatching { c.disconnect() } }, left, TimeUnit.MILLISECONDS)
         try {
             // Соединение видно «забору»: полное удаление его оборвёт.
             synchronized(wipeLock) {
@@ -527,8 +553,8 @@ object SecureAi {
             }
             c.instanceFollowRedirects = false
             c.useCaches = false
-            c.connectTimeout = 20_000
-            c.readTimeout = 120_000
+            c.connectTimeout = minOf(20_000L, left).toInt().coerceAtLeast(1)
+            c.readTimeout = minOf(120_000L, left).toInt().coerceAtLeast(1)
             c.requestMethod = "POST"
             c.doOutput = true
             c.setFixedLengthStreamingMode(body.size)
@@ -553,6 +579,7 @@ object SecureAi {
                     if (n < 0) break
                     if (out.size() + n > max) throw Fail(TOO_BIG_RESPONSE)
                     out.write(buf, 0, n)
+                    timeLeft(deadline)
                 }
             }
             if (generation != gen) throw Fail(WIPED)
@@ -561,8 +588,10 @@ object SecureAi {
             throw e
         } catch (e: IOException) {
             if (generation != gen) throw Fail(WIPED)
+            if (now() >= deadline) throw Fail(NET_TIMEOUT)
             throw Fail("Нет связи с сервером, проверьте интернет (error sending request: ${e.javaClass.simpleName})")
         } finally {
+            guard.cancel(false)
             synchronized(wipeLock) { active.remove(c) }
             c.disconnect()
         }
