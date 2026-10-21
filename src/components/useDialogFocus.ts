@@ -14,7 +14,8 @@ const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'LINK', 'META', 'NOSCR
 
 /**
  * Сделать недоступным всё, кроме окна: на каждом уровне от окна до body соседние элементы получают inert.
- * Затенение (aria-hidden="true") не трогаем: нажатие на него закрывает окно. Уже inert-элементы оставляем как есть.
+ * Не трогаем: затенение (aria-hidden="true", нажатие на него закрывает окно), контейнер окон подтверждения
+ * (data-svetlana-dialogs: из окна можно спросить «Удалить?») и уже inert-элементы.
  * Возвращает функцию, которая снимает inert только с тех элементов, которые пометила она сама.
  */
 export function isolateDialog(root: HTMLElement): () => void {
@@ -25,7 +26,7 @@ export function isolateDialog(root: HTMLElement): () => void {
     const parent: Element = node.parentElement;
     for (const sib of Array.from(parent.children)) {
       if (sib === node || SKIP_TAGS.has(sib.tagName)) continue;
-      if (sib.hasAttribute('inert') || sib.getAttribute('aria-hidden') === 'true') continue;
+      if (sib.hasAttribute('inert') || sib.hasAttribute('data-svetlana-dialogs') || sib.getAttribute('aria-hidden') === 'true') continue;
       sib.setAttribute('inert', '');
       changed.push(sib);
     }

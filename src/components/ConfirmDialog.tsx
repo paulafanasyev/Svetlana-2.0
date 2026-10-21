@@ -2,10 +2,12 @@
 // В окне приложений (WebView2 в Windows, WebView в Android) системные окна браузера могут не показываться
 // и молча отвечать «нет»: тогда не работали бы удаление, восстановление и чеки. Здесь окно своё: подписано для
 // экранного диктора (alertdialog), фокус сразу на «Отмена» (случайный Enter ничего не удалит), Tab не уходит за окно,
-// Escape и нажатие мимо окна — «Отмена», после закрытия фокус возвращается. Окно само встраивается в страницу
+// Escape и нажатие мимо окна — «Отмена», после закрытия фокус возвращается. Пока окно открыто, страница
+// под ним недоступна (inert): диктор не уходит туда стрелками. Окно само встраивается в страницу
 // при первом вызове; если страницы нет (тесты, фон), ответ безопасный: «нет».
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createRoot } from 'react-dom/client';
+import { isolateDialog } from './useDialogFocus';
 
 type Kind = 'confirm' | 'prompt' | 'copy';
 interface DialogRequest {
@@ -95,10 +97,15 @@ function Dialog({ req }: { req: DialogRequest }) {
 
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
+    // Фон под окном недоступен, пока оно открыто.
+    const release = box.current ? isolateDialog(box.current) : () => undefined;
     const target = box.current?.querySelector<HTMLElement>(req.kind === 'confirm' ? '[data-cancel]' : 'textarea, input');
     target?.focus();
     if (req.kind === 'copy') (target as HTMLTextAreaElement | null)?.select?.();
-    return () => { try { prev?.focus?.(); } catch { /* элемент уже убран со страницы */ } };
+    return () => {
+      release();
+      try { prev?.focus?.(); } catch { /* элемент уже убран со страницы */ }
+    };
   }, [req]);
 
   const cancel = () => settle(req.id, null);
