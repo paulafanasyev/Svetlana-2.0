@@ -15,6 +15,8 @@ const DAY = 86_400_000;
 
 /** Визит уже отмечен: второй раз доход не записывается (повтор команды, двойное нажатие, ИИ повторил вызов). */
 export const BOOKING_ALREADY_DONE = 'Этот визит уже отмечен, доход второй раз не записываю.';
+/** Запись сохранена, а отметка в карточке клиента — нет: это не ошибка записи, только предупреждение. */
+export const BOOKING_CRM_NOTE_FAILED = 'Отметку в карточке клиента сохранить не удалось, сама запись сохранена.';
 
 /**
  * Клиент пришёл и оплатил: доход в книгу и отметка «пришёл» вместе. Если отметка не сохранилась,
@@ -76,15 +78,22 @@ export function createBookingTools(store: BookingStore = bookingStore, resolve: 
           const start = resolveStart(p, now);
           const contact = resolve(p.client) ?? resolve(normalizeClientName(String(p.client)));
           const name = contact?.name ?? normalizeClientName(String(p.client));
+          let a: Appointment;
           try {
-            const a = store.book({ clientName: name, start, serviceName: p.service, durationMin: p.durationMin, contactId: contact?.id, phone: contact?.phones[0], note: p.note });
-            if (contact) crmStore.addActivity({ type: 'meeting', text: `Запись: ${a.serviceName}, ${dayLabel(a.start, now)} в ${timeOf(a.start)}`, contactId: contact.id });
-            return ok({ ...brief(a, now), linked: !!contact });
+            a = store.book({ clientName: name, start, serviceName: p.service, durationMin: p.durationMin, contactId: contact?.id, phone: contact?.phones[0], note: p.note });
           } catch (e: any) {
             const svc = store.findService(p.service);
             const slots = store.freeSlots(start, p.durationMin ?? svc?.durationMin ?? 60).slice(0, 6).map(timeOf);
             return fail(`${e?.message || 'Не получилось записать'}${slots.length ? `. Свободно в этот день: ${slots.join(', ')}` : ''}`);
           }
+          // Запись уже сохранена: сбой отметки в CRM — предупреждение, а не «не получилось записать»
+          // (иначе человек запишет клиента ещё раз и получит конфликт с самим собой).
+          let crmNoteFailed = false;
+          if (contact) {
+            try { crmStore.addActivity({ type: 'meeting', text: `Запись: ${a.serviceName}, ${dayLabel(a.start, now)} в ${timeOf(a.start)}`, contactId: contact.id }); }
+            catch { crmNoteFailed = true; }
+          }
+          return ok({ ...brief(a, now), linked: !!contact && !crmNoteFailed, ...(crmNoteFailed ? { warning: BOOKING_CRM_NOTE_FAILED } : {}) });
         } catch (e: any) { return fail(e?.message || 'Не получилось записать'); }
       },
       isAvailable: always,
@@ -222,7 +231,7 @@ export function describeBookingResult(tool: string, result: ToolResult): string 
   if (!result.success) return `⚠️ ${result.error || 'Не получилось'}`;
   const d = result.data ?? {};
   switch (tool) {
-    case 'biz_book': return `📅 Записала: ${d.client}, ${d.service}, ${d.day} в ${d.time}–${d.end}${d.price ? ` (${formatRub(d.price)})` : ''}.${d.linked ? ' Отметка в CRM есть.' : ''}`;
+    case 'biz_book': return `📅 Записала: ${d.client}, ${d.service}, ${d.day} в ${d.time}–${d.end}${d.price ? ` (${formatRub(d.price)})` : ''}.${d.linked ? ' Отметка в CRM есть.' : ''}${d.warning ? ` ⚠️ ${d.warning}` : ''}`;
     case 'biz_free_slots': return `🕐 ${d.text}`;
     case 'biz_agenda':
       return d.items?.length
