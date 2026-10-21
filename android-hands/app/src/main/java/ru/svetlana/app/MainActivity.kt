@@ -23,9 +23,11 @@ import android.print.PrintAttributes
 import android.print.PrintDocumentAdapter
 import android.print.PrintManager
 import android.provider.Settings
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.WindowInsets
+import android.view.accessibility.AccessibilityManager
 import android.webkit.PermissionRequest
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
@@ -52,7 +54,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * чужие адреса открываются во внешнем браузере (только https, mailto, tel, sms), микрофон — только своей странице.
  * Файлы (экспорт CRM, документы, .ics) сохраняются через системное окно «Сохранить как»: место выбирает человек.
  * Печать и PDF — системное окно печати (документ рисуется в отдельном WebView без JavaScript и без сети).
- * Буфер обмена — только сразу после настоящего касания экрана (не через чужое окно поверх), одно касание — одно копирование.
+ * Буфер обмена и микрофон распознавания — только сразу после настоящего нажатия (касание не сквозь чужое окно поверх,
+ * Enter или пробел на клавиатуре, клик экранного диктора), одно нажатие — одно действие.
  * Системная кнопка «Назад» сначала закрывает открытое окно страницы (CRM, мастер настройки), и только потом выходит.
  */
 class MainActivity : Activity() {
@@ -69,6 +72,13 @@ class MainActivity : Activity() {
         const val PRINT_BUSY = "Печать уже открыта: закройте окно печати и попробуйте снова"
         /** Сколько после касания считается «по нажатию» (как user activation в браузере). */
         private const val ACTIVATION_MS = 5_000L
+        /** Клавиши, которыми нажимают кнопку без касания (физическая клавиатура, пульт, кнопочный телефон). */
+        private val ACTIVATION_KEYS = setOf(
+            KeyEvent.KEYCODE_ENTER,
+            KeyEvent.KEYCODE_NUMPAD_ENTER,
+            KeyEvent.KEYCODE_SPACE,
+            KeyEvent.KEYCODE_DPAD_CENTER,
+        )
         /** Спросить страницу: есть ли что закрыть по «Назад» (src/services/BackStack.ts). */
         private const val BACK_JS = "(function(){try{var f=window.__svetlanaBack;return typeof f==='function'&&f()===true;}catch(e){return false;}})()"
         private const val OUTDATED = "<html><body style='font-family:sans-serif;padding:24px;background:#0b1020;color:#fff'>" +
@@ -125,7 +135,7 @@ class MainActivity : Activity() {
     private val confirmLock = Any()
     /** Открытое окно подтверждения (только главный поток). */
     private var confirmDialog: AlertDialog? = null
-    /** Когда человек последний раз настоящим касанием отпустил палец на экране приложения. */
+    /** Когда человек последний раз настоящим касанием отпустил палец на экране приложения (или нажал Enter). */
     @Volatile private var lastTouchAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -230,7 +240,7 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Запоминаем настоящие касания (не сквозь чужое окно поверх): только после них можно писать в буфер. */
+    /** Запоминаем настоящие касания (не сквозь чужое окно поверх): только после них можно писать в буфер и слушать. */
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (ev.actionMasked == MotionEvent.ACTION_UP && (ev.flags and MotionEvent.FLAG_WINDOW_IS_OBSCURED) == 0) {
             lastTouchAt = SystemClock.uptimeMillis()
@@ -238,15 +248,30 @@ class MainActivity : Activity() {
         return super.dispatchTouchEvent(ev)
     }
 
+    /** Enter, пробел или центр джойстика на клавиатуре: тоже настоящее нажатие кнопки (скрипт клавиши не нажимает). */
+    override fun dispatchKeyEvent(ev: KeyEvent): Boolean {
+        if (ev.action == KeyEvent.ACTION_UP && ev.keyCode in ACTIVATION_KEYS) {
+            lastTouchAt = SystemClock.uptimeMillis()
+        }
+        return super.dispatchKeyEvent(ev)
+    }
+
+    /** Включён экранный диктор с «исследованием касанием» (TalkBack): нажатие приходит не касанием, а действием «клик». */
+    private fun screenReaderOn(): Boolean = runCatching {
+        (getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager).isTouchExplorationEnabled
+    }.getOrDefault(false)
+
     /**
-     * Человек только что коснулся экрана (как user activation в браузере). Касание расходуется:
-     * одно нажатие — одно копирование. Вызывать в главном потоке.
+     * Человек только что нажал кнопку (как user activation в браузере). Нажатие расходуется:
+     * одно нажатие — одно копирование или одна фраза в микрофон. С TalkBack касания не приходят,
+     * поэтому тогда не мешаем: иначе незрячий не смог бы ни скопировать, ни сказать команду.
+     * Вызывать в главном потоке.
      */
     fun touchedRecently(): Boolean {
         val t = lastTouchAt
         val ok = t > 0 && SystemClock.uptimeMillis() - t in 0..ACTIVATION_MS
         if (ok) lastTouchAt = 0L
-        return ok
+        return ok || screenReaderOn()
     }
 
     private fun openExternal(u: Uri) {
