@@ -1,6 +1,8 @@
 // Svetlana Business — запись клиентов: услуги, рабочие часы, свободные окна, записи, напоминания. Local-first.
 // Сохранение «всё или ничего»: если записать на диск не удалось, изменение отменяется и в памяти
 // (иначе запись «есть» до перезапуска и молча пропадает после него).
+// Статус меняется только по правилам (canSetStatus): состоявшийся визит с доходом не отменить и не перенести,
+// отменённый не «завершить»: иначе книга доходов и записи описывают разное.
 import { safeJsonParse, stripControl, MAX_BYTES } from '../security/SafeData';
 import type { KeyValueStorage } from '../crm/CRMStore';
 
@@ -36,6 +38,26 @@ interface BookingData { version: 1; services: Service[]; schedule: Schedule; app
 export const BOOKING_STATUS_LABELS: Record<BookingStatus, string> = { booked: 'Записан', done: 'Пришёл', cancelled: 'Отменена', noshow: 'Не пришёл' };
 export const WEEKDAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 export const BOOKING_SAVE_FAILED = 'Не удалось сохранить запись: память устройства переполнена или недоступна. Изменение отменено.';
+export const BOOKING_DONE_LOCKED = 'Визит уже отмечен как состоявшийся, доход записан: отменить или перенести его нельзя. Если деньги вернули, запишите возврат в финансах.';
+export const BOOKING_CANCELLED_LOCKED = 'Запись отменена. Чтобы вернуть клиента, запишите его заново или перенесите запись на другое время.';
+
+/** Куда можно перейти из каждого статуса. «Не пришёл» → «Пришёл»: клиент опоздал, а отметили рано. */
+const NEXT_STATUS: Record<BookingStatus, readonly BookingStatus[]> = {
+  booked: ['done', 'cancelled', 'noshow'],
+  noshow: ['done', 'cancelled'],
+  cancelled: [],
+  done: [],
+};
+export function canSetStatus(from: BookingStatus, to: BookingStatus): boolean {
+  return NEXT_STATUS[from]?.includes(to) ?? false;
+}
+/** Понятная причина, почему статус не меняется. */
+export function statusChangeError(from: BookingStatus, to: BookingStatus): string {
+  if (from === 'done') return BOOKING_DONE_LOCKED;
+  if (from === 'cancelled') return to === 'cancelled' ? 'Запись уже отменена.' : BOOKING_CANCELLED_LOCKED;
+  if (from === to) return `Запись уже в статусе «${BOOKING_STATUS_LABELS[to]}».`;
+  return `Нельзя сменить статус «${BOOKING_STATUS_LABELS[from]}» на «${BOOKING_STATUS_LABELS[to]}».`;
+}
 
 const STORAGE_KEY = 'svetlana_booking_v1';
 const MIN = 60_000;
@@ -355,9 +377,12 @@ export class BookingStore {
     this.commit();
     return { ...a };
   }
+  /** Перенос на другое время (отменённая и «не пришёл» снова становятся записью). Состоявшийся визит не переносится. */
   reschedule(id: string, start: number, force = false): Appointment {
     const a = this.data.appointments.find(x => x.id === id);
     if (!a) throw new Error('Запись не найдена');
+    if (a.status === 'done') throw new Error(BOOKING_DONE_LOCKED);
+    if (!Number.isFinite(start)) throw new Error('Не понятна дата и время записи');
     const dur = a.end - a.start;
     if (!force && !this.isFree(start, start + dur, id)) throw new Error('Новое время занято');
     a.start = start; a.end = start + dur; a.status = 'booked'; a.updatedAt = this.clock();
@@ -367,6 +392,7 @@ export class BookingStore {
   setStatus(id: string, status: BookingStatus, incomeEntryId?: string): Appointment {
     const a = this.data.appointments.find(x => x.id === id);
     if (!a) throw new Error('Запись не найдена');
+    if (!canSetStatus(a.status, status)) throw new Error(statusChangeError(a.status, status));
     a.status = status; a.updatedAt = this.clock();
     if (incomeEntryId) a.incomeEntryId = incomeEntryId;
     this.commit();

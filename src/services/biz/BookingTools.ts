@@ -3,7 +3,7 @@ import type { Tool, ToolResult } from '../ToolRegistry';
 import type { CRMContact } from '../crm/CRMStore';
 import { crmStore } from '../crm/CRMStore';
 import { bizStore, BizStore, formatRub } from './BizStore';
-import { bookingStore, BookingStore, parseWhen, normalizeClientName, startOfDay, timeOf, dayLabel, BOOKING_STATUS_LABELS, type Appointment } from './Booking';
+import { bookingStore, BookingStore, parseWhen, normalizeClientName, startOfDay, timeOf, dayLabel, canSetStatus, statusChangeError, BOOKING_STATUS_LABELS, type Appointment } from './Booking';
 import { wrapUntrusted } from '../security/Untrusted';
 
 type Resolve = (name: string | undefined) => CRMContact | undefined;
@@ -21,10 +21,12 @@ export const BOOKING_CRM_NOTE_FAILED = 'Отметку в карточке кл�
 /**
  * Клиент пришёл и оплатил: доход в книгу и отметка «пришёл» вместе. Если отметка не сохранилась,
  * доход убирается обратно, чтобы после повторной попытки не было двух одинаковых доходов.
+ * Отменённую запись «завершить» нельзя: это проверяется до того, как доход попадёт в книгу.
  */
 export function completeAppointment(a: Appointment, amountIn: number | undefined, store: BookingStore = bookingStore, biz: BizStore = bizStore): { appointment: Appointment; income: number } {
   const current = store.getAppointment(a.id) ?? a;
   if (current.status === 'done') throw new Error(BOOKING_ALREADY_DONE);
+  if (!canSetStatus(current.status, 'done')) throw new Error(statusChangeError(current.status, 'done'));
   const amount = Number(amountIn ?? current.price);
   if (!Number.isFinite(amount) || amount < 0) throw new Error('Сумму укажите цифрами, например 1500');
   let entryId: string | undefined;
