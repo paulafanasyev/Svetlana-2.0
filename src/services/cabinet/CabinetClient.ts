@@ -79,6 +79,10 @@ function saveMeta(m: CabinetMeta | null, s: KV | null = kv()): void {
 function trySaveMeta(m: CabinetMeta | null, s: KV | null): void {
   try { saveMeta(m, s); } catch { /* не критично */ }
 }
+/** Та же ли это привязка: пока шёл запрос, её могли снять или заменить новой. */
+export function sameLink(a: CabinetMeta | null, b: CabinetMeta | null): boolean {
+  return !!a && !!b && a.deviceId === b.deviceId && a.linkedAt === b.linkedAt && a.origin === b.origin;
+}
 
 async function call(f: FetchLike, url: string, init: RequestInit): Promise<{ status: number; body: any }> {
   const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -177,7 +181,10 @@ export async function collectHeartbeat(opts: { fetchImpl?: FetchLike | null; sto
   };
 }
 
-/** Отправить пульс. 401 — устройство отключено в кабинете: локальная привязка стирается. Никогда не бросает. */
+/**
+ * Отправить пульс. 401 — устройство отключено в кабинете: локальная привязка стирается. Никогда не бросает.
+ * Если пока шёл запрос привязку сняли или заменили, старое описание не возвращается и новое не трогается.
+ */
 export async function sendHeartbeat(opts: { fetchImpl?: FetchLike; storage?: KV | null; heartbeat?: Heartbeat } = {}): Promise<'ok' | 'unlinked' | 'not_linked' | 'error'> {
   const s = opts.storage === undefined ? kv() : opts.storage;
   const meta = loadMeta(s);
@@ -185,6 +192,7 @@ export async function sendHeartbeat(opts: { fetchImpl?: FetchLike; storage?: KV 
   let token: string | null = null;
   try { token = await getSecret(TOKEN_SECRET); } catch { return 'error'; }
   if (!token) return 'not_linked';
+  const still = (): boolean => sameLink(loadMeta(s), meta);
   try {
     const f = opts.fetchImpl ?? defaultFetch();
     const hb = opts.heartbeat ?? await collectHeartbeat({ fetchImpl: f, storage: s });
@@ -193,6 +201,7 @@ export async function sendHeartbeat(opts: { fetchImpl?: FetchLike; storage?: KV 
       headers: { 'content-type': 'application/json', authorization: `Device ${token}` },
       body: JSON.stringify(hb),
     });
+    if (!still()) return 'not_linked';
     if (status === 401) {
       try { await unlinkLocal(s); } catch { /* описание уже стёрто */ }
       return 'unlinked';
@@ -201,6 +210,7 @@ export async function sendHeartbeat(opts: { fetchImpl?: FetchLike; storage?: KV 
     trySaveMeta({ ...meta, lastOk: Date.now(), lastError: undefined }, s);
     return 'ok';
   } catch (e: any) {
+    if (!still()) return 'not_linked';
     const aborted = e?.name === 'AbortError';
     trySaveMeta({ ...meta, lastError: aborted ? 'Нет ответа сервера' : 'Нет связи с кабинетом' }, s);
     return 'error';

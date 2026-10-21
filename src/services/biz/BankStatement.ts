@@ -40,9 +40,15 @@ export function statementStoppedText(done: number, total: number): string {
   return `Выписка загружена не полностью: внесено строк ${done} из ${total}, дальше сохранить не удалось (нет места или хранилище недоступно). Сделайте резервную копию и загрузите ту же выписку ещё раз: внесённые строки не задвоятся.`;
 }
 
+/** «ДД.ММ.ГГГГ» → полдень этого дня. Несуществующая дата (31.02, 00.01) — undefined, а не сдвиг на другой день. */
 function parseRuDate(v: string | undefined): number | undefined {
   const m = v?.trim().match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
-  return m ? new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]), 12).getTime() : undefined;
+  if (!m) return undefined;
+  const day = Number(m[1]);
+  const month = Number(m[2]) - 1;
+  const year = Number(m[3]);
+  const d = new Date(year, month, day, 12);
+  return d.getFullYear() === year && d.getMonth() === month && d.getDate() === day ? d.getTime() : undefined;
 }
 
 /** Байты файла → текст. 1С-выписки обычно в Windows-1251, иногда в UTF-8. */
