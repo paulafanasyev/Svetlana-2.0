@@ -59,6 +59,121 @@ export interface Observer {
   isAvailable(): Promise<boolean>;
 }
 
+export interface StateComparison {
+  changed: boolean;
+  differences: string[];
+  newElements: UIElement[];
+  removedElements: UIElement[];
+  changedElements: UIElement[];
+}
+
+const ELEMENT_FIELDS = ['type', 'text', 'contentDescription', 'clickable', 'focusable', 'visible', 'enabled'] as const;
+
+/** Разворачивает дерево элементов в плоский список (с защитой от циклов и огромных деревьев). */
+export function flattenElements(elements: UIElement[] | undefined, limit = 5000): UIElement[] {
+  const out: UIElement[] = [];
+  const seen = new Set<UIElement>();
+  const stack: UIElement[] = Array.isArray(elements) ? [...elements].reverse() : [];
+  while (stack.length && out.length < limit) {
+    const el = stack.pop() as UIElement;
+    if (!el || typeof el !== 'object' || seen.has(el)) continue;
+    seen.add(el);
+    out.push(el);
+    if (Array.isArray(el.children)) {
+      for (let i = el.children.length - 1; i >= 0; i--) stack.push(el.children[i]);
+    }
+  }
+  return out;
+}
+
+function elementKey(el: UIElement, index: number): string {
+  return typeof el.id === 'string' && el.id ? `id:${el.id}` : `idx:${index}`;
+}
+
+function label(el: UIElement): string {
+  return el.text || el.contentDescription || el.id || el.type || '?';
+}
+
+function sameBounds(a: UIElement['bounds'], b: UIElement['bounds']): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+function indexElements(list: UIElement[]): Map<string, UIElement[]> {
+  const map = new Map<string, UIElement[]>();
+  list.forEach((el, i) => {
+    const key = elementKey(el, i);
+    const bucket = map.get(key);
+    if (bucket) bucket.push(el);
+    else map.set(key, [el]);
+  });
+  return map;
+}
+
+/**
+ * Сравнивает два снимка экрана: платформу, приложение, текст экрана,
+ * вложенные элементы и свойства элемента с тем же id (текст, доступность,
+ * видимость, положение). Повторяющиеся id сравниваются по порядку.
+ * Отсутствующий снимок считается изменением.
+ */
+export function compareScreenStates(before: ScreenState, after: ScreenState): StateComparison {
+  const differences: string[] = [];
+  const newElements: UIElement[] = [];
+  const removedElements: UIElement[] = [];
+  const changedElements: UIElement[] = [];
+
+  if (!before || !after || typeof before !== 'object' || typeof after !== 'object') {
+    return { changed: true, differences: ['State missing'], newElements, removedElements, changedElements };
+  }
+
+  if (before.platform !== after.platform) {
+    differences.push(`Platform changed: ${before.platform} → ${after.platform}`);
+  }
+  if (before.currentApp !== after.currentApp) {
+    differences.push(`App changed: ${before.currentApp} → ${after.currentApp}`);
+  }
+  if ((before.text ?? '') !== (after.text ?? '')) {
+    differences.push('Screen text changed');
+  }
+
+  const beforeMap = indexElements(flattenElements(before.elements));
+  const afterMap = indexElements(flattenElements(after.elements));
+
+  for (const [key, afterList] of afterMap) {
+    const beforeList = beforeMap.get(key) ?? [];
+    afterList.forEach((el, i) => {
+      const prev = beforeList[i];
+      if (!prev) {
+        newElements.push(el);
+        differences.push(`New element: ${label(el)}`);
+        return;
+      }
+      const fields: string[] = ELEMENT_FIELDS.filter((f) => prev[f] !== el[f]);
+      if (!sameBounds(prev.bounds, el.bounds)) fields.push('bounds');
+      if (fields.length) {
+        changedElements.push(el);
+        differences.push(`Changed element: ${label(el)} (${fields.join(', ')})`);
+      }
+    });
+  }
+  for (const [key, beforeList] of beforeMap) {
+    const afterList = afterMap.get(key) ?? [];
+    for (let i = afterList.length; i < beforeList.length; i++) {
+      removedElements.push(beforeList[i]);
+      differences.push(`Removed element: ${label(beforeList[i])}`);
+    }
+  }
+
+  return {
+    changed: differences.length > 0,
+    differences,
+    newElements,
+    removedElements,
+    changedElements,
+  };
+}
+
 class ObservationManager {
   private observers: Map<string, Observer> = new Map();
   private activeObserver: string | null = null;
@@ -101,17 +216,29 @@ class ObservationManager {
       };
     }
 
-    const available = await observer.isAvailable();
-    if (!available) {
-      return {
-        success: false,
-        error: `Observer ${observer.name} is not available`,
-        confidence: 0,
-      };
+    let result: ObservationResult;
+    try {
+      const available = await observer.isAvailable();
+      if (!available) {
+        return {
+          success: false,
+          error: `Observer ${observer.name} is not available`,
+          confidence: 0,
+        };
+      }
+      result = await observer.observe();
+    } catch {
+      // Наблюдатель упал: экран не увиден, успехом это не считаем.
+      return { success: false, error: 'Observation failed', confidence: 0 };
     }
 
-    const result = await observer.observe();
-    
+    if (!result || typeof result !== 'object') {
+      return { success: false, error: 'Observation failed', confidence: 0 };
+    }
+    if (result.success && (!result.state || !Array.isArray(result.state.elements))) {
+      return { success: false, error: 'Observation returned no state', confidence: 0 };
+    }
+
     if (result.success && result.state) {
       this.observationHistory.push(result.state);
       if (this.observationHistory.length > this.MAX_HISTORY) {
@@ -163,47 +290,8 @@ class ObservationManager {
   }
 
   // Compare two states
-  compareStates(before: ScreenState, after: ScreenState): {
-    changed: boolean;
-    differences: string[];
-    newElements: UIElement[];
-    removedElements: UIElement[];
-  } {
-    const differences: string[] = [];
-    const newElements: UIElement[] = [];
-    const removedElements: UIElement[] = [];
-
-    // Compare app
-    if (before.currentApp !== after.currentApp) {
-      differences.push(`App changed: ${before.currentApp} → ${after.currentApp}`);
-    }
-
-    // Compare elements
-    const beforeIds = new Set(before.elements.map(e => e.id));
-    const afterIds = new Set(after.elements.map(e => e.id));
-
-    // Find new elements
-    for (const element of after.elements) {
-      if (!beforeIds.has(element.id)) {
-        newElements.push(element);
-        differences.push(`New element: ${element.text || element.id}`);
-      }
-    }
-
-    // Find removed elements
-    for (const element of before.elements) {
-      if (!afterIds.has(element.id)) {
-        removedElements.push(element);
-        differences.push(`Removed element: ${element.text || element.id}`);
-      }
-    }
-
-    return {
-      changed: differences.length > 0,
-      differences,
-      newElements,
-      removedElements,
-    };
+  compareStates(before: ScreenState, after: ScreenState): StateComparison {
+    return compareScreenStates(before, after);
   }
 }
 
@@ -233,9 +321,10 @@ export const webObserver: Observer = {
     interactiveElements.forEach((el, index) => {
       const rect = el.getBoundingClientRect();
       elements.push({
-        id: `web_${index}`,
+        id: el.id ? `web_id_${el.id}` : `web_${index}`,
         type: el.tagName.toLowerCase(),
         text: el.textContent?.trim() || (el as HTMLInputElement).value || '',
+        contentDescription: el.getAttribute('aria-label') || undefined,
         bounds: {
           x: rect.x,
           y: rect.y,
