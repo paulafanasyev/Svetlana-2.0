@@ -26,6 +26,8 @@
 // addProvider и updateProvider откатываются: прежние настройки и активный выбор возвращаются.
 // Записи ключей одного провайдера идут строго по очереди (keyQueue), а откатывается только самое свежее изменение
 // (generation): два быстрых нажатия подряд не оставляют старую модель с новым ключом и наоборот.
+// Выключенный ИИ никогда не активен: выключили активный — активным становится следующий включённый или никакой
+// (иначе чат продолжал бы слать переписку туда, где в настройках «выключено»).
 // Пустой или странный ответ модели — понятная ошибка (textOrFail), а не пустая реплика Светланы и не TypeError.
 // Каждый запрос из браузера ограничен по времени (fetchAi, 2 минуты), а текст ошибки сервиса проходит через scrubApiError:
 // сам ключ и похожие на ключ строки вырезаются (как ErrorText.kt и scrub_error в приложениях), длина ограничена.
@@ -318,12 +320,26 @@ class AIGateway {
     return run;
   }
 
+  /** Первый включённый провайдер, кроме except (или null). */
+  private firstEnabled(except?: string): string | null {
+    for (const [pid, p] of this.providers) {
+      if (p.enabled && pid !== except) return pid;
+    }
+    return null;
+  }
+
+  /** Адрес прокси действует сразу; запись в sessionStorage — по возможности (в приватном режиме оно может быть закрыто). */
   setProxyUrl(url: string | null) {
     this.proxyUrl = url ? validateProxyUrl(url) : null;
-    if (this.proxyUrl) {
-      sessionStorage.setItem('svetlana_ai_proxy', this.proxyUrl);
-    } else {
-      sessionStorage.removeItem('svetlana_ai_proxy');
+    try {
+      if (typeof sessionStorage === 'undefined') return;
+      if (this.proxyUrl) {
+        sessionStorage.setItem('svetlana_ai_proxy', this.proxyUrl);
+      } else {
+        sessionStorage.removeItem('svetlana_ai_proxy');
+      }
+    } catch (e) {
+      console.error('Не удалось запомнить прокси до закрытия окна:', logText(e));
     }
   }
 
@@ -392,6 +408,8 @@ class AIGateway {
       localStorage.setItem('svetlana_ai_providers', JSON.stringify(data));
       if (this.activeProvider) {
         localStorage.setItem('svetlana_active_provider', this.activeProvider);
+      } else {
+        localStorage.removeItem('svetlana_active_provider');
       }
     } catch (e) {
       // Нет места или хранилище недоступно: настройки действуют до перезапуска, работа не прерывается.
@@ -449,6 +467,9 @@ class AIGateway {
     this.providers.set(p.id, p);
     if (p.enabled) {
       this.activeProvider = p.id;
+    } else if (this.activeProvider === p.id) {
+      // Активный перезаписали выключенным: активным становится другой включённый.
+      this.activeProvider = this.firstEnabled(p.id);
     }
     const saved = this.storeKey(p);
     this.saveToStorage();
@@ -469,13 +490,7 @@ class AIGateway {
     const jobs: Promise<unknown>[] = [Promise.resolve(setSecret(secretName(id), null))];
     if (isNativeApp()) jobs.push(this.inKeyQueue(id, () => nativeSetSecret(secretName(id), null)));
     if (this.activeProvider === id) {
-      this.activeProvider = null;
-      for (const [pid, p] of this.providers) {
-        if (p.enabled) {
-          this.activeProvider = pid;
-          break;
-        }
-      }
+      this.activeProvider = this.firstEnabled();
     }
     this.saveToStorage();
     return Promise.all(jobs).then(() => undefined);
@@ -485,6 +500,7 @@ class AIGateway {
    * Изменить провайдера. Если новый ключ не сохранён («Отмена» или ошибка хранилища) — откат как в addProvider:
    * прежние настройки и активный выбор возвращаются, иначе старый ключ ушёл бы с новой моделью или адресом.
    * Откатывается только самое свежее изменение (два быстрых нажатия не оставляют старую модель с новым ключом).
+   * Выключили активный — активным становится следующий включённый (или никакой).
    */
   updateProvider(id: string, updates: Partial<AIProvider>): Promise<void> {
     const provider = this.providers.get(id);
@@ -498,6 +514,8 @@ class AIGateway {
     Object.assign(provider, next);
     if (updates.enabled) {
       this.activeProvider = id;
+    } else if (!provider.enabled && this.activeProvider === id) {
+      this.activeProvider = this.firstEnabled(id);
     }
     // У своего ИИ адрес лежит в хранилище вместе с ключом: новый адрес записывается туда же.
     const saved = 'apiKey' in updates ? this.storeKey(provider) : Promise.resolve();
@@ -521,8 +539,10 @@ class AIGateway {
     return Array.from(this.providers.values());
   }
 
+  /** Активный ИИ — только включённый: выключенный в настройках не получает переписку. */
   getActiveProvider(): AIProvider | undefined {
-    return this.activeProvider ? this.providers.get(this.activeProvider) : undefined;
+    const p = this.activeProvider ? this.providers.get(this.activeProvider) : undefined;
+    return p && p.enabled ? p : undefined;
   }
 
   setActiveProvider(id: string) {
