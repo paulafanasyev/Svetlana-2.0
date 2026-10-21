@@ -50,28 +50,35 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * WebView, который замечает «клик» экранного диктора (TalkBack): двойное касание приходит не касанием,
  * а действием ACTION_CLICK к элементу страницы. Скрипт страницы такое действие подать не может.
+ * Конструктор WebView может сам спросить провайдер до того, как заполнены поля: тогда отдаём исходный.
  */
 @SuppressLint("ViewConstructor")
-class ClickAwareWebView(ctx: Context, private val onA11yClick: () -> Unit) : WebView(ctx) {
+class ClickAwareWebView(ctx: Context, onA11yClick: () -> Unit) : WebView(ctx) {
     companion object {
         fun isActivation(action: Int): Boolean =
             action == AccessibilityNodeInfo.ACTION_CLICK || action == AccessibilityNodeInfo.ACTION_LONG_CLICK
     }
 
+    private var onClick: (() -> Unit)? = null
     private var inner: AccessibilityNodeProvider? = null
     private var wrapped: AccessibilityNodeProvider? = null
 
+    init {
+        onClick = onA11yClick
+    }
+
     override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider? {
         val p = super.getAccessibilityNodeProvider() ?: return null
-        if (p !== inner) {
+        val cb = onClick ?: return p
+        if (p !== inner || wrapped == null) {
             inner = p
-            wrapped = ClickTracking(p, onA11yClick)
+            wrapped = ClickTracking(p, cb)
         }
         return wrapped
     }
 
     override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
-        if (isActivation(action)) onA11yClick()
+        if (isActivation(action)) onClick?.invoke()
         return super.performAccessibilityAction(action, arguments)
     }
 }
