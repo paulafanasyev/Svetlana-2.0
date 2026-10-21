@@ -1,5 +1,5 @@
 // Android: микрофон распознавания телефона включается только по настоящему нажатию (как буфер обмена).
-// Клавиатура и экранный диктор (TalkBack) тоже считаются нажатием: иначе незрячий не смог бы говорить.
+// Клавиатура и клик экранного диктора (TalkBack) тоже считаются нажатием, но обхода «диктор включён — можно всё» нет.
 import { describe, it, expect } from 'vitest';
 // @ts-ignore — node-модули доступны в тестах (environment: node)
 import { readFileSync } from 'node:fs';
@@ -18,12 +18,16 @@ describe('android microphone needs a real tap', () => {
     expect(bridge).toContain('!act.touchedRecently() ->');
   });
 
-  it('keyboard and TalkBack count as a tap, an overlay window does not', () => {
+  it('keyboard and a TalkBack click count as a tap, an overlay window does not', () => {
     expect(main).toContain('FLAG_WINDOW_IS_OBSCURED');
     expect(main).toContain('override fun dispatchKeyEvent(ev: KeyEvent): Boolean');
     expect(main).toContain('KeyEvent.KEYCODE_ENTER');
-    expect(main).toContain('isTouchExplorationEnabled');
-    expect(main).toContain('return ok || screenReaderOn()');
+    expect(main).toContain('class ClickAwareWebView(');
+    expect(main).toContain('AccessibilityNodeInfo.ACTION_CLICK');
+    expect(main).toContain('web = ClickAwareWebView(this) { markActivation() }');
+    // включённый диктор сам по себе больше не открывает буфер и микрофон
+    expect(main).not.toContain('screenReaderOn()');
+    expect(main).not.toContain('isTouchExplorationEnabled');
   });
 
   it('the page calls the microphone only from a button press', () => {

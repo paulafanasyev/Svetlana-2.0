@@ -27,7 +27,8 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.WindowInsets
-import android.view.accessibility.AccessibilityManager
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityNodeProvider
 import android.webkit.PermissionRequest
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
@@ -47,11 +48,68 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
+ * WebView, который замечает «клик» экранного диктора (TalkBack): двойное касание приходит не касанием,
+ * а действием ACTION_CLICK к элементу страницы. Скрипт страницы такое действие подать не может.
+ * Конструктор WebView может сам спросить провайдер до того, как заполнены поля: тогда отдаём исходный.
+ */
+@SuppressLint("ViewConstructor")
+class ClickAwareWebView(ctx: Context, onA11yClick: () -> Unit) : WebView(ctx) {
+    companion object {
+        fun isActivation(action: Int): Boolean =
+            action == AccessibilityNodeInfo.ACTION_CLICK || action == AccessibilityNodeInfo.ACTION_LONG_CLICK
+    }
+
+    private var onClick: (() -> Unit)? = null
+    private var inner: AccessibilityNodeProvider? = null
+    private var wrapped: AccessibilityNodeProvider? = null
+
+    init {
+        onClick = onA11yClick
+    }
+
+    override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider? {
+        val p = super.getAccessibilityNodeProvider() ?: return null
+        val cb = onClick ?: return p
+        if (p !== inner || wrapped == null) {
+            inner = p
+            wrapped = ClickTracking(p, cb)
+        }
+        return wrapped
+    }
+
+    override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
+        if (isActivation(action)) onClick?.invoke()
+        return super.performAccessibilityAction(action, arguments)
+    }
+}
+
+/** Всё передаёт WebView как есть, только отмечает «клик» диктора. */
+private class ClickTracking(private val inner: AccessibilityNodeProvider, private val onClick: () -> Unit) : AccessibilityNodeProvider() {
+    override fun createAccessibilityNodeInfo(virtualViewId: Int): AccessibilityNodeInfo? =
+        inner.createAccessibilityNodeInfo(virtualViewId)
+
+    override fun findAccessibilityNodeInfosByText(text: String, virtualViewId: Int): MutableList<AccessibilityNodeInfo>? =
+        inner.findAccessibilityNodeInfosByText(text, virtualViewId)
+
+    override fun findFocus(focus: Int): AccessibilityNodeInfo? = inner.findFocus(focus)
+
+    override fun performAction(virtualViewId: Int, action: Int, arguments: Bundle?): Boolean {
+        if (ClickAwareWebView.isActivation(action)) onClick()
+        return inner.performAction(virtualViewId, action, arguments)
+    }
+
+    override fun addExtraDataToAccessibilityNodeInfo(virtualViewId: Int, info: AccessibilityNodeInfo, extraDataKey: String, arguments: Bundle?) {
+        if (Build.VERSION.SDK_INT >= 26) inner.addExtraDataToAccessibilityNodeInfo(virtualViewId, info, extraDataKey, arguments)
+    }
+}
+
+/**
  * Светлана для Android: тот же интерфейс, что на сайте и в Windows (собранный dist из корня репозитория),
  * в WebView по адресу https://appassets.androidplatform.net. Ключи, облако, голос и руки — через Bridge.
  *
  * WebView закрыт: без доступа к файлам и content://, без смешанного контента, с Safe Browsing, без отладки;
- * чужие адреса открываются во внешнем браузере (только https, mailto, tel, sms), микрофон — только своей странице.
+ * чужие адреса открываются во внешнем браузере (только https, mailto, tel, sms), микрофон — только своей странице,
+ * только пока приложение на экране, и первый раз за запуск — только по нажатию.
  * Файлы (экспорт CRM, документы, .ics) сохраняются через системное окно «Сохранить как»: место выбирает человек.
  * Печать и PDF — системное окно печати (документ рисуется в отдельном WebView без JavaScript и без сети).
  * Буфер обмена и микрофон распознавания — только сразу после настоящего нажатия (касание не сквозь чужое окно поверх,
@@ -135,13 +193,17 @@ class MainActivity : Activity() {
     private val confirmLock = Any()
     /** Открытое окно подтверждения (только главный поток). */
     private var confirmDialog: AlertDialog? = null
-    /** Когда человек последний раз настоящим касанием отпустил палец на экране приложения (или нажал Enter). */
+    /** Когда человек последний раз настоящим касанием отпустил палец на экране приложения (или нажал Enter, или клик диктора). */
     @Volatile private var lastTouchAt = 0L
+    /** Приложение на экране (между onResume и onPause): в фоне страница микрофон не получает. */
+    @Volatile private var resumed = false
+    /** Микрофон страницы уже разрешён по нажатию в этом запуске (дальше режим «без рук» слушает сам). Только главный поток. */
+    private var micSession = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WebView.setWebContentsDebuggingEnabled(false)
-        web = WebView(this)
+        web = ClickAwareWebView(this) { markActivation() }
         val root = FrameLayout(this)
         root.setBackgroundColor(0xFF0B1020.toInt())
         root.addView(web, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -218,7 +280,19 @@ class MainActivity : Activity() {
                     request.deny()
                     return
                 }
-                withAudio { ok -> if (ok) request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) else request.deny() }
+                // В фоне — никогда; первый раз за запуск — только сразу после нажатия (скрипт сам комнату не послушает).
+                if (!resumed || !(micSession || activatedRecently())) {
+                    request.deny()
+                    return
+                }
+                withAudio { ok ->
+                    if (ok) {
+                        micSession = true
+                        request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+                    } else {
+                        request.deny()
+                    }
+                }
             }
 
             override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
@@ -240,10 +314,14 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun markActivation() {
+        lastTouchAt = SystemClock.uptimeMillis()
+    }
+
     /** Запоминаем настоящие касания (не сквозь чужое окно поверх): только после них можно писать в буфер и слушать. */
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (ev.actionMasked == MotionEvent.ACTION_UP && (ev.flags and MotionEvent.FLAG_WINDOW_IS_OBSCURED) == 0) {
-            lastTouchAt = SystemClock.uptimeMillis()
+            markActivation()
         }
         return super.dispatchTouchEvent(ev)
     }
@@ -251,27 +329,27 @@ class MainActivity : Activity() {
     /** Enter, пробел или центр джойстика на клавиатуре: тоже настоящее нажатие кнопки (скрипт клавиши не нажимает). */
     override fun dispatchKeyEvent(ev: KeyEvent): Boolean {
         if (ev.action == KeyEvent.ACTION_UP && ev.keyCode in ACTIVATION_KEYS) {
-            lastTouchAt = SystemClock.uptimeMillis()
+            markActivation()
         }
         return super.dispatchKeyEvent(ev)
     }
 
-    /** Включён экранный диктор с «исследованием касанием» (TalkBack): нажатие приходит не касанием, а действием «клик». */
-    private fun screenReaderOn(): Boolean = runCatching {
-        (getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager).isTouchExplorationEnabled
-    }.getOrDefault(false)
+    /** Нажатие было только что (не расходует его). */
+    private fun activatedRecently(): Boolean {
+        val t = lastTouchAt
+        return t > 0 && SystemClock.uptimeMillis() - t in 0..ACTIVATION_MS
+    }
 
     /**
      * Человек только что нажал кнопку (как user activation в браузере). Нажатие расходуется:
-     * одно нажатие — одно копирование или одна фраза в микрофон. С TalkBack касания не приходят,
-     * поэтому тогда не мешаем: иначе незрячий не смог бы ни скопировать, ни сказать команду.
-     * Вызывать в главном потоке.
+     * одно нажатие — одно копирование или одна фраза в микрофон. С TalkBack нажатие — это клик диктора
+     * (ClickAwareWebView), поэтому особого обхода для диктора нет: скрипт и при включённом TalkBack
+     * сам не скопирует и не послушает. Вызывать в главном потоке.
      */
     fun touchedRecently(): Boolean {
-        val t = lastTouchAt
-        val ok = t > 0 && SystemClock.uptimeMillis() - t in 0..ACTIVATION_MS
+        val ok = activatedRecently()
         if (ok) lastTouchAt = 0L
-        return ok || screenReaderOn()
+        return ok
     }
 
     private fun openExternal(u: Uri) {
@@ -500,12 +578,17 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        resumed = false
+        // Ушли с экрана: распознавание телефона не слушает дальше в фоне, старое нажатие не действует.
+        lastTouchAt = 0L
+        bridge?.pause()
         super.onPause()
         if (::web.isInitialized) web.onPause()
     }
 
     override fun onResume() {
         super.onResume()
+        resumed = true
         if (::web.isInitialized) web.onResume()
     }
 
