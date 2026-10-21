@@ -1,15 +1,16 @@
 // «Руки» в приложении для Android: Светлана открывает приложения, нажимает, печатает и читает экран через
 // специальные возможности. Простые команды («открой Telegram») работают без ИИ; остальные ИИ превращает
 // в список шагов. Любой список телефон показывает в своём окне и выполняет только после «ОК».
+// Доступность: у поля команды есть подпись, журнал — role=log, ошибки — понятной фразой без технических текстов.
 import { useEffect, useState } from 'react';
 import { Hand, Mic, Send, Loader2, Settings2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { aiGateway } from '../services/AIGateway';
 import { androidListen, extractActions, handsOpenSettings, handsRun, handsStatus, HANDS_SYSTEM_PROMPT, quickActions, type HandsAction } from '../services/AndroidBridge';
+import { safeErrorText } from '../services/safeErrorText';
 
-const errText = (e: unknown): string => {
-  const m = (e as { message?: unknown } | null)?.message;
-  return (typeof m === 'string' && m ? m : String(e ?? '')).slice(0, 300) || 'Неизвестная ошибка';
-};
+/** Ошибки телефона и ИИ — только наши русские сообщения, технические тексты заменяются подсказкой. */
+export const HANDS_ERROR = 'Не получилось выполнить. Проверьте, что руки включены и есть интернет, и попробуйте ещё раз.';
+const errText = (e: unknown): string => safeErrorText(e, HANDS_ERROR);
 
 const EXAMPLES = ['открой Telegram', 'что на экране', 'пролистай вниз', 'назад'];
 
@@ -78,7 +79,7 @@ export default function AndroidHandsPage() {
       heard = await androidListen();
       if (!heard) add('sv', 'Не расслышала. Скажите ещё раз.');
     } catch (e) {
-      add('sv', errText(e));
+      add('sv', safeErrorText(e, 'Микрофон недоступен. Проверьте разрешение на микрофон в настройках телефона.'));
     } finally {
       setListening(false);
     }
@@ -88,22 +89,22 @@ export default function AndroidHandsPage() {
   return (
     <div className="max-w-2xl mx-auto space-y-4">
       <section className="rounded-xl border border-sv-border bg-white/5 p-4">
-        <h2 className="text-lg font-bold flex items-center gap-2"><Hand className="w-5 h-5 text-indigo-300" />Руки Светланы</h2>
+        <h2 className="text-lg font-bold flex items-center gap-2"><Hand className="w-5 h-5 text-indigo-300" aria-hidden="true" />Руки Светланы</h2>
         <p className="text-xs text-sv-muted mt-1">
           Светлана открывает приложения, нажимает кнопки, печатает и читает экран. Перед каждой командой телефон покажет шаги и спросит «ОК».
           В самой Светлане руки ничего не нажимают.
         </p>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          {enabled === null && <span className="text-xs text-sv-muted flex items-center gap-1.5"><Loader2 className="w-4 h-4 animate-spin" />Проверяю…</span>}
-          {enabled === true && <span data-testid="hands-on" className="text-xs text-emerald-400 flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4" />Руки включены</span>}
+        <div className="mt-3 flex flex-wrap items-center gap-2" role="status">
+          {enabled === null && <span className="text-xs text-sv-muted flex items-center gap-1.5"><Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />Проверяю…</span>}
+          {enabled === true && <span data-testid="hands-on" className="text-xs text-emerald-400 flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4" aria-hidden="true" />Руки включены</span>}
           {enabled === false && (
             <>
-              <span className="text-xs text-yellow-300 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />Руки выключены. Открыть приложение можно и без них.</span>
+              <span className="text-xs text-yellow-300 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" aria-hidden="true" />Руки выключены. Открыть приложение можно и без них.</span>
               <button
                 onClick={() => void handsOpenSettings().catch(e => add('sv', errText(e)))}
                 className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-medium flex items-center gap-1.5"
               >
-                <Settings2 className="w-4 h-4" />Включить руки
+                <Settings2 className="w-4 h-4" aria-hidden="true" />Включить руки
               </button>
             </>
           )}
@@ -114,8 +115,10 @@ export default function AndroidHandsPage() {
       </section>
 
       <section className="rounded-xl border border-sv-border bg-white/5 p-4">
+        <label htmlFor="hands-cmd" className="block text-xs text-sv-muted mb-1">Команда для телефона</label>
         <div className="flex gap-2">
           <input
+            id="hands-cmd"
             value={cmd}
             onChange={e => setCmd(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && void run(cmd)}
@@ -129,7 +132,7 @@ export default function AndroidHandsPage() {
             aria-label="Сказать команду"
             className={`px-3 py-2 rounded-lg border text-sm ${listening ? 'bg-rose-600 border-rose-500' : 'bg-slate-800 border-slate-700 hover:bg-slate-700'} disabled:opacity-50`}
           >
-            {listening ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mic className="w-4 h-4" />}
+            {listening ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Mic className="w-4 h-4" aria-hidden="true" />}
           </button>
           <button
             onClick={() => void run(cmd)}
@@ -137,10 +140,10 @@ export default function AndroidHandsPage() {
             aria-label="Выполнить"
             className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm"
           >
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Send className="w-4 h-4" aria-hidden="true" />}
           </button>
         </div>
-        <div className="flex flex-wrap gap-1.5 mt-3">
+        <div className="flex flex-wrap gap-1.5 mt-3" role="group" aria-label="Примеры команд">
           {EXAMPLES.map(x => (
             <button key={x} onClick={() => void run(x)} disabled={busy} className="px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-xs text-sv-muted hover:text-sv-text disabled:opacity-50">{x}</button>
           ))}
@@ -149,7 +152,7 @@ export default function AndroidHandsPage() {
       </section>
 
       {log.length > 0 && (
-        <section className="rounded-xl border border-sv-border bg-white/5 p-4 space-y-2" aria-live="polite">
+        <section className="rounded-xl border border-sv-border bg-white/5 p-4 space-y-2" role="log" aria-label="Разговор с руками Светланы" aria-live="polite" aria-relevant="additions">
           {log.map((l, i) => (
             <p key={i} className={`text-sm whitespace-pre-wrap ${l.who === 'me' ? 'text-indigo-200' : 'text-sv-text'}`}>
               <span className="text-sv-muted">{l.who === 'me' ? 'Вы: ' : 'Светлана: '}</span>{l.text}
