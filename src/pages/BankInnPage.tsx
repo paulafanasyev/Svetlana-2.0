@@ -1,6 +1,7 @@
 // Svetlana Business — проверка контрагентов по ИНН, реквизиты по ИНН/БИК, импорт банковской выписки 1С.
 // Доступность: у каждого поля подпись, результат — role=status, ошибка — role=alert, выбор файла доступен с клавиатуры.
 // Ошибки сети и внешних сервисов показываются понятной фразой (safeErrorText), а не техническим текстом.
+// Пока идёт запрос, чтение выписки или сохранение ключа, кнопка пишет, что делает, и не нажимается повторно.
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import { assertFileSize, MAX_BYTES } from '../services/security/SafeData';
 import { ShieldCheck, Search, UserPlus, Upload, KeyRound, Building2, ExternalLink } from 'lucide-react';
@@ -13,8 +14,8 @@ import { decodeStatement, parse1C, importStatement } from '../services/biz/BankS
 import { crmStore } from '../services/crm/CRMStore';
 import { safeErrorText } from '../services/safeErrorText';
 
-const input = 'w-full min-w-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-indigo-500/50';
-const btn = 'inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50';
+const input = 'w-full min-w-0 px-3 py-2 min-h-11 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-indigo-500/50';
+const btn = 'inline-flex items-center justify-center gap-1.5 px-3 py-2 min-h-11 rounded-lg text-sm font-medium transition-colors disabled:opacity-50';
 const btnPrimary = `${btn} bg-indigo-600 hover:bg-indigo-700 text-white`;
 const btnGhost = `${btn} bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10`;
 const card = 'rounded-xl bg-white/5 border border-white/10 p-4 space-y-3 min-w-0';
@@ -36,6 +37,7 @@ function CheckCard() {
 
   const run = async (e: FormEvent) => {
     e.preventDefault();
+    if (busy) return;
     setBusy(true); setMsg(null); setReport(null);
     try { setReport(await checkCounterparty(inn)); } catch (err) { setMsg({ text: safeErrorText(err, 'Проверка не удалась. Проверьте интернет и ключ DaData.'), error: true }); } finally { setBusy(false); }
   };
@@ -93,10 +95,12 @@ function MyDetailsCard() {
   const [inn, setInn] = useState(profile.inn);
   const [bik, setBik] = useState(profile.bik);
   const [msg, setMsg] = useState<Msg>(null);
-  const [busy, setBusy] = useState(false);
+  // Какой запрос идёт: по ИНН или по БИК (на этой кнопке пишем «Ищу…»).
+  const [busy, setBusy] = useState<'inn' | 'bik' | null>(null);
 
   const fillByInn = async () => {
-    setBusy(true); setMsg(null);
+    if (busy) return;
+    setBusy('inn'); setMsg(null);
     try {
       if (!validateInn(inn)) throw new Error('ИНН не проходит проверку контрольной суммы');
       const p = await lookupParty(inn);
@@ -107,30 +111,31 @@ function MyDetailsCard() {
         bizStore.updateProfile({ inn: p.inn, fullName: p.name, ogrn: p.ogrn ?? '', address: p.address ?? '' });
         setMsg({ text: `Профиль заполнен: ${p.name}`, error: false });
       }
-    } catch (err) { setMsg({ text: safeErrorText(err, 'Не получилось заполнить по ИНН. Проверьте интернет и ключ DaData.'), error: true }); } finally { setBusy(false); }
+    } catch (err) { setMsg({ text: safeErrorText(err, 'Не получилось заполнить по ИНН. Проверьте интернет и ключ DaData.'), error: true }); } finally { setBusy(null); }
   };
 
   const fillBank = async () => {
-    setBusy(true); setMsg(null);
+    if (busy) return;
+    setBusy('bik'); setMsg(null);
     try {
       if (!validateBik(bik)) throw new Error('БИК — 9 цифр');
       const b = await lookupBank(bik);
       if (!b) throw new Error('Банк с таким БИК не найден');
       bizStore.updateProfile({ bik: b.bik, bankName: b.name, corrAccount: b.corrAccount });
       setMsg({ text: `Банк: ${b.name}, к/с ${b.corrAccount}`, error: false });
-    } catch (err) { setMsg({ text: safeErrorText(err, 'Не получилось найти банк. Проверьте интернет и ключ DaData.'), error: true }); } finally { setBusy(false); }
+    } catch (err) { setMsg({ text: safeErrorText(err, 'Не получилось найти банк. Проверьте интернет и ключ DaData.'), error: true }); } finally { setBusy(null); }
   };
 
   return (
-    <section className={card} aria-labelledby="bank-my-title" aria-busy={busy}>
+    <section className={card} aria-labelledby="bank-my-title" aria-busy={!!busy}>
       <h3 id="bank-my-title" className="font-semibold flex items-center gap-2"><Building2 className="w-4 h-4 text-indigo-300" aria-hidden="true" />Мои реквизиты автоматически</h3>
       <div className={row}>
         <input className={input} placeholder="Мой ИНН" aria-label="Мой ИНН" inputMode="numeric" value={inn} onChange={e => setInn(e.target.value)} />
-        <button type="button" className={`${btnGhost} ${rowBtn}`} onClick={fillByInn} disabled={busy}>Заполнить</button>
+        <button type="button" className={`${btnGhost} ${rowBtn}`} onClick={fillByInn} disabled={!!busy}>{busy === 'inn' ? 'Ищу…' : 'Заполнить'}</button>
       </div>
       <div className={row}>
         <input className={input} placeholder="БИК моего банка" aria-label="БИК моего банка" inputMode="numeric" value={bik} onChange={e => setBik(e.target.value)} />
-        <button type="button" className={`${btnGhost} ${rowBtn}`} onClick={fillBank} disabled={busy}>Банк по БИК</button>
+        <button type="button" className={`${btnGhost} ${rowBtn}`} onClick={fillBank} disabled={!!busy}>{busy === 'bik' ? 'Ищу…' : 'Банк по БИК'}</button>
       </div>
       <p className="text-xs text-slate-400">Расчётный счёт впишите во вкладке «Бизнес → Профиль» — его нет в открытых реестрах.</p>
       <MsgLine msg={msg} />
@@ -140,11 +145,13 @@ function MyDetailsCard() {
 
 function StatementCard() {
   const [msg, setMsg] = useState<Msg>(null);
+  const [busy, setBusy] = useState(false);
   const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (!file) return;
+    if (!file || busy) return;
     setMsg(null);
+    setBusy(true);
     try {
       assertFileSize(file, MAX_BYTES.statement, 'Выписка');
       const parsed = parse1C(decodeStatement(await file.arrayBuffer()));
@@ -155,15 +162,15 @@ function StatementCard() {
           + (bizStore.getProfile().regime === 'npd' && r.incomes ? ' Не забудьте выбить чеки в «Мой налог» за поступления от клиентов.' : ''),
         error: false,
       });
-    } catch (err) { setMsg({ text: safeErrorText(err, 'Не удалось прочитать выписку. Нужен файл выгрузки в формате 1С (.txt).'), error: true }); }
+    } catch (err) { setMsg({ text: safeErrorText(err, 'Не удалось прочитать выписку. Нужен файл выгрузки в формате 1С (.txt).'), error: true }); } finally { setBusy(false); }
   };
   return (
-    <section className={card} aria-labelledby="bank-statement-title">
+    <section className={card} aria-labelledby="bank-statement-title" aria-busy={busy}>
       <h3 id="bank-statement-title" className="font-semibold flex items-center gap-2"><Upload className="w-4 h-4 text-amber-300" aria-hidden="true" />Банковская выписка</h3>
       <p className="text-sm text-slate-400">В интернет-банке: Выписка → Экспорт → «1С» (файл .txt). Поступления станут доходами, списания — расходами, оплаченные счета закроются сами. Повторная загрузка не дублирует записи.</p>
       <p className="text-xs text-amber-200">Переводы самому себе, займы и возвраты не являются доходом — удалите такие записи во вкладке «Деньги».</p>
-      <label className={`${btnPrimary} cursor-pointer w-full sm:w-fit focus-within:ring-2 focus-within:ring-indigo-300`}><Upload className="w-4 h-4" aria-hidden="true" />Загрузить выписку 1С
-        <input type="file" accept=".txt,text/plain" className="sr-only" aria-label="Загрузить банковскую выписку в формате 1С" onChange={onFile} />
+      <label aria-disabled={busy} className={`${btnPrimary} w-full sm:w-fit focus-within:ring-2 focus-within:ring-indigo-300 ${busy ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}><Upload className="w-4 h-4" aria-hidden="true" />{busy ? 'Читаю выписку…' : 'Загрузить выписку 1С'}
+        <input type="file" accept=".txt,text/plain" className="sr-only" disabled={busy} aria-label="Загрузить банковскую выписку в формате 1С" onChange={onFile} />
       </label>
       <MsgLine msg={msg} />
     </section>
@@ -173,6 +180,7 @@ function StatementCard() {
 function KeyCard() {
   const [key, setKey] = useState('');
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
@@ -182,16 +190,17 @@ function KeyCard() {
     return () => { alive = false; };
   }, []);
   const save = async () => {
-    setErr(null);
-    try { await setDadataKey(key); setSaved(true); } catch (e) { setSaved(false); setErr(safeErrorText(e, 'Не удалось сохранить ключ')); }
+    if (saving) return;
+    setErr(null); setSaving(true);
+    try { await setDadataKey(key); setSaved(true); } catch (e) { setSaved(false); setErr(safeErrorText(e, 'Не удалось сохранить ключ')); } finally { setSaving(false); }
   };
   return (
-    <section className={card} aria-labelledby="bank-key-title">
+    <section className={card} aria-labelledby="bank-key-title" aria-busy={saving}>
       <h3 id="bank-key-title" className="font-semibold flex items-center gap-2"><KeyRound className="w-4 h-4 text-slate-300" aria-hidden="true" />Ключ DaData</h3>
       <p className="text-sm text-slate-400">Нужен для данных по ИНН и БИК. Бесплатно: зарегистрируйтесь на <a className="text-indigo-300 underline" href="https://dadata.ru/profile/#info" target="_blank" rel="noreferrer">dadata.ru</a> и скопируйте «API-ключ». Хранится зашифрованным только на этом устройстве.</p>
       <div className={row}>
         <input className={input} type="password" autoComplete="off" spellCheck={false} placeholder="API-ключ" aria-label="API-ключ DaData" value={key} onChange={e => { setKey(e.target.value); setSaved(false); }} />
-        <button type="button" className={`${btnGhost} ${rowBtn}`} onClick={save}>{saved ? 'Сохранено' : 'Сохранить'}</button>
+        <button type="button" className={`${btnGhost} ${rowBtn}`} onClick={save} disabled={saving}>{saving ? 'Сохраняю…' : saved ? 'Сохранено' : 'Сохранить'}</button>
       </div>
       {saved && <p role="status" className="sr-only">Ключ сохранён</p>}
       {err && <p role="alert" className="text-sm text-red-300">{err}</p>}

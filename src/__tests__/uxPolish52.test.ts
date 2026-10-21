@@ -26,7 +26,27 @@ describe('ux polish 52', () => {
   });
 
   it('touch targets are at least 44 px', () => {
-    expect(read('components/Avatar.tsx')).not.toContain('w-8 h-8 rounded-full flex');
-    expect(read('components/Avatar.tsx')).toContain('w-11 h-11 rounded-full flex');
+    const avatar = read('components/Avatar.tsx');
+    expect(avatar).not.toContain('w-8 h-8 rounded-full flex');
+    expect(avatar).toContain('w-11 h-11 rounded-full flex');
+    const mcp = read('components/McpPanel.tsx');
+    expect(mcp).not.toContain('p-1.5 rounded-lg');
+    expect(mcp).toContain("const iconBtn = 'min-w-11 min-h-11");
+    expect(mcp.match(/\$\{iconBtn\}/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
+    const shell = read('DesktopShell.tsx');
+    expect(shell).not.toContain('min-h-10');
+  });
+
+  it('busy states and a live AI status', () => {
+    const bank = read('pages/BankInnPage.tsx');
+    expect(bank).toContain('Читаю выписку…');
+    expect(bank).toContain('Сохраняю…');
+    expect(bank).toContain("busy === 'bik' ? 'Ищу…'");
+    const mcp = read('components/McpPanel.tsx');
+    expect(mcp).toContain('Подключаю…');
+    expect(mcp).toContain('toggleEnabled(e.target.checked)');
+    expect(mcp).not.toContain('void mcpManager.setServerEnabled');
+    const shell = read('DesktopShell.tsx');
+    expect(shell).toContain('data-testid="ai-status-live" role="status"');
   });
 });
