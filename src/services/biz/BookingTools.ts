@@ -17,10 +17,14 @@ const DAY = 86_400_000;
 export const BOOKING_ALREADY_DONE = 'Этот визит уже отмечен, доход второй раз не записываю.';
 /** Запись сохранена, а отметка в карточке клиента — нет: это не ошибка записи, только предупреждение. */
 export const BOOKING_CRM_NOTE_FAILED = 'Отметку в карточке клиента сохранить не удалось, сама запись сохранена.';
+/** Визит отметить не удалось, и убрать уже записанный доход тоже: человек должен знать, иначе повтор запишет доход дважды. */
+export const bookingIncomeLeft = (amount: number): string =>
+  `Визит не отмечен, а доход ${formatRub(amount)} уже записан в книгу «Бизнес». Удалите его там, прежде чем отмечать визит снова, иначе доход учтётся дважды.`;
 
 /**
  * Клиент пришёл и оплатил: доход в книгу и отметка «пришёл» вместе. Если отметка не сохранилась,
- * доход убирается обратно, чтобы после повторной попытки не было двух одинаковых доходов.
+ * доход убирается обратно, чтобы после повторной попытки не было двух одинаковых доходов. Не удалось убрать и его —
+ * ошибка прямо говорит, что доход остался в книге (bookingIncomeLeft), а не молчит об этом.
  * Отменённую запись «завершить» нельзя: это проверяется до того, как доход попадёт в книгу.
  */
 export function completeAppointment(a: Appointment, amountIn: number | undefined, store: BookingStore = bookingStore, biz: BizStore = bizStore): { appointment: Appointment; income: number } {
@@ -36,7 +40,14 @@ export function completeAppointment(a: Appointment, amountIn: number | undefined
   try {
     return { appointment: store.setStatus(current.id, 'done', entryId), income: amount > 0 ? amount : 0 };
   } catch (e) {
-    if (entryId) { try { biz.deleteEntry(entryId); } catch { /* книга тоже не сохраняется: ошибку покажет вызвавший */ } }
+    if (entryId) {
+      try {
+        biz.deleteEntry(entryId);
+      } catch {
+        const why = e instanceof Error && e.message ? `${e.message} ` : '';
+        throw new Error(`${why}${bookingIncomeLeft(amount)}`);
+      }
+    }
     throw e;
   }
 }
