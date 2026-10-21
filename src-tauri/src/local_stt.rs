@@ -12,6 +12,8 @@
 //!   и исполняются одни и те же байты (из памяти), подменить файл между проверкой и загрузкой нельзя;
 //!   повреждённый или подменённый файл удаляется, и модель снова считается не установленной;
 //! - размер, длина звука и частота запросов ограничены.
+//!
+//! Загрузку можно остановить (local_stt_cancel): недокачанный файл удаляется, соединение закрывается.
 
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
@@ -29,6 +31,7 @@ const MODEL_FILE: &str = "gigaam-v3-ctc.int8.onnx";
 const MODEL_SIZE_MB: u32 = 225;
 const MAX_MODEL_BYTES: u64 = 400 * 1024 * 1024;
 const UNEXPECTED: &str = "Неожиданный ответ модели";
+const INSTALL_STOPPED: &str = "Загрузка модели остановлена";
 
 const SAMPLE_RATE: usize = 16_000;
 const N_FFT: usize = 320; // окно 20 мс
@@ -63,6 +66,8 @@ struct Engine {
 }
 
 static DOWNLOADING: AtomicBool = AtomicBool::new(false);
+/// Человек нажал «Остановить загрузку»: цикл загрузки выходит на следующем куске.
+static CANCEL: AtomicBool = AtomicBool::new(false);
 static PROGRESS: Mutex<Progress> = Mutex::new(Progress { downloaded: 0, total: 0, error: None });
 static ENGINE: Mutex<Option<Engine>> = Mutex::new(None);
 static CALLS: Mutex<VecDeque<Instant>> = Mutex::new(VecDeque::new());
@@ -148,6 +153,7 @@ pub async fn local_stt_install(app: AppHandle) -> Result<(), String> {
         "Скачать модель распознавания речи GigaAM-v3 (около {MODEL_SIZE_MB} МБ) с Hugging Face?\n\nПосле этого цифры для проверки голоса распознаются прямо на компьютере: запись никуда не отправляется."
     );
     let result = if confirm(&app, question).await {
+        CANCEL.store(false, Ordering::SeqCst);
         set_progress(0, 0, None);
         download(&path).await
     } else {
@@ -157,8 +163,20 @@ pub async fn local_stt_install(app: AppHandle) -> Result<(), String> {
         let p = PROGRESS.lock().unwrap_or_else(|x| x.into_inner()).downloaded;
         set_progress(p, 0, Some(e.clone()));
     }
+    CANCEL.store(false, Ordering::SeqCst);
     DOWNLOADING.store(false, Ordering::SeqCst);
     result
+}
+
+/// Остановить идущую загрузку модели. Без подтверждения: остановка ничего не меняет на диске
+/// (недокачанный файл удаляется). Ответ: true, если загрузка шла и будет остановлена.
+#[tauri::command]
+pub fn local_stt_cancel() -> bool {
+    if !DOWNLOADING.load(Ordering::SeqCst) {
+        return false;
+    }
+    CANCEL.store(true, Ordering::SeqCst);
+    true
 }
 
 async fn download(path: &Path) -> Result<(), String> {
@@ -177,7 +195,8 @@ async fn download(path: &Path) -> Result<(), String> {
     result
 }
 
-/// Скачивает файл в `part`, возвращает SHA-256 скачанного.
+/// Скачивает файл в `part`, возвращает SHA-256 скачанного. Остановка проверяется на каждом куске:
+/// ответ сервера отпускается, соединение закрывается.
 async fn download_to(part: &Path) -> Result<String, String> {
     let policy = reqwest::redirect::Policy::custom(|attempt| {
         if attempt.previous().len() >= 5 {
@@ -197,6 +216,9 @@ async fn download_to(part: &Path) -> Result<String, String> {
         .build()
         .map_err(|e| e.to_string())?;
     let mut response = client.get(MODEL_URL).send().await.map_err(|e| e.without_url().to_string())?;
+    if CANCEL.load(Ordering::SeqCst) {
+        return Err(INSTALL_STOPPED.into());
+    }
     if !response.status().is_success() {
         return Err(format!("Сервер с моделью ответил кодом {}", response.status().as_u16()));
     }
@@ -209,6 +231,9 @@ async fn download_to(part: &Path) -> Result<String, String> {
     let mut got: u64 = 0;
     set_progress(0, total, None);
     while let Some(chunk) = response.chunk().await.map_err(|e| e.without_url().to_string())? {
+        if CANCEL.load(Ordering::SeqCst) {
+            return Err(INSTALL_STOPPED.into());
+        }
         got += chunk.len() as u64;
         if got > MAX_MODEL_BYTES {
             return Err("Файл модели больше ожидаемого".into());
@@ -488,6 +513,12 @@ mod tests {
         assert_eq!(ctc_decode(&lp, 6), "дв а");
         assert_eq!(token(32), Some('я'));
         assert_eq!(token(33), None);
+    }
+
+    #[test]
+    fn cancel_without_download_does_nothing() {
+        assert!(!local_stt_cancel());
+        assert!(!CANCEL.load(Ordering::SeqCst));
     }
 
     #[test]

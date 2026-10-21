@@ -1,8 +1,8 @@
 // Распознавание речи на самом устройстве (приложения для Windows и Android): модель GigaAM-v3 в нативной части
 // (Windows: src-tauri/src/local_stt.rs, Android: LocalStt.kt). Используется для проверки голоса цифрами и
 // для команд на телефоне: текст распознаётся из той же записи, по которой сверяется голос, и запись никуда
-// не отправляется. Модель скачивается только после подтверждения в нативном окне и проверяется по SHA-256.
-// На сайте модели нет.
+// не отправляется. Модель скачивается только после подтверждения в нативном окне и проверяется по SHA-256;
+// загрузку можно остановить (local_stt_cancel). На сайте модели нет.
 import { isAndroidApp, isWindowsApp } from '../../platform';
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -58,6 +58,11 @@ export async function localSttStatus(): Promise<LocalSttStatus | null> {
 /** Скачать модель. Приложение спросит подтверждение в своём окне. */
 export async function localSttInstall(): Promise<void> {
   try { await need()('local_stt_install'); } finally { await localSttStatus().catch(() => null); }
+}
+
+/** Остановить идущую загрузку модели. true — загрузка шла и останавливается. */
+export async function localSttCancelInstall(): Promise<boolean> {
+  try { return (await need()('local_stt_cancel')) === true; } finally { await localSttStatus().catch(() => null); }
 }
 
 /** Удалить модель (тоже с подтверждением в окне приложения). */
