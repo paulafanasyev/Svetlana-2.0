@@ -8,17 +8,17 @@ function mem() {
   const m = new Map<string, string>();
   return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => { m.set(k, v); }, removeItem: (k: string) => { m.delete(k); } };
 }
-// Понедельник, 9:00: рабочий день по умолчанию с 10 до 19.
+// Понедельник, 19 октября 2026, 9:00: рабочий день по умолчанию с 10 до 19.
 const NOW = new Date(2026, 9, 19, 9, 0).getTime();
 const at = (h: number) => new Date(2026, 9, 19, h, 0).getTime();
 
 function setup() {
   const store = new BookingStore(mem(), () => NOW);
-  const biz = new BizStore(mem() as any);
+  const biz = new BizStore(mem(), () => NOW);
   const a = store.book({ clientName: 'Петрова', start: at(11), price: 1500 });
   return { store, biz, a };
 }
-const incomes = (biz: BizStore) => biz.listEntries().filter((e: any) => e.kind === 'income').length;
+const incomes = (biz: BizStore) => biz.listEntries({ kind: 'income' }).length;
 
 describe('booking status transitions', () => {
   it('the rules', () => {
