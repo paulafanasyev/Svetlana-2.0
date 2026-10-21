@@ -1,4 +1,9 @@
 // Policy Engine - Real risk assessment and permission checking
+// Дневные лимиты:
+// - счётчик привязан к дате (местное время): в новый день он начинается с нуля;
+// - счётчик хранится (svetlana_policy_counts), перезапуск приложения лимит не обнуляет;
+// - проверка политики ничего не списывает: списание идёт через recordExecution() только после
+//   успешного выполнения (отказ, запрос подтверждения или ошибка инструмента лимит не тратят).
 
 import type { Tool, RiskLevel } from './ToolRegistry';
 
@@ -41,6 +46,30 @@ export interface PolicyRule {
   evaluate(tool: Tool, context: PolicyContext): PolicyResult;
 }
 
+const POLICY_KEY = 'svetlana_policy';
+const COUNTS_KEY = 'svetlana_policy_counts';
+
+/** Дата по местному времени: ГГГГ-ММ-ДД. */
+export function policyDay(now: Date = new Date()): string {
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${m}-${d}`;
+}
+
+function storage(): Storage | null {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Неотрицательное целое из хранилища, иначе undefined. */
+function safeCount(v: unknown): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
+}
+
 class PolicyEngine {
   private rules: PolicyRule[] = [];
   private auditLog: PolicyResult['auditLog'][] = [];
@@ -48,21 +77,31 @@ class PolicyEngine {
   private allowedTools: Set<string> = new Set();
   private maxDailyExecutions: Map<string, number> = new Map();
   private dailyExecutionCount: Map<string, number> = new Map();
+  /** К какому дню относится dailyExecutionCount. */
+  private countDay = policyDay();
 
   constructor() {
     this.initializeDefaultRules();
     this.loadFromStorage();
+    this.loadCounts();
   }
 
   private loadFromStorage() {
+    const ls = storage();
+    if (!ls) return;
     try {
-      const stored = localStorage.getItem('svetlana_policy');
-      if (stored) {
+      const stored = ls.getItem(POLICY_KEY);
+      if (stored && stored.length < 100_000) {
         const data = JSON.parse(stored);
-        if (data.blockedTools) this.blockedTools = new Set(data.blockedTools);
-        if (data.allowedTools) this.allowedTools = new Set(data.allowedTools);
-        if (data.maxDailyExecutions) {
-          this.maxDailyExecutions = new Map(Object.entries(data.maxDailyExecutions));
+        if (Array.isArray(data?.blockedTools)) this.blockedTools = new Set(data.blockedTools.filter((x: unknown) => typeof x === 'string'));
+        if (Array.isArray(data?.allowedTools)) this.allowedTools = new Set(data.allowedTools.filter((x: unknown) => typeof x === 'string'));
+        if (data?.maxDailyExecutions && typeof data.maxDailyExecutions === 'object') {
+          const limits = new Map<string, number>();
+          for (const [k, v] of Object.entries(data.maxDailyExecutions)) {
+            const n = safeCount(v);
+            if (n !== undefined) limits.set(k, n);
+          }
+          this.maxDailyExecutions = limits;
         }
       }
     } catch (e) {
@@ -71,15 +110,55 @@ class PolicyEngine {
   }
 
   private saveToStorage() {
+    const ls = storage();
+    if (!ls) return;
     try {
       const data = {
         blockedTools: Array.from(this.blockedTools),
         allowedTools: Array.from(this.allowedTools),
         maxDailyExecutions: Object.fromEntries(this.maxDailyExecutions),
       };
-      localStorage.setItem('svetlana_policy', JSON.stringify(data));
+      ls.setItem(POLICY_KEY, JSON.stringify(data));
     } catch (e) {
       console.error('Failed to save policy:', e);
+    }
+  }
+
+  /** Счётчики за сегодня из хранилища; записи за другой день не берём. */
+  private loadCounts() {
+    const ls = storage();
+    if (!ls) return;
+    try {
+      const stored = ls.getItem(COUNTS_KEY);
+      if (!stored || stored.length > 100_000) return;
+      const data = JSON.parse(stored);
+      if (!data || data.date !== this.countDay || !data.counts || typeof data.counts !== 'object') return;
+      for (const [k, v] of Object.entries(data.counts)) {
+        const n = safeCount(v);
+        if (n !== undefined) this.dailyExecutionCount.set(k, n);
+      }
+    } catch {
+      // Повреждённая запись: начинаем день с нуля.
+    }
+  }
+
+  private saveCounts() {
+    const ls = storage();
+    if (!ls) return;
+    try {
+      ls.setItem(COUNTS_KEY, JSON.stringify({ date: this.countDay, counts: Object.fromEntries(this.dailyExecutionCount) }));
+    } catch {
+      // Хранилище недоступно: счётчик действует до перезапуска.
+    }
+  }
+
+  /** Наступил новый день: счётчики с нуля. */
+  private rollDay() {
+    const day = policyDay();
+    if (day !== this.countDay) {
+      this.countDay = day;
+      this.dailyExecutionCount.clear();
+      this.saveCounts();
     }
   }
 
@@ -156,7 +235,7 @@ class PolicyEngine {
       }),
     });
 
-    // Rule 4: Daily execution limits
+    // Rule 4: Daily execution limits (счётчик за сегодня; списывает recordExecution после выполнения)
     this.rules.push({
       id: 'daily_limits',
       name: 'Daily Execution Limits',
@@ -168,7 +247,8 @@ class PolicyEngine {
         return max !== undefined;
       },
       evaluate: (tool) => {
-        const max = this.maxDailyExecutions.get(tool.id) || Infinity;
+        this.rollDay();
+        const max = this.maxDailyExecutions.get(tool.id) ?? Infinity;
         const count = this.dailyExecutionCount.get(tool.id) || 0;
         
         if (count >= max) {
@@ -250,6 +330,7 @@ class PolicyEngine {
     });
   }
 
+  /** Проверка политики. Ничего не списывает: после успешного выполнения вызовите recordExecution(). */
   async evaluate(tool: Tool, context: PolicyContext): Promise<PolicyResult> {
     // Sort rules by priority (highest first)
     const sortedRules = [...this.rules]
@@ -265,12 +346,6 @@ class PolicyEngine {
         // Keep audit log manageable
         if (this.auditLog.length > 1000) {
           this.auditLog.shift();
-        }
-
-        // Track execution count
-        if (result.decision === 'allow') {
-          const count = this.dailyExecutionCount.get(tool.id) || 0;
-          this.dailyExecutionCount.set(tool.id, count + 1);
         }
 
         return result;
@@ -292,6 +367,14 @@ class PolicyEngine {
     };
   }
 
+  /** Действие инструмента выполнено: учесть его в дневном счётчике и сохранить. */
+  recordExecution(toolId: string) {
+    this.rollDay();
+    const count = this.dailyExecutionCount.get(toolId) || 0;
+    this.dailyExecutionCount.set(toolId, count + 1);
+    this.saveCounts();
+  }
+
   // Policy management
   blockTool(toolId: string) {
     this.blockedTools.add(toolId);
@@ -308,7 +391,9 @@ class PolicyEngine {
   }
 
   setDailyLimit(toolId: string, limit: number) {
-    this.maxDailyExecutions.set(toolId, limit);
+    const n = safeCount(limit);
+    if (n === undefined) return;
+    this.maxDailyExecutions.set(toolId, n);
     this.saveToStorage();
   }
 
@@ -317,11 +402,14 @@ class PolicyEngine {
   }
 
   getDailyExecutionCount(toolId: string): number {
+    this.rollDay();
     return this.dailyExecutionCount.get(toolId) || 0;
   }
 
   resetDailyCounts() {
     this.dailyExecutionCount.clear();
+    this.countDay = policyDay();
+    this.saveCounts();
   }
 
   // Audit log
