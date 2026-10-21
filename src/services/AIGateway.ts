@@ -24,6 +24,8 @@
 // Запись ключа асинхронна (в Windows — после окна подтверждения): addProvider/updateProvider/removeProvider возвращают
 // промис, и проверку соединения нужно делать только после него. Если ключ не сохранён («Отмена»),
 // addProvider и updateProvider откатываются: прежние настройки и активный выбор возвращаются.
+// Записи ключей одного провайдера идут строго по очереди (keyQueue), а откатывается только самое свежее изменение
+// (generation): два быстрых нажатия подряд не оставляют старую модель с новым ключом и наоборот.
 // Пустой или странный ответ модели — понятная ошибка (textOrFail), а не пустая реплика Светланы и не TypeError.
 // Каждый запрос из браузера ограничен по времени (fetchAi, 2 минуты), а текст ошибки сервиса проходит через scrubApiError:
 // сам ключ и похожие на ключ строки вырезаются (как ErrorText.kt и scrub_error в приложениях), длина ограничена.
@@ -282,6 +284,10 @@ class AIGateway {
   private providers: Map<string, AIProvider> = new Map();
   private activeProvider: string | null = null;
   private proxyUrl: string | null = null;
+  /** Номер последнего изменения каждого провайдера: откатывается только самое свежее (старое не затирает новое). */
+  private generation = new Map<string, number>();
+  /** Записи ключей одного провайдера идут строго по очереди: хранилище и отметка в интерфейсе не расходятся. */
+  private keyQueue = new Map<string, Promise<unknown>>();
   /** Ключи расшифровываются асинхронно при старте; запросы к ИИ ждут этого. */
   readonly ready: Promise<void>;
 
@@ -296,6 +302,20 @@ class AIGateway {
     }
     // На телефоне локальная модель по умолчанию не выбирается: сначала нужен адрес компьютера.
     this.activeProvider = isAndroidApp() ? null : 'ollama';
+  }
+
+  /** Новое изменение провайдера: его номер. */
+  private nextGeneration(id: string): number {
+    const g = (this.generation.get(id) ?? 0) + 1;
+    this.generation.set(id, g);
+    return g;
+  }
+
+  /** Выполнить запись ключа после предыдущей записи того же провайдера (чем бы она ни закончилась). */
+  private inKeyQueue(id: string, job: () => Promise<unknown>): Promise<void> {
+    const run = (this.keyQueue.get(id) ?? Promise.resolve()).catch(() => undefined).then(job).then(() => undefined);
+    this.keyQueue.set(id, run.catch(() => undefined));
+    return run;
   }
 
   setProxyUrl(url: string | null) {
@@ -379,7 +399,7 @@ class AIGateway {
     }
   }
 
-  /** Записать ключ провайдера. Промис завершается, когда ключ реально записан (или с ошибкой). */
+  /** Записать ключ провайдера. Промис завершается, когда ключ реально записан (или с ошибкой). Записи идут по очереди. */
   private storeKey(p: AIProvider): Promise<void> {
     const name = secretName(p.id);
     if (isNativeApp()) {
@@ -392,14 +412,15 @@ class AIGateway {
       p.apiKey = value ? NATIVE_KEY_PLACEHOLDER : undefined;
       // Браузерную копию стираем фоном; её ошибка не должна становиться необработанным промисом.
       void Promise.resolve(setSecret(name, null)).catch(() => undefined);
-      return nativeSetSecret(name, value).catch(async (e) => {
+      return this.inKeyQueue(p.id, () => nativeSetSecret(name, value)).catch(async (e) => {
         console.error('Не удалось сохранить ключ в хранилище приложения', logText(e));
         // Отметка должна совпадать с хранилищем (например, пользователь нажал «Отмена» в окне подтверждения).
         try { p.apiKey = (await nativeHasSecret(name)) ? NATIVE_KEY_PLACEHOLDER : undefined; } catch { p.apiKey = undefined; }
         throw e;
       });
     }
-    return Promise.resolve(setSecret(name, p.apiKey ?? null)).then(() => undefined);
+    const value = p.apiKey ?? null;
+    return this.inKeyQueue(p.id, () => Promise.resolve(setSecret(name, value)));
   }
 
   /** Свой ИИ: сменить адрес без ключа нельзя — иначе старый ключ ушёл бы на новый сервер (или адрес в интерфейсе разошёлся бы с хранилищем). */
@@ -413,6 +434,7 @@ class AIGateway {
    * Добавить провайдера. Дождитесь промиса перед проверкой соединения: ключ записывается асинхронно.
    * Если ключ не сохранён — откат: новый провайдер удаляется, у существующего возвращаются прежние
    * настройки (отметка ключа — по факту хранилища), активным снова становится прежний.
+   * Если пока ждали, тот же провайдер уже изменили ещё раз, отката нет: новое изменение главнее.
    */
   addProvider(provider: AIProvider): Promise<void> {
     // Понятная ошибка адреса своего ИИ (вместо общей «некорректные настройки»).
@@ -423,6 +445,7 @@ class AIGateway {
     this.guardCustomEndpoint(before, p);
     const prev = before ? { ...before } : undefined;
     const prevActive = this.activeProvider;
+    const gen = this.nextGeneration(p.id);
     this.providers.set(p.id, p);
     if (p.enabled) {
       this.activeProvider = p.id;
@@ -430,6 +453,8 @@ class AIGateway {
     const saved = this.storeKey(p);
     this.saveToStorage();
     return saved.catch((e: unknown) => {
+      // Провайдер уже изменили снова: не затираем более новое изменение старыми настройками.
+      if (this.generation.get(p.id) !== gen) throw e;
       if (prev) this.providers.set(p.id, { ...prev, apiKey: p.apiKey });
       else this.providers.delete(p.id);
       this.activeProvider = prevActive && this.providers.has(prevActive) ? prevActive : null;
@@ -439,9 +464,10 @@ class AIGateway {
   }
 
   removeProvider(id: string): Promise<void> {
+    this.nextGeneration(id);
     this.providers.delete(id);
     const jobs: Promise<unknown>[] = [Promise.resolve(setSecret(secretName(id), null))];
-    if (isNativeApp()) jobs.push(nativeSetSecret(secretName(id), null));
+    if (isNativeApp()) jobs.push(this.inKeyQueue(id, () => nativeSetSecret(secretName(id), null)));
     if (this.activeProvider === id) {
       this.activeProvider = null;
       for (const [pid, p] of this.providers) {
@@ -458,6 +484,7 @@ class AIGateway {
   /**
    * Изменить провайдера. Если новый ключ не сохранён («Отмена» или ошибка хранилища) — откат как в addProvider:
    * прежние настройки и активный выбор возвращаются, иначе старый ключ ушёл бы с новой моделью или адресом.
+   * Откатывается только самое свежее изменение (два быстрых нажатия не оставляют старую модель с новым ключом).
    */
   updateProvider(id: string, updates: Partial<AIProvider>): Promise<void> {
     const provider = this.providers.get(id);
@@ -467,6 +494,7 @@ class AIGateway {
     this.guardCustomEndpoint(provider, next);
     const prev = { ...provider };
     const prevActive = this.activeProvider;
+    const gen = this.nextGeneration(id);
     Object.assign(provider, next);
     if (updates.enabled) {
       this.activeProvider = id;
@@ -475,6 +503,8 @@ class AIGateway {
     const saved = 'apiKey' in updates ? this.storeKey(provider) : Promise.resolve();
     this.saveToStorage();
     return saved.catch((e: unknown) => {
+      // Провайдер уже изменили снова: более новое изменение старыми настройками не затираем.
+      if (this.generation.get(id) !== gen) throw e;
       // В приложении отметка ключа уже сверена с хранилищем (storeKey), на сайте возвращается прежний ключ.
       Object.assign(provider, prev, { apiKey: isNativeApp() ? provider.apiKey : prev.apiKey });
       this.activeProvider = prevActive;
