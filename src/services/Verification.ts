@@ -1,9 +1,16 @@
 // Verification Module - Post-action state verification
+// Проверка строгая (fail-closed):
+// - ожидаемое состояние — подмножество: каждое ожидаемое поле должно совпасть; лишние поля ответа (data, message)
+//   не считаются ошибкой, а только записываются в extras;
+// - любое расхождение = неудача (раньше одно расхождение давало «уверенность 0,9» и успех,
+//   даже если инструмент ответил success: false). Допуск даёт только явный tolerance;
+// - нет ответа (null, не объект), ошибка наблюдения или не найденный элемент экрана — тоже неудача.
 
 export interface VerificationRequest {
   action: string;
   expectedState: any;
   actualState: any;
+  /** Сколько расхождений допустимо (по умолчанию 0: любое расхождение — неудача). */
   tolerance?: number;
   timeout?: number;
 }
@@ -12,6 +19,8 @@ export interface VerificationResult {
   success: boolean;
   confidence: number; // 0-1
   differences: string[];
+  /** Лишние поля в ответе: для журнала, на успех не влияют. */
+  extras?: string[];
   suggestions?: string[];
   timestamp: number;
 }
@@ -31,88 +40,102 @@ export interface UIElement {
   visible?: boolean;
 }
 
+const MAX_DIFFS = 50;
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function confidenceFor(diffs: number): number {
+  return diffs === 0 ? 1 : Math.max(0, 1 - diffs * 0.25);
+}
+
+function allowed(diffs: number, tolerance: unknown): boolean {
+  if (diffs === 0) return true;
+  const t = Number(tolerance);
+  return Number.isInteger(t) && t > 0 && diffs <= t;
+}
+
 class Verification {
   private readonly MAX_RETRIES = 3;
   private verificationHistory: VerificationResult[] = [];
 
-  async verify(request: VerificationRequest): Promise<VerificationResult> {
-    const startTime = Date.now();
-    const differences: string[] = [];
-    let confidence = 1.0;
-
-    // Compare expected vs actual state
-    if (typeof request.expectedState === 'object' && typeof request.actualState === 'object') {
-      const diff = this.deepCompare(request.expectedState, request.actualState);
-      differences.push(...diff);
-      confidence = Math.max(0, 1 - (diff.length * 0.1));
-    } else if (request.expectedState !== request.actualState) {
-      differences.push(`Expected: ${request.expectedState}, Actual: ${request.actualState}`);
-      confidence = 0;
-    }
-
-    // Apply tolerance
-    if (request.tolerance && differences.length <= request.tolerance) {
-      confidence = Math.min(1, confidence + 0.2);
-    }
-
-    const result: VerificationResult = {
-      success: differences.length === 0 || confidence > 0.8,
-      confidence,
-      differences,
-      suggestions: this.generateSuggestions(differences),
-      timestamp: Date.now(),
-    };
-
+  private record(result: VerificationResult): VerificationResult {
     this.verificationHistory.push(result);
     if (this.verificationHistory.length > 100) {
       this.verificationHistory.shift();
     }
-
     return result;
   }
 
-  private deepCompare(expected: any, actual: any, path: string = ''): string[] {
+  async verify(request: VerificationRequest): Promise<VerificationResult> {
     const differences: string[] = [];
+    const extras: string[] = [];
 
-    if (expected === actual) return differences;
-
-    if (typeof expected !== typeof actual) {
-      differences.push(`${path}: Type mismatch - expected ${typeof expected}, got ${typeof actual}`);
-      return differences;
+    if (typeof request.expectedState === 'object' && request.expectedState !== null) {
+      this.deepCompare(request.expectedState, request.actualState, '', differences, extras);
+    } else if (!Object.is(request.expectedState, request.actualState)) {
+      differences.push(`Expected: ${String(request.expectedState)}, Actual: ${String(request.actualState)}`);
     }
 
-    if (Array.isArray(expected) && Array.isArray(actual)) {
+    const result: VerificationResult = {
+      success: allowed(differences.length, request.tolerance),
+      confidence: confidenceFor(differences.length),
+      differences,
+      extras,
+      suggestions: this.generateSuggestions(differences),
+      timestamp: Date.now(),
+    };
+    return this.record(result);
+  }
+
+  /** Сравнение «ожидаемое — подмножество фактического»: расхождения в differences, лишние поля в extras. */
+  private deepCompare(expected: any, actual: any, path: string, differences: string[], extras: string[]): void {
+    if (differences.length >= MAX_DIFFS) return;
+    if (Object.is(expected, actual)) return;
+    const at = path || '(root)';
+
+    if (expected === null || actual === null || actual === undefined || typeof expected !== typeof actual) {
+      differences.push(`${at}: Type mismatch - expected ${expected === null ? 'null' : typeof expected}, got ${actual === null ? 'null' : typeof actual}`);
+      return;
+    }
+
+    if (Array.isArray(expected)) {
+      if (!Array.isArray(actual)) {
+        differences.push(`${at}: Type mismatch - expected array, got object`);
+        return;
+      }
       if (expected.length !== actual.length) {
-        differences.push(`${path}: Array length mismatch - expected ${expected.length}, got ${actual.length}`);
+        differences.push(`${at}: Array length mismatch - expected ${expected.length}, got ${actual.length}`);
       }
       const minLen = Math.min(expected.length, actual.length);
       for (let i = 0; i < minLen; i++) {
-        differences.push(...this.deepCompare(expected[i], actual[i], `${path}[${i}]`));
+        this.deepCompare(expected[i], actual[i], `${path}[${i}]`, differences, extras);
       }
-    } else if (typeof expected === 'object' && expected !== null) {
-      const expectedKeys = Object.keys(expected);
-      const actualKeys = Object.keys(actual);
-
-      // Check for missing keys
-      for (const key of expectedKeys) {
-        if (!(key in actual)) {
-          differences.push(`${path}.${key}: Missing in actual state`);
-        } else {
-          differences.push(...this.deepCompare(expected[key], actual[key], `${path}.${key}`));
-        }
-      }
-
-      // Check for extra keys
-      for (const key of actualKeys) {
-        if (!(key in expected)) {
-          differences.push(`${path}.${key}: Extra key in actual state`);
-        }
-      }
-    } else if (expected !== actual) {
-      differences.push(`${path}: Value mismatch - expected "${expected}", got "${actual}"`);
+      return;
     }
 
-    return differences;
+    if (isPlainObject(expected)) {
+      if (!isPlainObject(actual)) {
+        differences.push(`${at}: Type mismatch - expected object, got array`);
+        return;
+      }
+      for (const key of Object.keys(expected)) {
+        if (!Object.prototype.hasOwnProperty.call(actual, key)) {
+          differences.push(`${path}.${key}: Missing in actual state`);
+        } else {
+          this.deepCompare(expected[key], actual[key], `${path}.${key}`, differences, extras);
+        }
+      }
+      for (const key of Object.keys(actual)) {
+        if (!Object.prototype.hasOwnProperty.call(expected, key) && extras.length < MAX_DIFFS) {
+          extras.push(`${path}.${key}`);
+        }
+      }
+      return;
+    }
+
+    differences.push(`${at}: Value mismatch - expected "${String(expected)}", got "${String(actual)}"`);
   }
 
   private generateSuggestions(differences: string[]): string[] {
@@ -124,12 +147,12 @@ class Verification {
     for (const diff of differences) {
       if (diff.includes('Missing')) {
         suggestions.push('Element may not have loaded yet. Wait and retry.');
-      } else if (diff.includes('Extra')) {
-        suggestions.push('Unexpected element appeared. Check for popups or dialogs.');
       } else if (diff.includes('Value mismatch')) {
         suggestions.push('State changed differently than expected. Re-observe and re-plan.');
       } else if (diff.includes('Type mismatch')) {
         suggestions.push('Data structure changed. Re-ground to correct element.');
+      } else if (diff.includes('Observation failed')) {
+        suggestions.push('Could not observe the result. Check the screen manually.');
       }
     }
 
@@ -137,16 +160,34 @@ class Verification {
     return [...new Set(suggestions)];
   }
 
+  /** Наблюдение с ошибкой — неудача проверки, а не исключение наружу. */
+  private async observeAndVerify(request: VerificationRequest, observeFn: () => Promise<any>): Promise<VerificationResult> {
+    let actualState: any;
+    try {
+      actualState = await observeFn();
+    } catch {
+      return this.record({
+        success: false,
+        confidence: 0,
+        differences: ['Observation failed'],
+        extras: [],
+        suggestions: this.generateSuggestions(['Observation failed']),
+        timestamp: Date.now(),
+      });
+    }
+    return this.verify({ ...request, actualState });
+  }
+
   async verifyWithRetry(
     request: VerificationRequest,
     observeFn: () => Promise<any>,
     maxRetries: number = this.MAX_RETRIES
   ): Promise<{ result: VerificationResult; retries: number }> {
+    const limit = Number.isInteger(maxRetries) ? Math.min(10, Math.max(0, maxRetries)) : this.MAX_RETRIES;
     let retries = 0;
 
-    while (retries < maxRetries) {
-      const actualState = await observeFn();
-      const result = await this.verify({ ...request, actualState });
+    while (retries < limit) {
+      const result = await this.observeAndVerify(request, observeFn);
 
       if (result.success) {
         return { result, retries };
@@ -159,61 +200,54 @@ class Verification {
     }
 
     // Final attempt
-    const actualState = await observeFn();
-    const result = await this.verify({ ...request, actualState });
+    const result = await this.observeAndVerify(request, observeFn);
     return { result, retries };
   }
 
-  // Screen state verification
+  // Screen state verification: любое несовпадение (текст не найден, элемента нет, он скрыт) — неудача.
   async verifyScreenState(expected: ScreenState, actual: ScreenState): Promise<VerificationResult> {
     const differences: string[] = [];
-    let confidence = 1.0;
+    const expectedElements = Array.isArray(expected?.elements) ? expected.elements : [];
+    const actualElements = Array.isArray(actual?.elements) ? actual.elements : [];
+
+    if (!actual || typeof actual !== 'object') {
+      differences.push('Observation failed');
+    }
 
     // Compare text content
-    if (expected.text && actual.text) {
-      if (!actual.text.includes(expected.text)) {
+    if (expected?.text) {
+      if (typeof actual?.text !== 'string' || !actual.text.includes(expected.text)) {
         differences.push(`Expected text "${expected.text}" not found in screen`);
-        confidence -= 0.3;
       }
     }
 
     // Compare elements
-    for (const expectedElement of expected.elements) {
-      const matchingElement = actual.elements.find(e => e.id === expectedElement.id);
+    for (const expectedElement of expectedElements) {
+      const matchingElement = actualElements.find(e => e.id === expectedElement.id);
       
       if (!matchingElement) {
         differences.push(`Element ${expectedElement.id} not found`);
-        confidence -= 0.2;
       } else {
-        // Check if element is visible
         if (expectedElement.visible && !matchingElement.visible) {
           differences.push(`Element ${expectedElement.id} is not visible`);
-          confidence -= 0.2;
         }
-
-        // Check if element is clickable
         if (expectedElement.clickable && !matchingElement.clickable) {
           differences.push(`Element ${expectedElement.id} is not clickable`);
-          confidence -= 0.1;
         }
-
-        // Check text content
         if (expectedElement.text && matchingElement.text !== expectedElement.text) {
           differences.push(`Element ${expectedElement.id} text mismatch`);
-          confidence -= 0.1;
         }
       }
     }
 
-    confidence = Math.max(0, confidence);
-
-    return {
-      success: differences.length === 0 || confidence > 0.7,
-      confidence,
+    return this.record({
+      success: differences.length === 0,
+      confidence: confidenceFor(differences.length),
       differences,
+      extras: [],
       suggestions: this.generateSuggestions(differences),
       timestamp: Date.now(),
-    };
+    });
   }
 
   // Get verification history
