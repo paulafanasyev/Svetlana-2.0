@@ -171,6 +171,8 @@ class Bridge(private val act: MainActivity) {
                     finish(false, "Приложение закрывается")
                 }
             }
+            // Остановить загрузку модели: соединение рвётся, недокачанный файл удаляется (как local_stt_cancel в Windows).
+            "local_stt_cancel" -> done(true, LocalStt.cancelInstall())
             "local_stt_remove" -> {
                 // Не удаляем модель, пока она скачивается.
                 if (installBusy.get()) done(false, INSTALL_BUSY)
@@ -248,5 +250,8 @@ class Bridge(private val act: MainActivity) {
         pool.shutdownNow()
         // Идущая загрузка дойдёт до конца сама (поток фоновый), новые не принимаются.
         installer.shutdown()
+        // Модель речи (около 225 МБ) не держим в памяти после закрытия экрана. В фоновом потоке:
+        // если как раз идёт распознавание, главный поток его не ждёт.
+        Thread { LocalStt.release() }.apply { isDaemon = true }.start()
     }
 }
