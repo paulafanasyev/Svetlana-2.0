@@ -13,6 +13,7 @@
 // покажется снова); считать настройку законченной без ИИ можно только явной кнопкой «Пока пропустить».
 // Клавиатура: фокус сразу в поле ключа, Tab не уходит за пределы окна, после закрытия фокус возвращается назад.
 // Пока мастер открыт, остальная страница inert: чтение экрана и мышь не уходят на фон.
+// Ошибки показываются по-русски и без сырого текста сервера (explainAiError).
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Key, HardDrive, Loader2, CheckCircle2, AlertCircle, X, Sparkles, Gift } from 'lucide-react';
 import { aiGateway, GIGACHAT_WEB_ONLY } from '../services/AIGateway';
@@ -49,13 +50,13 @@ export function explainServerError(raw: string): string {
   if (/\b(429)\b/.test(raw)) return 'Сервер просит подождать: слишком много запросов. Попробуй через минуту.';
   if (/\b(5\d\d)\b/.test(raw)) return `Сервер Светланы сейчас не отвечает (${raw.match(/\b5\d\d\b/)?.[0]}). Попробуй позже.`;
   if (/error sending request|dns|connect|Failed to fetch|NetworkError/i.test(raw)) return 'Нет связи с сервером Светланы. Проверь интернет.';
-  return raw;
+  return explainAiError(raw);
 }
 
 /** Ошибка на шаге сохранения ключа (до пробного запроса). */
 export function explainKeySaveError(raw: string): string {
   if (/Отменено пользователем/.test(raw)) return 'Ключ не сохранён: в окне подтверждения нажата «Отмена». Нажми «Подключить» ещё раз и подтверди сохранение.';
-  return `Ключ не сохранён: ${raw}`;
+  return `Ключ не сохранён: ${explainAiError(raw)}`;
 }
 
 /**
