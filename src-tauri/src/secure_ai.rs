@@ -9,6 +9,11 @@
 //! GigaChat и повтор с новым токеном. Так нативная часть не продолжает запрос, когда страница
 //! уже перестала ждать (страница ждёт 180 секунд вместе с окном подтверждения).
 //!
+//! «Поколение ключей» (KEY_GEN, как generation в SecureAi.kt): растёт при каждом изменении или
+//! удалении ключа (в том числе при «Удалить все данные»). Запрос, начатый до этого, проверяет
+//! поколение после окна подтверждения, после чтения ключа и перед каждой отправкой и больше
+//! ничего не отправляет и не запоминает (ни разрешение, ни токен GigaChat), а его ответ не доходит до страницы.
+//!
 //! «svetlana» — единая Светлана на своём сервере (мир-самозанятых.рф), полный режим Svetlana 2.0.
 //! Ключ — ASSISTANT_KEY_SVETLANA2 с сервера, адрес фиксирован (SVETLANA_CORE), тело { message, history, system }.
 //!
@@ -82,6 +87,8 @@ const TOO_BIG_RESPONSE: &str = "Ответ слишком большой";
 /// Меньше, чем страница ждёт ответ (180 секунд): нативная часть заканчивает раньше страницы.
 const NET_BUDGET: Duration = Duration::from_secs(150);
 const NET_TIMEOUT: &str = "Нейросеть не ответила вовремя, запрос остановлен. Попробуйте ещё раз.";
+/// Ключ изменили или удалили, пока запрос ждал: он ничего не отправит (как WIPED в SecureAi.kt).
+const KEY_CHANGED: &str = "Ключи изменены или удалены: запрос остановлен";
 /// Чем заменяется ключ (и похожее на ключ) в тексте ошибки сервиса.
 const KEY_HIDDEN: &str = "[ключ скрыт]";
 /// Сколько символов ошибки сервиса доходит до страницы.
@@ -116,6 +123,25 @@ static CONSENTS: Mutex<Vec<Consent>> = Mutex::new(Vec::new());
 static ISSUED: Mutex<VecDeque<Issued>> = Mutex::new(VecDeque::new());
 static GIGA_TOKEN: Mutex<Option<GigaToken>> = Mutex::new(None);
 static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+/// Поколение ключей: растёт при каждом изменении или удалении ключа.
+static KEY_GEN: AtomicU64 = AtomicU64::new(0);
+
+fn key_gen() -> u64 {
+    KEY_GEN.load(Ordering::SeqCst)
+}
+
+fn bump_key_gen() {
+    KEY_GEN.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Запрос ещё из текущего поколения ключей? Иначе — остановка без отправки.
+fn still_current(gen: u64) -> Result<(), String> {
+    if key_gen() == gen {
+        Ok(())
+    } else {
+        Err(KEY_CHANGED.into())
+    }
+}
 
 fn rate_ok(m: &Mutex<VecDeque<Instant>>, max: usize) -> bool {
     let mut q = m.lock().unwrap_or_else(|e| e.into_inner());
@@ -359,8 +385,12 @@ fn giga_cached(hash: &[u8; 32]) -> Option<String> {
     cached_giga_token(&slot, hash, Instant::now())
 }
 
-fn giga_store(hash: [u8; 32], token: String) {
-    *GIGA_TOKEN.lock().unwrap_or_else(|e| e.into_inner()) = Some(GigaToken { key_hash: hash, token, at: Instant::now() });
+/// Запомнить токен, только если ключи не менялись, пока его получали (проверка под замком токена).
+fn giga_store(hash: [u8; 32], token: String, gen: u64) -> Result<(), String> {
+    let mut slot = GIGA_TOKEN.lock().unwrap_or_else(|e| e.into_inner());
+    still_current(gen)?;
+    *slot = Some(GigaToken { key_hash: hash, token, at: Instant::now() });
+    Ok(())
 }
 
 fn forget_giga_token() {
@@ -388,11 +418,12 @@ fn gigachat_client() -> Result<reqwest::Client, String> {
         .map_err(|e| e.to_string())
 }
 
-async fn gigachat_token(client: &reqwest::Client, key: &str, deadline: Instant) -> Result<String, String> {
+async fn gigachat_token(client: &reqwest::Client, key: &str, deadline: Instant, gen: u64) -> Result<String, String> {
     let hash = key_hash(key);
     if let Some(t) = giga_cached(&hash) {
         return Ok(t);
     }
+    still_current(gen)?;
     let response = client
         .post(GIGACHAT_OAUTH)
         .timeout(time_left(deadline, Instant::now())?)
@@ -411,19 +442,20 @@ async fn gigachat_token(client: &reqwest::Client, key: &str, deadline: Instant) 
         _ => {}
     }
     let token = parse_giga_token(&text).ok_or("GigaChat: в ответе нет токена")?;
-    giga_store(hash, token.clone());
+    giga_store(hash, token.clone(), gen)?;
     Ok(token)
 }
 
 /// Запрос к GigaChat. Если токен устарел раньше срока (401) — один повтор с новым токеном.
-/// Все шаги (вход, запрос, повтор) укладываются в один общий предел времени.
-async fn gigachat_chat(key: &str, body_text: String, deadline: Instant) -> Result<String, String> {
+/// Все шаги (вход, запрос, повтор) укладываются в один общий предел времени и не идут после смены ключей.
+async fn gigachat_chat(key: &str, body_text: String, deadline: Instant, gen: u64) -> Result<String, String> {
     if !valid_gigachat_key(key) {
         return Err(GIGACHAT_BAD_KEY.into());
     }
     let client = gigachat_client()?;
     for attempt in 0..2 {
-        let token = gigachat_token(&client, key, deadline).await?;
+        let token = gigachat_token(&client, key, deadline, gen).await?;
+        still_current(gen)?;
         let response = client
             .post(GIGACHAT_CHAT)
             .timeout(time_left(deadline, Instant::now())?)
@@ -435,6 +467,7 @@ async fn gigachat_chat(key: &str, body_text: String, deadline: Instant) -> Resul
             .await
             .map_err(net_error)?;
         let (status, text) = read_limited(response, MAX_RESPONSE).await?;
+        still_current(gen)?;
         match status.as_u16() {
             401 if attempt == 0 => {
                 forget_giga_token();
@@ -467,6 +500,8 @@ pub async fn secret_set(app: AppHandle, name: String, value: Option<String>) -> 
         return Err("Слишком частое изменение ключей, подождите минуту".into());
     }
     revoke_consents(provider);
+    // Запросы, начатые до этой черты, больше ничего не отправят.
+    bump_key_gen();
     if provider == "gigachat" {
         forget_giga_token();
     }
@@ -485,6 +520,8 @@ pub async fn secret_set(app: AppHandle, name: String, value: Option<String>) -> 
             Err(err) => Err(err.to_string()),
         },
     };
+    // И ещё раз после записи: запрос, начатый, пока было открыто окно, старый ключ тоже не отправит.
+    bump_key_gen();
     if provider == "gigachat" {
         forget_giga_token();
     }
@@ -657,6 +694,8 @@ fn validate_body(provider: &str, model: &str, body: &Value) -> Result<(), String
 
 #[tauri::command]
 pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conversation: String, body: Value) -> Result<String, String> {
+    // Поколение ключей на момент начала: если ключ поменяют или удалят, этот запрос ничего не отправит.
+    let gen = key_gen();
     let provider_id = PROVIDERS.iter().copied().find(|p| *p == provider).ok_or("Этот облачный сервис не поддерживается")?;
     // Размер — до разбора схемы: огромное тело не должно проходить рекурсивную проверку и подсчёт символов.
     let body_text = serde_json::to_string(&body).map_err(|e| e.to_string())?;
@@ -679,7 +718,10 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conv
         if !confirm(&app, question).await {
             return Err("Отменено пользователем".into());
         }
-        CONSENTS.lock().unwrap_or_else(|e| e.into_inner()).push(Consent {
+        // Пока окно было открыто, ключ сменили или удалили: разрешение не запоминаем, ничего не шлём.
+        let mut consents = CONSENTS.lock().unwrap_or_else(|e| e.into_inner());
+        still_current(gen)?;
+        consents.push(Consent {
             provider: provider_id.to_string(),
             model: model.clone(),
             conversation: conversation.clone(),
@@ -692,10 +734,11 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conv
         Err(keyring::Error::NoEntry) => return Err("API-ключ не задан".into()),
         Err(err) => return Err(err.to_string()),
     };
+    still_current(gen)?;
     // С этого момента идёт сеть: весь обмен укладывается в один предел времени.
     let deadline = Instant::now() + NET_BUDGET;
     if provider_id == "gigachat" {
-        return gigachat_chat(&key, body_text, deadline).await;
+        return gigachat_chat(&key, body_text, deadline, gen).await;
     }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
@@ -720,6 +763,7 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conv
         "svetlana" => client.post(SVETLANA_CORE).bearer_auth(&key),
         _ => return Err("Этот облачный сервис не поддерживается".into()),
     };
+    still_current(gen)?;
     let response = request
         .timeout(time_left(deadline, Instant::now())?)
         .header("Content-Type", "application/json")
@@ -728,6 +772,8 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conv
         .await
         .map_err(net_error)?;
     let (status, text) = read_limited(response, MAX_RESPONSE).await?;
+    // Ответ на запрос со старым ключом до страницы уже не доходит.
+    still_current(gen)?;
     http_result(status, text, &[key.as_str()])
 }
 
@@ -738,6 +784,17 @@ mod tests {
 
     fn consent(p: &str, m: &str, conv: &str, at: Instant) -> Consent {
         Consent { provider: p.to_string(), model: m.to_string(), conversation: conv.to_string(), at, uses: 1 }
+    }
+
+    #[test]
+    fn key_change_stops_started_requests() {
+        let gen = key_gen();
+        assert_eq!(still_current(gen), Ok(()));
+        bump_key_gen();
+        assert_eq!(still_current(gen), Err(KEY_CHANGED.to_string()));
+        assert_eq!(still_current(key_gen()), Ok(()));
+        // Токен GigaChat из устаревшего поколения не запоминается.
+        assert_eq!(giga_store(key_hash("key-gen-test-aaaaaaaa"), "t".into(), gen), Err(KEY_CHANGED.to_string()));
     }
 
     #[test]
