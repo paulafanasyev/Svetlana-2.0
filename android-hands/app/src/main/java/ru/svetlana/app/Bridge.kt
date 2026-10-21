@@ -14,6 +14,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * (contacts_list), домашняя сеть по http (lan_http: Ollama/LM Studio на компьютере и Svetlana-home) и полное
  * удаление ключей (secret_wipe_all). Любая другая команда отклоняется.
  *
+ * Микрофон распознавания телефона (voice_listen) включается, как и буфер обмена, только сразу после настоящего
+ * нажатия: скрипт сам по себе не может тихо послушать комнату.
+ *
  * Сообщения принимаются только из главного окна своего адреса (проверка в MainActivity), размер — до
  * разбора JSON. Ключи, облако, руки, контакты, скачивание модели и первая отправка данных на новое
  * устройство домашней сети всегда спрашивают человека в нативном окне; файл сохраняется только туда,
@@ -27,6 +30,7 @@ class Bridge(private val act: MainActivity) {
         private const val MAX_CLIP_CHARS = 100_000
         private val SAVE_MIMES = setOf("text/csv", "application/json", "text/html", "text/calendar", "text/plain")
         const val INSTALL_BUSY = "Модель речи уже скачивается, дождитесь окончания"
+        const val LISTEN_TAP = "Слушать можно только по нажатию на микрофон"
 
         /** Имя файла без путей, управляющих и служебных символов. */
         fun safeFileName(raw: String): String {
@@ -186,7 +190,8 @@ class Bridge(private val act: MainActivity) {
                     act::confirm,
                 )
             }
-            "voice_listen" -> voice.listen(done)
+            // Микрофон: одно нажатие на кнопку — одна фраза. Без нажатия скрипт микрофон не включит.
+            "voice_listen" -> if (!act.touchedRecently()) done(false, LISTEN_TAP) else voice.listen(done)
             "voice_stop" -> { voice.stopListening(); done(true, null) }
             "tts_speak" -> voice.speak(args.optString("text"), done)
             "tts_stop" -> { voice.stopSpeaking(); done(true, null) }
