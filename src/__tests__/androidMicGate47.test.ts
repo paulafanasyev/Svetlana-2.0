@@ -1,5 +1,5 @@
 // Android: микрофон страницы (WebView getUserMedia) не включается в фоне, а первый раз за запуск только по нажатию.
-// Ушли с экрана: распознавание телефона прерывается, старое нажатие не действует.
+// Ушли с экрана: распознавание телефона отменяется без результата, старое нажатие не действует.
 import { describe, it, expect } from 'vitest';
 // @ts-ignore — node-модули доступны в тестах (environment: node)
 import { readFileSync } from 'node:fs';
@@ -24,8 +24,8 @@ describe('page microphone on the phone', () => {
 });
 
 describe('leaving the screen', () => {
-  it('stops phone listening and forgets the last tap', () => {
+  it('cancels phone listening without a result and forgets the last tap', () => {
     expect(main).toMatch(/override fun onPause\(\) \{\s*resumed = false[\s\S]*?lastTouchAt = 0L\s*bridge\?\.pause\(\)/);
-    expect(bridge).toMatch(/fun pause\(\) \{\s*runCatching \{ voice\.stopListening\(\) \}/);
+    expect(bridge).toMatch(/fun pause\(\) \{\s*runCatching \{ voice\.cancelListening\(\) \}/);
   });
 });
