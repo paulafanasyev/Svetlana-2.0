@@ -1,13 +1,15 @@
 // Запись голоса владельца: 3 фразы по 4 секунды. Только после этого включаются голосовые команды.
-// В приложениях для Windows и Android здесь же ставится модель распознавания речи на устройстве (GigaAM-v3).
+// В приложениях для Windows и Android здесь же ставится модель распознавания речи на устройстве (GigaAM-v3);
+// её загрузку можно остановить.
 // Результат проверки — простыми словами (без чисел «отличие/порог»), сообщения зачитываются диктором (role=status),
 // удаление записи голоса подтверждается в окне Светланы (askConfirm).
 import { useEffect, useState } from 'react';
-import { Mic, Trash2, Download, Cpu } from 'lucide-react';
+import { Mic, Trash2, Download, Cpu, X } from 'lucide-react';
 import { recordPrint } from '../services/voice/VoiceGuard';
 import { buildTemplate, saveTemplate, loadTemplate, deleteTemplate, verifyPrint, MIN_ENROLL_SAMPLES, type VoicePrint } from '../services/voice/VoicePrint';
-import { localSttAvailable, localSttInstall, localSttRemove, localSttStatus, type LocalSttStatus } from '../services/voice/LocalStt';
+import { localSttAvailable, localSttCancelInstall, localSttInstall, localSttRemove, localSttStatus, type LocalSttStatus } from '../services/voice/LocalStt';
 import { isAndroidApp } from '../platform';
+import { safeErrorText } from '../services/safeErrorText';
 import { askConfirm } from './ConfirmDialog';
 
 const PHRASES = [
@@ -15,6 +17,7 @@ const PHRASES = [
   'Сколько налога мне нужно заплатить в этом квартале и когда срок?',
   'Запиши Иванову на стрижку в пятницу в пятнадцать тридцать.',
 ];
+const MIC_ERROR = 'Нет доступа к микрофону';
 
 export default function VoiceEnroll() {
   const [enrolled, setEnrolled] = useState(() => !!loadTemplate());
@@ -33,7 +36,7 @@ export default function VoiceEnroll() {
         setPrints([]); setEnrolled(true);
         setMsg('Голос записан. Теперь Светлана выполняет голосовые команды только от вас.');
       } else setPrints(next);
-    } catch (e: any) { setMsg(e?.message || 'Нет доступа к микрофону'); } finally { setBusy(false); }
+    } catch (e) { setMsg(safeErrorText(e, MIC_ERROR)); } finally { setBusy(false); }
   };
 
   const check = async () => {
@@ -42,7 +45,7 @@ export default function VoiceEnroll() {
     try {
       const r = verifyPrint(await recordPrint(4), t);
       setMsg(r.ok ? 'Голос узнан: это вы.' : `Голос не узнан. ${r.reason}`);
-    } catch (e: any) { setMsg(e?.message || 'Нет доступа к микрофону'); } finally { setBusy(false); }
+    } catch (e) { setMsg(safeErrorText(e, MIC_ERROR)); } finally { setBusy(false); }
   };
 
   const remove = async () => {
@@ -77,6 +80,7 @@ export default function VoiceEnroll() {
 function LocalSttCard() {
   const [status, setStatus] = useState<LocalSttStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const android = isAndroidApp();
 
@@ -90,7 +94,13 @@ function LocalSttCard() {
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true); setErr(null);
-    try { await fn(); } catch (e: any) { setErr(String(e?.message ?? e ?? 'Ошибка')); } finally { setBusy(false); }
+    try { await fn(); } catch (e) { setErr(safeErrorText(e, 'Не получилось. Попробуйте ещё раз.')); } finally { setBusy(false); setStopping(false); }
+  };
+
+  // Остановка не ждёт конца загрузки: кнопка работает, пока идёт скачивание.
+  const stop = async () => {
+    setStopping(true);
+    try { await localSttCancelInstall(); } catch (e) { setErr(safeErrorText(e, 'Не удалось остановить загрузку')); setStopping(false); }
   };
 
   if (!status) return null;
@@ -108,6 +118,7 @@ function LocalSttCard() {
         <div className="space-y-1">
           <div className="h-1.5 rounded bg-white/10 overflow-hidden" role="progressbar" aria-label="Загрузка модели речи" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}><div className="h-full bg-indigo-500" style={{ width: `${pct}%` }} /></div>
           <p className="text-[11px] text-slate-400">Скачиваю… {Math.round(status.downloaded / 1048576)} МБ{status.total ? ` из ${Math.round(status.total / 1048576)} МБ` : ''}</p>
+          <button disabled={stopping} onClick={() => { void stop(); }} aria-busy={stopping} className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-50 text-xs inline-flex items-center gap-1.5"><X className="w-3.5 h-3.5" aria-hidden="true" />{stopping ? 'Останавливаю…' : 'Остановить загрузку'}</button>
         </div>
       )}
       {!status.downloading && !status.installed && (
