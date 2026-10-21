@@ -3,7 +3,11 @@
 // для команд на телефоне: текст распознаётся из той же записи, по которой сверяется голос, и запись никуда
 // не отправляется. Модель скачивается только после подтверждения в нативном окне и проверяется по SHA-256;
 // загрузку можно остановить (local_stt_cancel). На сайте модели нет.
+// Распознавание ждём не больше LOCAL_STT_TIMEOUT_MS: если нативная часть не ответила, кнопка микрофона не зависает
+// в «распознаю». Запись с нечисловыми отсчётами (NaN, бесконечность) отклоняется до отправки на обеих
+// платформах (в Windows так же делает local_stt.rs).
 import { isAndroidApp, isWindowsApp } from '../../platform';
+import { withDeadline } from '../security/NativeBridge';
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
@@ -15,6 +19,11 @@ export interface LocalSttStatus {
   error: string | null;
   sizeMb: number;
 }
+
+/** Сколько ждать распознавания одной записи (до 15 секунд речи). */
+export const LOCAL_STT_TIMEOUT_MS = 30_000;
+export const LOCAL_STT_TIMEOUT_TEXT = 'Распознавание на устройстве не ответило. Попробуйте сказать ещё раз.';
+export const LOCAL_STT_BAD_AUDIO = 'Запись повреждена, попробуйте сказать ещё раз.';
 
 const nativeApp = (): boolean => isWindowsApp() || isAndroidApp();
 
@@ -100,24 +109,32 @@ export function pcm16Base64(pcm: Float32Array): string {
   return btoa(s);
 }
 
+/** Все отсчёты — конечные числа (как проверяет local_stt.rs в Windows). */
+export function finitePcm(pcm: Float32Array): boolean {
+  for (let i = 0; i < pcm.length; i++) if (!Number.isFinite(pcm[i])) return false;
+  return true;
+}
+
 /** Как в нативной части (LocalStt.kt): не длиннее 15 секунд. */
 export const MAX_SECONDS = 15;
 /** Частота, до которой запись уходит как есть (ресемплинг делает нативная часть, как в Windows); 15 с при 48 кГц — около 2 МБ. */
 const MAX_DIRECT_RATE = 48_000;
 
-/** Распознать запись (моно, -1..1). */
-export async function localTranscribe(pcm: Float32Array, sampleRate: number): Promise<string> {
+/** Распознать запись (моно, -1..1). Не дольше timeoutMs: иначе ошибка LOCAL_STT_TIMEOUT_TEXT. */
+export async function localTranscribe(pcm: Float32Array, sampleRate: number, timeoutMs = LOCAL_STT_TIMEOUT_MS): Promise<string> {
   const inv = need();
-  let text: unknown;
+  if (!finitePcm(pcm)) throw new Error(LOCAL_STT_BAD_AUDIO);
+  let call: Promise<unknown>;
   if (isAndroidApp()) {
     const rate = Math.round(sampleRate);
     const r = rate > MAX_DIRECT_RATE ? to16k(pcm, rate) : { pcm, sampleRate: rate };
     const max = r.sampleRate * MAX_SECONDS;
     const clip = r.pcm.length > max ? r.pcm.subarray(r.pcm.length - max) : r.pcm;
-    text = await inv('local_stt_transcribe', { pcm16: pcm16Base64(clip), sampleRate: r.sampleRate });
+    call = inv('local_stt_transcribe', { pcm16: pcm16Base64(clip), sampleRate: r.sampleRate });
   } else {
-    text = await inv('local_stt_transcribe', { pcm: Array.from(pcm), sampleRate: Math.round(sampleRate) });
+    call = inv('local_stt_transcribe', { pcm: Array.from(pcm), sampleRate: Math.round(sampleRate) });
   }
+  const text = await withDeadline(call, timeoutMs, LOCAL_STT_TIMEOUT_TEXT);
   return typeof text === 'string' ? text.slice(0, 500) : '';
 }
 
