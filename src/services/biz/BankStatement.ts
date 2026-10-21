@@ -1,4 +1,7 @@
 // Импорт банковской выписки в формате 1С (1CClientBankExchange) — его выгружают почти все банки.
+// Надёжность: отметка «строка уже внесена» сохраняется после КАЖДОЙ строки. Если строку записать или
+// отметить не удалось (нет места), строка откатывается, импорт останавливается с понятной ошибкой,
+// а повторная загрузка той же выписки продолжает с невнесённых строк и ничего не задваивает.
 import { safeJsonParse, MAX_BYTES } from '../security/SafeData';
 import type { KeyValueStorage } from '../crm/CRMStore';
 import { bizStore, BizStore, type PayerType } from './BizStore';
@@ -31,6 +34,11 @@ export interface StatementImportReport {
 }
 
 const IMPORTED_KEY = 'svetlana_bank_imported_v1';
+
+/** Импорт остановлен на строке, которую не удалось сохранить: сколько уже внесено и что делать. */
+export function statementStoppedText(done: number, total: number): string {
+  return `Выписка загружена не полностью: внесено строк ${done} из ${total}, дальше сохранить не удалось (нет места или хранилище недоступно). Сделайте резервную копию и загрузите ту же выписку ещё раз: внесённые строки не задвоятся.`;
+}
 
 function parseRuDate(v: string | undefined): number | undefined {
   const m = v?.trim().match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
@@ -102,7 +110,8 @@ function defaultStorage(): KeyValueStorage | null {
 
 /**
  * Разносит выписку: поступления → доходы, списания → расходы. Оплаты, где в назначении есть «счёт № N»
- * и сумма совпадает с открытым счётом, закрывают этот счёт. Повторный импорт той же выписки не дублирует записи.
+ * и сумма совпадает с открытым счётом, закрывают этот счёт. Повторный импорт той же выписки не дублирует записи,
+ * даже если прошлый импорт оборвался на середине.
  */
 export function importStatement(parsed: ParsedStatement, opts: { store?: BizStore; storage?: KeyValueStorage | null; ownAccount?: string } = {}): StatementImportReport {
   const store = opts.store ?? bizStore;
@@ -111,6 +120,12 @@ export function importStatement(parsed: ParsedStatement, opts: { store?: BizStor
   if (!own) throw new Error('Не понятно, какой счёт ваш: в выписке нет поля РасчСчет. Укажите расчётный счёт в профиле.');
   const imported = loadImported(storage);
   const report: StatementImportReport = { incomes: 0, expenses: 0, invoicesPaid: 0, duplicates: 0, skipped: 0, total: parsed.docs.length };
+  /** Сохранить отметки «внесено». Без хранилища (тесты, приватный режим) считаем успехом. */
+  const saveMarks = (): boolean => {
+    if (!storage) return true;
+    try { storage.setItem(IMPORTED_KEY, JSON.stringify([...imported])); return true; } catch { return false; }
+  };
+  let done = 0;
 
   for (const d of parsed.docs) {
     const incoming = d.payeeAccount === own && d.payerAccount !== own;
@@ -120,24 +135,41 @@ export function importStatement(parsed: ParsedStatement, opts: { store?: BizStor
     const key = [own, d.number, d.date ?? '', d.amount.toFixed(2), incoming ? d.payerInn : d.payeeInn, incoming ? 'in' : 'out'].join('|');
     if (imported.has(key)) { report.duplicates++; continue; }
 
-    if (incoming) {
-      const name = cleanName(d.payerName);
-      const payerType = payerTypeOf(name, d.payerInn);
-      const invNo = d.purpose.match(/сч[её]т[ауе]?\s*(?:на оплату\s*)?(?:№|N|#)?\s*(\d+)/i)?.[1];
-      const invoice = invNo ? store.receivables().map(r => r.document).find(x => x.number === invNo && Math.abs(x.total - d.amount) < 0.01) : undefined;
-      if (invoice) {
-        store.markPaid(invoice.id, { date, payerType, payMethod: 'transfer' });
-        report.invoicesPaid++;
+    // Запись строки. Ошибка хранилища останавливает импорт: уже внесённые строки отмечены и не задвоятся.
+    let entryId: string;
+    let kind: 'income' | 'expense' | 'invoice';
+    try {
+      if (incoming) {
+        const name = cleanName(d.payerName);
+        const payerType = payerTypeOf(name, d.payerInn);
+        const invNo = d.purpose.match(/сч[её]т[ауе]?\s*(?:на оплату\s*)?(?:№|N|#)?\s*(\d+)/i)?.[1];
+        const invoice = invNo ? store.receivables().map(r => r.document).find(x => x.number === invNo && Math.abs(x.total - d.amount) < 0.01) : undefined;
+        if (invoice) {
+          entryId = store.markPaid(invoice.id, { date, payerType, payMethod: 'transfer' }).entry.id;
+          kind = 'invoice';
+        } else {
+          entryId = store.addEntry({ kind: 'income', amount: d.amount, description: d.purpose || 'Поступление на счёт', date, payerType, counterparty: name || undefined, category: 'bank', payMethod: 'transfer' }).id;
+          kind = 'income';
+        }
       } else {
-        store.addEntry({ kind: 'income', amount: d.amount, description: d.purpose || 'Поступление на счёт', date, payerType, counterparty: name || undefined, category: 'bank', payMethod: 'transfer' });
+        entryId = store.addEntry({ kind: 'expense', amount: d.amount, description: d.purpose || 'Списание со счёта', date, counterparty: cleanName(d.payeeName) || undefined, category: 'bank' }).id;
+        kind = 'expense';
       }
-      report.incomes++;
-    } else {
-      store.addEntry({ kind: 'expense', amount: d.amount, description: d.purpose || 'Списание со счёта', date, counterparty: cleanName(d.payeeName) || undefined, category: 'bank' });
-      report.expenses++;
+    } catch {
+      throw new Error(statementStoppedText(done, report.total));
     }
+
     imported.add(key);
+    if (!saveMarks()) {
+      // Отметку не сохранить: убираем и саму строку (счёт вернётся в «не оплачен»), иначе повтор её задвоит.
+      imported.delete(key);
+      try { store.deleteEntry(entryId); } catch { /* книга тоже не сохраняется: сообщение ниже */ }
+      throw new Error(statementStoppedText(done, report.total));
+    }
+    done++;
+    if (kind === 'invoice') { report.invoicesPaid++; report.incomes++; }
+    else if (kind === 'income') report.incomes++;
+    else report.expenses++;
   }
-  storage?.setItem(IMPORTED_KEY, JSON.stringify([...imported]));
   return report;
 }
