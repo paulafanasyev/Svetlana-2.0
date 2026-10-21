@@ -3,6 +3,8 @@
 // (иначе запись «есть» до перезапуска и молча пропадает после него).
 // Статус меняется только по правилам (canSetStatus): состоявшийся визит с доходом не отменить и не перенести,
 // отменённый не «завершить»: иначе книга доходов и записи описывают разное.
+// Данные с диска и от ИИ проверяются: шаг сетки, время ЧЧ:ММ, длительность 5–720 минут, цена не отрицательная
+// (иначе нулевой шаг вешал страницу, а запись с отрицательной длительностью ломала сетку и выручку).
 import { safeJsonParse, stripControl, MAX_BYTES } from '../security/SafeData';
 import type { KeyValueStorage } from '../crm/CRMStore';
 
@@ -40,6 +42,8 @@ export const WEEKDAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', '
 export const BOOKING_SAVE_FAILED = 'Не удалось сохранить запись: память устройства переполнена или недоступна. Изменение отменено.';
 export const BOOKING_DONE_LOCKED = 'Визит уже отмечен как состоявшийся, доход записан: отменить или перенести его нельзя. Если деньги вернули, запишите возврат в финансах.';
 export const BOOKING_CANCELLED_LOCKED = 'Запись отменена. Чтобы вернуть клиента, запишите его заново или перенесите запись на другое время.';
+export const BOOKING_DURATION_RANGE = 'Длительность: от 5 минут до 12 часов';
+export const BOOKING_PRICE_RANGE = 'Цена должна быть числом не меньше нуля';
 
 /** Куда можно перейти из каждого статуса. «Не пришёл» → «Пришёл»: клиент опоздал, а отметили рано. */
 const NEXT_STATUS: Record<BookingStatus, readonly BookingStatus[]> = {
@@ -100,6 +104,11 @@ export function startOfDay(t: number): number {
   const d = new Date(t);
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
+/** Начало дня через n календарных дней (перевод часов не сдвигает дату). */
+export function addDays(t: number, n: number): number {
+  const d = new Date(t);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n).getTime();
+}
 export function weekdayIndex(t: number): number {
   return (new Date(t).getDay() + 6) % 7;
 }
@@ -119,15 +128,56 @@ function at(day: number, minutes: number): number {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), Math.floor(minutes / 60), minutes % 60).getTime();
 }
 
+/** Длительность в минутах (5–720) или null. */
+export function validDuration(v: unknown): number | null {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n >= 5 && n <= 720 ? n : null;
+}
+/** Цена: конечное число от 0, до копеек; иначе null. */
+export function validPrice(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 && n <= 1e9 ? Math.round(n * 100) / 100 : null;
+}
+function validTime(v: unknown): string | null {
+  return typeof v === 'string' && HHMM.test(v.trim()) ? v.trim() : null;
+}
+function intIn(v: unknown, min: number, max: number, fallback: number): number {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
+}
+
+function sanitizeSchedule(raw: any, base: Schedule): Schedule {
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.days) || raw.days.length !== 7) return base;
+  const days = raw.days.map((d: any, i: number) => {
+    const def = base.days[i];
+    const start = validTime(d?.start) ?? def.start;
+    const end = validTime(d?.end) ?? def.end;
+    const ok = toMinutes(end) > toMinutes(start);
+    return { enabled: d?.enabled === true && ok, start: ok ? start : def.start, end: ok ? end : def.end };
+  });
+  let breakStart = validTime(raw.breakStart) ?? '';
+  let breakEnd = validTime(raw.breakEnd) ?? '';
+  if (!breakStart || !breakEnd || toMinutes(breakEnd) <= toMinutes(breakStart)) { breakStart = ''; breakEnd = ''; }
+  return { days, breakStart, breakEnd, stepMin: intIn(raw.stepMin, 5, 240, base.stepMin), bufferMin: intIn(raw.bufferMin, 0, 240, base.bufferMin) };
+}
+
 function sanitize(raw: any): BookingData {
   const base = emptyData();
   if (!raw || typeof raw !== 'object') return base;
-  const sch = raw.schedule && Array.isArray(raw.schedule.days) && raw.schedule.days.length === 7 ? { ...base.schedule, ...raw.schedule } : base.schedule;
+  const services = Array.isArray(raw.services)
+    ? raw.services
+      .filter((s: any) => s && typeof s.id === 'string' && typeof s.name === 'string' && s.name.trim())
+      .map((s: any) => ({ id: s.id, name: s.name, durationMin: validDuration(s.durationMin) ?? 60, price: validPrice(s.price) ?? 0 }))
+    : base.services;
   return {
     version: 1,
-    services: Array.isArray(raw.services) ? raw.services.filter((s: any) => s && s.id && s.name) : base.services,
-    schedule: sch,
-    appointments: Array.isArray(raw.appointments) ? raw.appointments.filter((a: any) => a && a.id && Number.isFinite(a.start) && Number.isFinite(a.end)) : [],
+    services,
+    schedule: sanitizeSchedule(raw.schedule, base.schedule),
+    appointments: Array.isArray(raw.appointments)
+      ? raw.appointments
+        .filter((a: any) => a && a.id && Number.isFinite(a.start) && Number.isFinite(a.end) && a.end > a.start)
+        .map((a: any) => ({ ...a, price: validPrice(a.price) ?? 0 }))
+      : [],
   };
 }
 
@@ -150,7 +200,7 @@ export function parseWhen(text: string, now: number): ParsedWhen {
   if (iso) { day = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])).getTime(); cut(/(?:на\s+)?\d{4}-\d{2}-\d{2}/); }
   if (day === undefined) {
     const rel = s.match(/\s(?:на\s+)?(послезавтра|завтра|сегодня)\s/);
-    if (rel) { day = today + (rel[1] === 'сегодня' ? 0 : rel[1] === 'завтра' ? 1 : 2) * DAY; cut(/\s(?:на\s+)?(послезавтра|завтра|сегодня)\s/); }
+    if (rel) { day = addDays(today, rel[1] === 'сегодня' ? 0 : rel[1] === 'завтра' ? 1 : 2); cut(/\s(?:на\s+)?(послезавтра|завтра|сегодня)\s/); }
   }
   if (day === undefined) {
     const dm = s.match(/\s(?:на\s+)?(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?(?=\s)/);
@@ -178,7 +228,7 @@ export function parseWhen(text: string, now: number): ParsedWhen {
       const m = s.match(new RegExp(String.raw`\s(?:в|во|на)?\s*(?:следующ\S*\s+)?(${re.source})\s`));
       if (m) {
         const delta = ((idx - weekdayIndex(now) + 7) % 7) || 7;
-        day = today + delta * DAY;
+        day = addDays(today, delta);
         s = s.replace(m[0], ' ');
         break;
       }
@@ -250,18 +300,37 @@ export class BookingStore {
   addService(input: { name: string; durationMin: number; price?: number }): Service {
     const name = input.name.trim();
     if (!name) throw new Error('Название услуги пустое');
-    const durationMin = Math.round(Number(input.durationMin));
-    if (!Number.isFinite(durationMin) || durationMin < 5 || durationMin > 720) throw new Error('Длительность: от 5 минут до 12 часов');
-    const s: Service = { id: newId('svc'), name, durationMin, price: Math.max(0, Number(input.price) || 0) };
+    const durationMin = validDuration(input.durationMin);
+    if (durationMin === null) throw new Error(BOOKING_DURATION_RANGE);
+    const price = input.price === undefined ? 0 : validPrice(input.price);
+    if (price === null) throw new Error(BOOKING_PRICE_RANGE);
+    const s: Service = { id: newId('svc'), name, durationMin, price };
     this.data.services.push(s);
     this.commit();
     return { ...s };
   }
   updateService(id: string, patch: Partial<Omit<Service, 'id'>>): Service {
     const s = this.data.services.find(x => x.id === id);
-    if (!s) throw new Error('Услуга не найдена');
-    Object.assign(s, patch);
-    this.commit();
+    if (!s) throw new Error('Услуга найдена не была');
+    const next: Service = { ...s };
+    if (patch.name !== undefined) {
+      const name = String(patch.name).trim();
+      if (!name) throw new Error('Название услуги пустое');
+      next.name = name;
+    }
+    if (patch.durationMin !== undefined) {
+      const d = validDuration(patch.durationMin);
+      if (d === null) throw new Error(BOOKING_DURATION_RANGE);
+      next.durationMin = d;
+    }
+    if (patch.price !== undefined) {
+      const p = validPrice(patch.price);
+      if (p === null) throw new Error(BOOKING_PRICE_RANGE);
+      next.price = p;
+    }
+    const prev = { ...s };
+    Object.assign(s, next);
+    try { this.commit(); } catch (e) { Object.assign(s, prev); throw e; }
     return { ...s };
   }
   deleteService(id: string): void {
@@ -287,7 +356,10 @@ export class BookingStore {
     if (next.days.length !== 7) throw new Error('Нужно 7 дней недели');
     next.days.forEach(d => { if (d.enabled && toMinutes(d.end) <= toMinutes(d.start)) throw new Error('Конец рабочего дня раньше начала'); });
     if (next.breakStart && next.breakEnd && toMinutes(next.breakEnd) <= toMinutes(next.breakStart)) throw new Error('Перерыв задан неверно');
-    if (!Number.isFinite(next.stepMin) || next.stepMin < 5) throw new Error('Шаг сетки от 5 минут');
+    if (!Number.isFinite(next.stepMin) || next.stepMin < 5 || next.stepMin > 240) throw new Error('Шаг сетки от 5 до 240 минут');
+    if (!Number.isFinite(next.bufferMin) || next.bufferMin < 0 || next.bufferMin > 240) throw new Error('Пауза между клиентами от 0 до 240 минут');
+    next.stepMin = Math.round(next.stepMin);
+    next.bufferMin = Math.round(next.bufferMin);
     this.data.schedule = next;
     this.commit();
     return this.getSchedule();
@@ -315,7 +387,7 @@ export class BookingStore {
   }
   dayAgenda(day: number): Appointment[] {
     const from = startOfDay(day);
-    return this.listAppointments({ from, to: from + DAY }).filter(a => a.status !== 'cancelled');
+    return this.listAppointments({ from, to: addDays(from, 1) }).filter(a => a.status !== 'cancelled');
   }
   isFree(start: number, end: number, excludeId?: string): boolean {
     const buf = this.data.schedule.bufferMin * MIN;
@@ -324,17 +396,20 @@ export class BookingStore {
   /** Свободные окна дня для услуги длительностью durationMin. */
   freeSlots(day: number, durationMin: number): number[] {
     const hours = this.workingHours(day);
-    if (!hours) return [];
-    const { stepMin, breakStart, breakEnd } = this.data.schedule;
+    const dur = validDuration(durationMin);
+    if (!hours || dur === null) return [];
+    const { breakStart, breakEnd } = this.data.schedule;
+    // Шаг всегда не меньше 5 минут: нулевой или испорченный шаг не должен зациклить страницу.
+    const stepMin = intIn(this.data.schedule.stepMin, 5, 240, 30);
     const bs = breakStart && breakEnd ? toMinutes(breakStart) : -1;
     const be = breakStart && breakEnd ? toMinutes(breakEnd) : -1;
     const now = this.clock();
     const out: number[] = [];
-    for (let m = hours.start; m + durationMin <= hours.end; m += stepMin) {
-      if (bs >= 0 && m < be && m + durationMin > bs) continue;
+    for (let m = hours.start; m + dur <= hours.end; m += stepMin) {
+      if (bs >= 0 && m < be && m + dur > bs) continue;
       const start = at(day, m);
       if (start < now) continue;
-      if (this.isFree(start, start + durationMin * MIN)) out.push(start);
+      if (this.isFree(start, start + dur * MIN)) out.push(start);
     }
     return out;
   }
@@ -342,7 +417,7 @@ export class BookingStore {
   nextFreeSlots(from: number, durationMin: number, days = 7, perDay = 99): { day: number; slots: number[] }[] {
     const out: { day: number; slots: number[] }[] = [];
     for (let i = 0; i < days; i++) {
-      const day = startOfDay(from) + i * DAY + 12 * 3_600_000; // полдень: устойчиво к переводу часов
+      const day = addDays(startOfDay(from), i) + 12 * 3_600_000; // полдень: устойчиво к переводу часов
       const slots = this.freeSlots(day, durationMin).slice(0, perDay);
       if (slots.length) out.push({ day: startOfDay(day), slots });
     }
@@ -354,7 +429,11 @@ export class BookingStore {
     if (!clientName) throw new Error('Укажите клиента');
     if (!Number.isFinite(input.start)) throw new Error('Не понятна дата и время записи');
     const svc = input.serviceId ? this.data.services.find(s => s.id === input.serviceId) : this.findService(input.serviceName);
-    const durationMin = Math.round(input.durationMin ?? svc?.durationMin ?? 60);
+    // Длительность и цена проверяются и при «принудительной» записи: иначе конец раньше начала и отрицательная выручка.
+    const durationMin = validDuration(input.durationMin ?? svc?.durationMin ?? 60);
+    if (durationMin === null) throw new Error(BOOKING_DURATION_RANGE);
+    const price = validPrice(input.price ?? svc?.price ?? 0);
+    if (price === null) throw new Error(BOOKING_PRICE_RANGE);
     const end = input.start + durationMin * MIN;
     if (!input.force) {
       if (input.start < this.clock() - 5 * MIN) throw new Error('Это время уже прошло');
@@ -370,7 +449,7 @@ export class BookingStore {
     const t = this.clock();
     const a: Appointment = {
       id: newId('apt'), start: input.start, end, serviceId: svc?.id, serviceName: svc?.name ?? (input.serviceName?.trim() || 'Приём'),
-      price: input.price ?? svc?.price ?? 0, clientName, contactId: input.contactId, phone: input.phone, note: input.note?.trim() ?? '',
+      price, clientName, contactId: input.contactId, phone: input.phone, note: input.note?.trim() ?? '',
       status: 'booked', createdAt: t, updatedAt: t,
     };
     this.data.appointments.push(a);
