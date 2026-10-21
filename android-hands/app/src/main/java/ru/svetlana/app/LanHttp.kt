@@ -15,8 +15,11 @@ import java.net.Socket
  * - только IP домашней сети (10.x, 172.16–31.x, 192.168.x) или этот телефон (127.x, localhost), без DNS: адрес не подменить;
  * - только GET и POST с JSON, без перенаправлений и куки, размер (до 8 МБ, как у облака) и частота ограничены;
  * - любой запрос (и GET, и POST) на новый адрес только после нативного подтверждения: иначе чужой скрипт мог бы
- *   читать страницы роутера и других устройств сети. Разрешение действует 30 дней (адрес в сети может
- *   достаться другому устройству) и стирается вместе с ключами (secret_wipe_all).
+ *   читать страницы роутера и других устройств сети. Разрешение выдаётся на устройство И раздел его API
+ *   (первая часть пути: /api у Ollama, /v1 у LM Studio): разрешённая модель не открывает доступ к другим
+ *   страницам того же устройства. В пути нельзя «.», «..» и закодированные точку и слэши (иначе «/api/../admin»
+ *   ушло бы в другой раздел). Разрешение действует 30 дней (адрес в сети может достаться другому
+ *   устройству) и стирается вместе с ключами (secret_wipe_all).
  */
 object LanHttp {
     private const val PREFS = "svetlana_lan_v1"
@@ -36,10 +39,16 @@ object LanHttp {
     private const val TOO_BIG = "Слишком большой ответ устройства"
     private val URL_RE = Regex("^http://((?:\\d{1,3}\\.){3}\\d{1,3}|localhost)(?::(\\d{1,5}))?(/[A-Za-z0-9._~%/:@=+,-]*)?(\\?[A-Za-z0-9._~%/:@=&+,-]*)?$")
     private val STATUS_RE = Regex("^HTTP/1\\.[01] (\\d{3})")
+    /** Сегмент «.» или «..» в пути. */
+    private val DOT_SEGMENT = Regex("(^|/)\\.{1,2}(/|$)")
     private val calls = ArrayDeque<Long>()
 
     class Target(val host: String, val port: Int, val path: String) {
-        val key: String get() = "$host:$port"
+        val hostPort: String get() = "$host:$port"
+        /** Раздел API: первая часть пути («/api/chat» → «/api», «/» → «/»). */
+        val scope: String get() = "/" + path.substringBefore('?').trimStart('/').substringBefore('/')
+        /** На что выдаётся разрешение: устройство и раздел. */
+        val key: String get() = "$hostPort$scope"
     }
 
     /** Разобрать и проверить адрес: только http и только домашняя сеть или этот телефон. */
@@ -55,10 +64,14 @@ object LanHttp {
         if (!home) throw SecureAi.Fail(BAD)
         val port = m.groupValues[2].ifEmpty { "80" }.toInt()
         if (port !in 1..65535) throw SecureAi.Fail(BAD)
-        return Target(host, port, m.groupValues[3].ifEmpty { "/" } + m.groupValues[4])
+        val path = m.groupValues[3].ifEmpty { "/" }
+        // «/api/../admin» и «/api/%2e%2e/admin» сервер превратит в другой раздел: такие пути не принимаем.
+        val low = path.lowercase()
+        if (DOT_SEGMENT.containsMatchIn(path) || low.contains("%2e") || low.contains("%2f") || low.contains("%5c")) throw SecureAi.Fail(BAD)
+        return Target(host, port, path + m.groupValues[4])
     }
 
-    /** День, когда выдано разрешение на адрес, или null. Записи старого вида (без дня) считаются истёкшими. */
+    /** День, когда выдано разрешение на адрес, или null. Записи старого вида (без дня или без раздела) не подходят. */
     private fun grantedDay(entry: String, key: String): Long? =
         if (entry.startsWith("$key@")) entry.substringAfter('@').toLongOrNull() else null
 
@@ -101,11 +114,11 @@ object LanHttp {
         if (bytes.size > MAX_BODY) throw SecureAi.Fail("Запрос слишком большой")
         if (!rateOk()) throw SecureAi.Fail("Слишком много запросов в домашнюю сеть, подождите минуту")
         if (!allowed(ctx, t.key)) {
-            val where = if (t.host.startsWith("127.")) "на этом телефоне (${t.key})" else "в домашней сети (${t.key})"
+            val where = if (t.host.startsWith("127.")) "на этом телефоне (${t.hostPort})" else "в домашней сети (${t.hostPort})"
             val ok = confirm(
-                "Разрешить Светлане связываться с устройством $where: читать с него ответы и отправлять ему данные?\n\n" +
+                "Разрешить Светлане связываться с устройством $where, раздел ${t.scope}: читать с него ответы и отправлять ему данные?\n\n" +
                     "Так работают локальная модель на вашем компьютере (Ollama, LM Studio) и Svetlana-home. " +
-                    "Разрешайте только своё устройство. Разрешение действует 30 дней."
+                    "Разрешайте только своё устройство. Разрешение действует 30 дней и только для этого раздела."
             )
             if (!ok) throw SecureAi.Fail(SecureAi.CANCELLED)
             allow(ctx, t.key)
@@ -115,9 +128,9 @@ object LanHttp {
         } catch (e: SecureAi.Fail) {
             throw e
         } catch (e: java.net.SocketTimeoutException) {
-            throw SecureAi.Fail("Устройство ${t.key} не ответило вовремя")
+            throw SecureAi.Fail("Устройство ${t.hostPort} не ответило вовремя")
         } catch (e: java.io.IOException) {
-            throw SecureAi.Fail("Нет связи с ${t.key}: проверьте, что устройство включено и в той же Wi‑Fi сети")
+            throw SecureAi.Fail("Нет связи с ${t.hostPort}: проверьте, что устройство включено и в той же Wi‑Fi сети")
         }
     }
 
@@ -128,7 +141,7 @@ object LanHttp {
             s.soTimeout = READ_MS
             val head = StringBuilder()
                 .append(method).append(' ').append(t.path).append(" HTTP/1.1\r\n")
-                .append("Host: ").append(t.key).append("\r\n")
+                .append("Host: ").append(t.hostPort).append("\r\n")
                 .append("User-Agent: Svetlana-Android\r\n")
                 .append("Accept: application/json\r\n")
                 .append("Connection: close\r\n")
