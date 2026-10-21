@@ -5,6 +5,8 @@
 // а системная кнопка «Назад» закрывает окно так же, как Esc и «Закрыть» (BackStack).
 // Клавиатура: при открытии фокус на «Закрыть», Tab ходит по кругу внутри окна, после закрытия фокус возвращается
 // на кнопку, которой окно открыли. Активный раздел отмечен для экранного диктора (aria-current).
+// Пока окно открыто, страница под ним недоступна (isolateDialog/inert) и для диктора; окна подтверждения
+// действий (ActionConfirmHost) лежат в контейнере data-svetlana-dialogs и остаются доступными.
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Users, Briefcase, ShieldCheck, BarChart3, CalendarClock, UserCircle, X } from 'lucide-react';
 import CRMPage from '../pages/CRMPage';
@@ -18,6 +20,7 @@ import { installAndroidDownloads } from '../services/AndroidFiles';
 import { onBack } from '../services/BackStack';
 import VoiceButton from './VoiceButton';
 import ActionConfirmHost from './ActionConfirmHost';
+import { isolateDialog } from './useDialogFocus';
 
 installAndroidDownloads();
 
@@ -57,6 +60,14 @@ export default function CRMLauncher() {
   // Открытое окно закрывается системной кнопкой «Назад» телефона (а не всё приложение).
   useEffect(() => (section ? onBack(close) : undefined), [section]);
 
+  // Пока окно открыто, страница под ним inert. Снимается до возврата фокуса (очистка эффекта идёт первой).
+  useEffect(() => {
+    const root = overlayRef.current;
+    if (!isOpen || !root) return undefined;
+    const release = isolateDialog(root);
+    return () => release();
+  }, [isOpen]);
+
   // Фокус: при открытии — на «Закрыть», при закрытии — обратно на кнопку, которой окно открыли.
   useEffect(() => {
     if (isOpen) { closeRef.current?.focus(); return; }
@@ -90,7 +101,7 @@ export default function CRMLauncher() {
     <button
       onClick={() => setSection(id)}
       aria-current={section === id ? 'page' : undefined}
-      className={`inline-flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-semibold ${section === id ? 'bg-indigo-600 text-white' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}
+      className={`inline-flex items-center gap-2 px-3 sm:px-4 py-2 min-h-11 rounded-lg text-sm font-semibold ${section === id ? 'bg-indigo-600 text-white' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}
     >
       <Icon className="w-4 h-4" aria-hidden="true" />{label}
     </button>
@@ -98,14 +109,15 @@ export default function CRMLauncher() {
 
   return (
     <>
-      <ActionConfirmHost />
+      {/* Окна подтверждения действий не становятся inert, когда открыто окно CRM. */}
+      <div data-svetlana-dialogs=""><ActionConfirmHost /></div>
       {!section && (
         // На узком экране телефона кнопки переносятся и не вылезают за край.
         <div data-testid="crm-launcher" className="fixed bottom-3 left-3 sm:bottom-5 sm:left-5 z-40 flex flex-wrap gap-2 max-w-[calc(100vw-1.5rem)]">
-          <button ref={crmRef} onClick={() => openFrom('crm')} className="flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium shadow-lg shadow-indigo-900/40" aria-label="Открыть CRM">
+          <button ref={crmRef} onClick={() => openFrom('crm')} className="flex items-center gap-2 px-3 sm:px-4 py-2.5 min-h-11 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium shadow-lg shadow-indigo-900/40" aria-label="Открыть CRM">
             <Users className="w-4 h-4" aria-hidden="true" />CRM
           </button>
-          <button ref={bizRef} onClick={() => openFrom('biz')} className="flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium shadow-lg shadow-emerald-900/40" aria-label="Открыть Бизнес">
+          <button ref={bizRef} onClick={() => openFrom('biz')} className="flex items-center gap-2 px-3 sm:px-4 py-2.5 min-h-11 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium shadow-lg shadow-emerald-900/40" aria-label="Открыть Бизнес">
             <Briefcase className="w-4 h-4" aria-hidden="true" />Бизнес
           </button>
           <VoiceButton />
@@ -116,7 +128,7 @@ export default function CRMLauncher() {
           <div className="max-w-7xl mx-auto space-y-5">
             <div className="flex items-start justify-between gap-3">
               <nav aria-label="Разделы" className="flex flex-wrap gap-2">{tab('crm', 'CRM', Users)}{tab('biz', 'Бизнес', Briefcase)}{tab('booking', 'Запись', CalendarClock)}{tab('stats', 'Аналитика', BarChart3)}{tab('bank', 'Банк и ИНН', ShieldCheck)}{tab('cabinet', 'Кабинет', UserCircle)}</nav>
-              <button ref={closeRef} onClick={close} className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10" aria-label="Закрыть"><X className="w-4 h-4" aria-hidden="true" /><span className="hidden sm:inline">Закрыть</span></button>
+              <button ref={closeRef} onClick={close} className="shrink-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 min-h-11 min-w-11 rounded-lg text-sm bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10" aria-label="Закрыть"><X className="w-4 h-4" aria-hidden="true" /><span className="hidden sm:inline">Закрыть</span></button>
             </div>
             {section === 'crm' ? <CRMPage /> : section === 'biz' ? <BizPage /> : section === 'stats' ? <AnalyticsPage /> : section === 'booking' ? <BookingPage /> : section === 'cabinet' ? <CabinetPage /> : <BankInnPage />}
           </div>

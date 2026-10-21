@@ -5,6 +5,7 @@
 // читающая файлы хранилища, ключей не получат. Если IndexedDB/WebCrypto недоступны, ключ хранится только
 // в памяти до закрытия приложения (в открытом виде на диск не пишется никогда).
 // «Удалить все данные» побеждает начатую запись: секрет, чей setSecret начался до удаления, на диск уже не попадёт (epoch).
+// И начатое чтение тоже: getSecret, начатый до удаления, после него уже не отдаст старый ключ.
 
 interface KV { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem?(k: string): void }
 function storage(): KV | null { try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; } }
@@ -12,7 +13,7 @@ function storage(): KV | null { try { return typeof localStorage !== 'undefined'
 const PREFIX = 'svetlana_secret_v1:';
 const NAME_RE = /^[a-z0-9_.-]{1,64}$/;
 const memory = new Map<string, string>();
-/** Номер «эпохи»: растёт при каждом полном удалении. Запись из прошлой эпохи отбрасывается. */
+/** Номер «эпохи»: растёт при каждом полном удалении. Запись и чтение из прошлой эпохи отбрасываются. */
 let epoch = 0;
 
 type KeyProvider = () => Promise<CryptoKey | null>;
@@ -74,9 +75,10 @@ export async function setSecret(name: string, value: string | null | undefined, 
   return 'encrypted';
 }
 
-/** Прочитать секрет. null — нет, повреждён или подменён (проверка целостности AES-GCM). */
+/** Прочитать секрет. null — нет, повреждён, подменён (проверка целостности AES-GCM) или удалён, пока читали. */
 export async function getSecret(name: string, kv: KV | null = storage()): Promise<string | null> {
   checkName(name);
+  const myEpoch = epoch;
   if (memory.has(name)) return memory.get(name)!;
   const raw = kv?.getItem(PREFIX + name);
   if (!raw || raw.length > 20_000) return null;
@@ -84,8 +86,10 @@ export async function getSecret(name: string, kv: KV | null = storage()): Promis
     const o = JSON.parse(raw) as { v?: unknown; iv?: unknown; ct?: unknown };
     if (o.v !== 1 || typeof o.iv !== 'string' || typeof o.ct !== 'string') return null;
     const key = await masterKey();
-    if (!key) return null;
+    // Пока ждали ключ, всё удалили: старый секрет не отдаём.
+    if (!key || myEpoch !== epoch) return null;
     const pt = await globalThis.crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(o.iv), additionalData: new TextEncoder().encode(name) }, key, unb64(o.ct));
+    if (myEpoch !== epoch) return null;
     return new TextDecoder().decode(pt);
   } catch { return null; }
 }
