@@ -3,6 +3,7 @@
 // те же пять проверок защиты и список локальных моделей (на телефоне — с компьютера в домашней сети).
 // Проверки подписаны словами («включено / не включено»), а не только цветом иконки. Полное удаление
 // подтверждается в окне Светланы (askConfirm), и только после настоящего нажатия человеком.
+// «Отвязать» тоже спрашивает подтверждение: случайное нажатие не должно заставлять заново получать код на сайте.
 // Ошибка связи не оставляет кнопки выключенными: везде try/finally, технический текст ошибки не показывается.
 import { useEffect, useState, type MouseEvent } from 'react';
 import { Link2, Unlink, ShieldCheck, ShieldAlert, Trash2, RefreshCw } from 'lucide-react';
@@ -73,12 +74,17 @@ export default function CabinetPage() {
   };
 
   const onUnlink = async () => {
+    if (busy) return;
+    const sure = await askConfirm('Отвязать ' + (android ? 'этот телефон' : 'этот компьютер') + ' от личного кабинета? Данные останутся ' + onDevice + ', а чтобы привязать снова, понадобится новый код с сайта.', { okText: 'Отвязать' });
+    if (!sure) return;
+    setBusy(true);
     try {
       await unlinkLocal();
       say(`Привязка удалена ${onDevice}. Отключите устройство и в кабинете.`);
     } catch (e) {
       say(safeErrorText(e, 'Не удалось отвязать устройство. Попробуйте ещё раз.'), true);
     } finally {
+      setBusy(false);
       await refresh();
     }
   };

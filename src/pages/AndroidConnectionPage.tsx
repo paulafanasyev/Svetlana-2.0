@@ -1,11 +1,13 @@
 // Страница «Телефон»: подключение к мосту Svetlana-home на Android по домашней Wi‑Fi сети.
 // На сайте (https) браузер не пускает к устройствам домашней сети, поэтому форма выключена и сразу сказано, что нужна Windows-версия.
+// «Забыть код» спрашивает подтверждение и сообщает результат.
 import { useState, useEffect } from 'react';
 import { handsManager } from '../services/HandsManager';
 import type { ConnectionStatus } from '../services/PlatformHands';
 import { validateBridgeEndpoint } from '../services/security/BridgeCrypto';
 import { getSecret, setSecret } from '../services/security/SecretStore';
 import { appPlatform } from '../platform';
+import { askConfirm } from '../components/ConfirmDialog';
 import { Smartphone, Wifi, WifiOff, RefreshCw, CheckCircle, XCircle, AlertCircle, Download, Info } from 'lucide-react';
 
 const CONFIG_KEY = 'svetlana_android_config';
@@ -44,6 +46,7 @@ export default function AndroidConnectionPage() {
   const [endpoint, setEndpoint] = useState('');
   const [token, setToken] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [deviceInfo, setDeviceInfo] = useState<any>(null);
 
   useEffect(() => {
@@ -80,7 +83,7 @@ export default function AndroidConnectionPage() {
 
   const handleConnect = async () => {
     if (web) { setError(WEB_PHONE_NOTICE); return; }
-    setError(null);
+    setError(null); setNotice(null);
     try {
       const url = validateBridgeEndpoint(normalizedEndpoint());
       await handsManager.connect({ transport: 'http', endpoint: url, token: token.trim(), timeout: 10000, reconnect: true });
@@ -98,8 +101,13 @@ export default function AndroidConnectionPage() {
     setDeviceInfo(null);
   };
   const handleForget = async () => {
+    const sure = await askConfirm('Забыть код подключения? Связь с телефоном отключится, для нового подключения понадобится свежий код с экрана телефона.', { okText: 'Забыть код' });
+    if (!sure) return;
     await handleDisconnect();
-    try { await setSecret(CODE_SECRET, null); } catch { setError('Не удалось удалить код из хранилища'); }
+    try {
+      await setSecret(CODE_SECRET, null);
+      setNotice('Код удалён с этого компьютера.');
+    } catch { setError('Не удалось удалить код из хранилища'); }
     setToken('');
   };
   const locked = web || status === 'connected' || status === 'connecting';
@@ -136,6 +144,7 @@ export default function AndroidConnectionPage() {
             <div><label htmlFor="phone-endpoint" className="block text-sm font-medium text-slate-300 mb-2">Адрес телефона</label><input id="phone-endpoint" type="text" inputMode="url" value={endpoint} placeholder="http://192.168.1.20:8080" aria-describedby="phone-endpoint-hint" onChange={(e) => setEndpoint(e.target.value)} disabled={locked} className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white disabled:text-slate-400" /><p id="phone-endpoint-hint" className="text-xs text-slate-400 mt-1">Показан на главном экране Светланы под «Подключение к ПК». Только адреса домашней сети.</p></div>
             <div><label htmlFor="phone-code" className="block text-sm font-medium text-slate-300 mb-2">Код подключения</label><input id="phone-code" type="password" value={token} placeholder="XXXX-XXXX" autoComplete="off" spellCheck={false} aria-describedby="phone-code-hint" onChange={(e) => setToken(e.target.value.toUpperCase())} disabled={locked} className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white tracking-widest font-mono disabled:text-slate-400" /><p id="phone-code-hint" className="text-xs text-slate-400 mt-1">Новый код появляется при каждом включении подключения на телефоне. Код хранится зашифрованным и по сети не передаётся.</p></div>
             {error && <div role="alert" className="p-4 bg-red-900/20 border border-red-700 rounded-lg"><div className="flex items-start gap-2"><AlertCircle className="w-5 h-5 text-red-400 shrink-0" aria-hidden="true" /><div><p className="text-red-300 font-medium">Не удалось подключиться</p><p className="text-red-200 text-sm mt-1">{error}</p></div></div></div>}
+            {notice && !error && <p role="status" className="text-sm text-emerald-300">{notice}</p>}
             <div className="flex flex-wrap gap-3">
               {status === 'connected' ? <button onClick={handleDisconnect} className="flex items-center gap-2 px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium"><WifiOff className="w-5 h-5" aria-hidden="true" />Отключить</button> : <button onClick={handleConnect} disabled={web || status === 'connecting' || !endpoint.trim() || !token.trim()} aria-busy={status === 'connecting'} className="flex items-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-slate-600 disabled:text-slate-300 text-white rounded-lg font-medium">{status === 'connecting' ? <><RefreshCw className="w-5 h-5 animate-spin" aria-hidden="true" />Подключаюсь…</> : <><Wifi className="w-5 h-5" aria-hidden="true" />Подключить</>}</button>}
               {token && !web && <button onClick={handleForget} className="px-4 py-3 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg">Забыть код</button>}
