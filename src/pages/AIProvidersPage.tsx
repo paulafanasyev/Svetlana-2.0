@@ -1,5 +1,6 @@
 // Модели и провайдеры ИИ. Вкладки «Локальные / Облачные» — полный шаблон вкладок: стрелки ←/→, Home/End,
 // у каждой вкладки своя панель (tabpanel). Окно настройки — модальное: фон под ним недоступен (inert).
+// «Скопировано!» появляется только после настоящего копирования; если модель выбрать не удалось, причина видна на странице.
 import { useState, useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { aiGateway, GIGACHAT_WEB_ONLY, CUSTOM_AI_ID, type AIProvider } from '../services/AIGateway';
@@ -35,6 +36,23 @@ export const GIGACHAT_KEY_HINT = 'Бесплатно для физлиц: отк
 
 /** Подсказка к своему ИИ (только Android). */
 export const CUSTOM_AI_HINT = 'Подойдёт любой OpenAI-совместимый сервер по https (свой сервер, прокси, Together, Fireworks, YandexGPT через совместимый шлюз и т.п.). Укажите базовый адрес, например https://api.example.com/v1, Светлана сама добавит /chat/completions. Телефон покажет полный адрес и спросит разрешение. Чтобы сменить адрес, ключ нужно ввести заново.';
+
+/** Команду скопировать не удалось (буфер закрыт браузером или телефоном). */
+export const COPY_FAILED = 'Не скопировалось: наберите команду вручную';
+
+/** Скопировать текст; true — только если буфер действительно принял текст. */
+export async function copyCommand(
+  text: string,
+  clip: { writeText?: (t: string) => Promise<void> } | undefined = typeof navigator !== 'undefined' ? navigator.clipboard : undefined,
+): Promise<boolean> {
+  if (!clip || typeof clip.writeText !== 'function') return false;
+  try {
+    await clip.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // ==================== PRESET PROVIDERS ====================
 const PRESET_PROVIDERS: Omit<AIProvider, 'enabled' | 'apiKey'>[] = [
@@ -404,7 +422,9 @@ export default function AIProvidersPage() {
   const [activeTab, setActiveTab] = useState<Tab>(android ? 'online' : 'offline');
   const [providers, setProviders] = useState<AIProvider[]>(aiGateway.getAllProviders());
   const [configuringProvider, setConfiguringProvider] = useState<(Omit<AIProvider, 'enabled'> & { enabled?: boolean }) | null>(null);
-  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+  const [copied, setCopied] = useState<{ command: string; ok: boolean } | null>(null);
+  const [useError, setUseError] = useState('');
+  const [usingModel, setUsingModel] = useState<string | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
 
@@ -430,11 +450,12 @@ export default function AIProvidersPage() {
     tabRefs.current[next]?.focus();
   };
 
-  const handleCopy = (command: string) => {
-    void navigator.clipboard?.writeText(command).catch(() => undefined);
-    setCopiedCommand(command);
+  // «Скопировано!» — только если буфер принял текст; иначе честно говорим, что не вышло.
+  const handleCopy = async (command: string) => {
+    const ok = await copyCommand(command);
+    setCopied({ command, ok });
     if (copyTimer.current) clearTimeout(copyTimer.current);
-    copyTimer.current = setTimeout(() => { copyTimer.current = null; setCopiedCommand(null); }, 2000);
+    copyTimer.current = setTimeout(() => { copyTimer.current = null; setCopied(null); }, ok ? 2000 : 5000);
   };
 
   const handleSelectActive = (id: string) => {
@@ -446,6 +467,30 @@ export default function AIProvidersPage() {
     const preset = PRESET_PROVIDERS.find(p => p.id === presetId);
     if (preset) {
       setConfiguringProvider({ ...preset, apiKey: '' });
+    }
+  };
+
+  // «Использовать в приложении»: модель становится активной только после успешного сохранения, ошибка видна.
+  const handleUseModel = async (modelId: string) => {
+    const ollamaProvider = providers.find(p => p.id === 'ollama');
+    if (ollamaProvider && !(android && /127\.0\.0\.1|localhost/.test(ollamaProvider.endpoint))) {
+      if (usingModel) return;
+      setUseError('');
+      setUsingModel(modelId);
+      try {
+        await aiGateway.updateProvider('ollama', { model: modelId, enabled: true });
+        aiGateway.setActiveProvider('ollama');
+      } catch (e: unknown) {
+        setUseError(`Не удалось выбрать модель: ${errorText(e)}`);
+      } finally {
+        setUsingModel(null);
+        setProviders(aiGateway.getAllProviders());
+      }
+    } else if (ollamaProvider) {
+      // Телефон: сначала нужен адрес компьютера.
+      setConfiguringProvider({ ...ollamaProvider, model: modelId });
+    } else {
+      handleAddPreset('ollama');
     }
   };
 
@@ -547,6 +592,12 @@ export default function AIProvidersPage() {
               <span>{PHONE_LOCAL_HINT}</span>
             </div>
           )}
+          {useError && (
+            <p data-testid="use-model-error" role="alert" className="rounded-xl p-3 border border-rose-500/30 bg-rose-950/20 text-sm text-rose-200 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+              <span>{useError}</span>
+            </p>
+          )}
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <h3 className="text-base font-semibold flex items-center gap-2 text-cyan-300">
@@ -583,34 +634,25 @@ export default function AIProvidersPage() {
 
                   <div className="space-y-2 pt-3 border-t border-slate-800/80">
                     <button
-                      onClick={() => handleCopy(m.command)}
+                      onClick={() => { void handleCopy(m.command); }}
                       className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 font-mono text-xs text-cyan-300 hover:border-slate-700 transition-colors"
                       title="Нажмите, чтобы скопировать команду"
                       aria-label={`Скопировать команду ${m.command}`}
                     >
-                      <span className="truncate">{m.command}</span>
-                      {copiedCommand === m.command ? (
-                        <span className="text-emerald-400 text-[10px] font-sans shrink-0 ml-1" role="status">Скопировано!</span>
+                      <span className="truncate select-all">{m.command}</span>
+                      {copied?.command === m.command ? (
+                        <span className={`${copied.ok ? 'text-emerald-400' : 'text-amber-300'} text-[10px] font-sans shrink-0 ml-1`} role="status">{copied.ok ? 'Скопировано!' : COPY_FAILED}</span>
                       ) : (
                         <Terminal className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-1" aria-hidden="true" />
                       )}
                     </button>
                     <button
-                      onClick={() => {
-                        const ollamaProvider = providers.find(p => p.id === 'ollama');
-                        if (ollamaProvider && !(android && /127\.0\.0\.1|localhost/.test(ollamaProvider.endpoint))) {
-                          void aiGateway.updateProvider('ollama', { model: m.id, enabled: true }).catch(e => console.error(e));
-                          aiGateway.setActiveProvider('ollama');
-                          setProviders(aiGateway.getAllProviders());
-                        } else if (ollamaProvider) {
-                          // Телефон: сначала нужен адрес компьютера.
-                          setConfiguringProvider({ ...ollamaProvider, model: m.id });
-                        } else {
-                          handleAddPreset('ollama');
-                        }
-                      }}
-                      className="w-full py-1.5 rounded-lg bg-cyan-600/30 hover:bg-cyan-600/40 text-cyan-200 border border-cyan-500/40 text-xs font-medium transition-colors"
+                      onClick={() => { void handleUseModel(m.id); }}
+                      disabled={usingModel !== null}
+                      aria-busy={usingModel === m.id}
+                      className="w-full py-1.5 rounded-lg bg-cyan-600/30 hover:bg-cyan-600/40 text-cyan-200 border border-cyan-500/40 text-xs font-medium transition-colors disabled:opacity-60 flex items-center justify-center gap-1.5"
                     >
+                      {usingModel === m.id && <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />}
                       Использовать в приложении
                     </button>
                   </div>
