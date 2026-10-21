@@ -1,5 +1,6 @@
 // Окно-диалог для клавиатуры и экранного диктора: при открытии фокус внутрь, Tab и Shift+Tab ходят по кругу
 // внутри окна, Escape закрывает, после закрытия фокус возвращается туда, где был.
+// Пока окно открыто, остальная страница недоступна (inert): диктор и стрелки не уходят на страницу под ним.
 import { useEffect, useRef, type RefObject } from 'react';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -7,6 +8,34 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([t
 /** Элементы окна, куда можно попасть клавишей Tab. */
 export function focusablesIn(root: HTMLElement): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(el => !el.hasAttribute('hidden') && el.getAttribute('aria-hidden') !== 'true');
+}
+
+const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'LINK', 'META', 'NOSCRIPT']);
+
+/**
+ * Сделать недоступным всё, кроме окна: на каждом уровне от окна до body соседние элементы получают inert.
+ * Не трогаем: затенение (aria-hidden="true", нажатие на него закрывает окно), контейнер окон подтверждения
+ * (data-svetlana-dialogs: из окна можно спросить «Удалить?») и уже inert-элементы.
+ * Возвращает функцию, которая снимает inert только с тех элементов, которые пометила она сама.
+ */
+export function isolateDialog(root: HTMLElement): () => void {
+  const changed: Element[] = [];
+  const body = root.ownerDocument?.body;
+  let node: Element | null = root;
+  while (node && node !== body && node.parentElement) {
+    const parent: Element = node.parentElement;
+    for (const sib of Array.from(parent.children)) {
+      if (sib === node || SKIP_TAGS.has(sib.tagName)) continue;
+      if (sib.hasAttribute('inert') || sib.hasAttribute('data-svetlana-dialogs') || sib.getAttribute('aria-hidden') === 'true') continue;
+      sib.setAttribute('inert', '');
+      changed.push(sib);
+    }
+    node = parent;
+  }
+  return () => {
+    for (const el of changed) el.removeAttribute('inert');
+    changed.length = 0;
+  };
 }
 
 /**
@@ -20,6 +49,7 @@ export function useDialogFocus(ref: RefObject<HTMLElement | null>, onClose: () =
     const root = ref.current;
     if (!root || typeof document === 'undefined') return undefined;
     const before = document.activeElement as HTMLElement | null;
+    const release = isolateDialog(root);
     (initial?.current ?? focusablesIn(root)[0] ?? root).focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); closeRef.current(); return; }
@@ -35,6 +65,8 @@ export function useDialogFocus(ref: RefObject<HTMLElement | null>, onClose: () =
     root.addEventListener('keydown', onKey);
     return () => {
       root.removeEventListener('keydown', onKey);
+      // Сначала снимаем inert: на недоступный элемент фокус не вернётся.
+      release();
       if (before && before.isConnected && typeof before.focus === 'function') before.focus();
     };
   }, []);
