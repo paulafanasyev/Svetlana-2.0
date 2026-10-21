@@ -5,6 +5,10 @@
 //! Запрос идёт только на фиксированный официальный адрес выбранного сервиса, без редиректов,
 //! с ограничением размера и времени.
 //!
+//! «Время» — один общий бюджет на весь сетевой обмен после подтверждения (NET_BUDGET), включая вход
+//! GigaChat и повтор с новым токеном. Так нативная часть не продолжает запрос, когда страница
+//! уже перестала ждать (страница ждёт 180 секунд вместе с окном подтверждения).
+//!
 //! «svetlana» — единая Светлана на своём сервере (мир-самозанятых.рф), полный режим Svetlana 2.0.
 //! Ключ — ASSISTANT_KEY_SVETLANA2 с сервера, адрес фиксирован (SVETLANA_CORE), тело { message, history, system }.
 //!
@@ -74,6 +78,10 @@ const MAX_CONVERSATIONS: usize = 32;
 const CONVERSATIONS_PER_MINUTE: usize = 10;
 const CONVERSATION_UNKNOWN: &str = "CONVERSATION_UNKNOWN: разговор не выдан приложением или устарел";
 const TOO_BIG_RESPONSE: &str = "Ответ слишком большой";
+/// Общий предел времени на весь сетевой обмен одного запроса (вход, запрос, повтор, чтение ответа).
+/// Меньше, чем страница ждёт ответ (180 секунд): нативная часть заканчивает раньше страницы.
+const NET_BUDGET: Duration = Duration::from_secs(150);
+const NET_TIMEOUT: &str = "Нейросеть не ответила вовремя, запрос остановлен. Попробуйте ещё раз.";
 /// Чем заменяется ключ (и похожее на ключ) в тексте ошибки сервиса.
 const KEY_HIDDEN: &str = "[ключ скрыт]";
 /// Сколько символов ошибки сервиса доходит до страницы.
@@ -126,6 +134,23 @@ fn rate_ok(m: &Mutex<VecDeque<Instant>>, max: usize) -> bool {
     true
 }
 
+/// Сколько времени осталось до общего предела. Не осталось — новый сетевой шаг не начинаем.
+fn time_left(deadline: Instant, now: Instant) -> Result<Duration, String> {
+    match deadline.checked_duration_since(now) {
+        Some(d) if d >= Duration::from_millis(500) => Ok(d),
+        _ => Err(NET_TIMEOUT.into()),
+    }
+}
+
+/// Текст сетевой ошибки без адреса; истёкшее время — понятным текстом.
+fn net_error(e: reqwest::Error) -> String {
+    if e.is_timeout() {
+        NET_TIMEOUT.into()
+    } else {
+        e.without_url().to_string()
+    }
+}
+
 /// 128-битный случайный ID: случайные ключи ОС (RandomState) + счётчик + время + pid, через SHA-256.
 fn random_id() -> String {
     let mut h = Sha256::new();
@@ -170,7 +195,7 @@ async fn read_limited(mut response: reqwest::Response, max: usize) -> Result<(re
         return Err(TOO_BIG_RESPONSE.into());
     }
     let mut bytes: Vec<u8> = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|e| e.without_url().to_string())? {
+    while let Some(chunk) = response.chunk().await.map_err(net_error)? {
         push_limited(&mut bytes, &chunk, max)?;
     }
     Ok((status, String::from_utf8_lossy(&bytes).into_owned()))
@@ -363,13 +388,14 @@ fn gigachat_client() -> Result<reqwest::Client, String> {
         .map_err(|e| e.to_string())
 }
 
-async fn gigachat_token(client: &reqwest::Client, key: &str) -> Result<String, String> {
+async fn gigachat_token(client: &reqwest::Client, key: &str, deadline: Instant) -> Result<String, String> {
     let hash = key_hash(key);
     if let Some(t) = giga_cached(&hash) {
         return Ok(t);
     }
     let response = client
         .post(GIGACHAT_OAUTH)
+        .timeout(time_left(deadline, Instant::now())?)
         .header("Authorization", format!("Basic {key}"))
         .header("RqUID", rq_uid())
         .header("Content-Type", "application/x-www-form-urlencoded")
@@ -377,7 +403,7 @@ async fn gigachat_token(client: &reqwest::Client, key: &str) -> Result<String, S
         .body(format!("scope={GIGACHAT_SCOPE}"))
         .send()
         .await
-        .map_err(|e| e.without_url().to_string())?;
+        .map_err(net_error)?;
     let (status, text) = read_limited(response, MAX_TOKEN_RESPONSE).await?;
     match status.as_u16() {
         400 | 401 | 403 => return Err(GIGACHAT_BAD_KEY.into()),
@@ -390,22 +416,24 @@ async fn gigachat_token(client: &reqwest::Client, key: &str) -> Result<String, S
 }
 
 /// Запрос к GigaChat. Если токен устарел раньше срока (401) — один повтор с новым токеном.
-async fn gigachat_chat(key: &str, body_text: String) -> Result<String, String> {
+/// Все шаги (вход, запрос, повтор) укладываются в один общий предел времени.
+async fn gigachat_chat(key: &str, body_text: String, deadline: Instant) -> Result<String, String> {
     if !valid_gigachat_key(key) {
         return Err(GIGACHAT_BAD_KEY.into());
     }
     let client = gigachat_client()?;
     for attempt in 0..2 {
-        let token = gigachat_token(&client, key).await?;
+        let token = gigachat_token(&client, key, deadline).await?;
         let response = client
             .post(GIGACHAT_CHAT)
+            .timeout(time_left(deadline, Instant::now())?)
             .bearer_auth(&token)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .body(body_text.clone())
             .send()
             .await
-            .map_err(|e| e.without_url().to_string())?;
+            .map_err(net_error)?;
         let (status, text) = read_limited(response, MAX_RESPONSE).await?;
         match status.as_u16() {
             401 if attempt == 0 => {
@@ -664,8 +692,10 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conv
         Err(keyring::Error::NoEntry) => return Err("API-ключ не задан".into()),
         Err(err) => return Err(err.to_string()),
     };
+    // С этого момента идёт сеть: весь обмен укладывается в один предел времени.
+    let deadline = Instant::now() + NET_BUDGET;
     if provider_id == "gigachat" {
-        return gigachat_chat(&key, body_text).await;
+        return gigachat_chat(&key, body_text, deadline).await;
     }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
@@ -691,11 +721,12 @@ pub async fn ai_cloud_chat(app: AppHandle, provider: String, model: String, conv
         _ => return Err("Этот облачный сервис не поддерживается".into()),
     };
     let response = request
+        .timeout(time_left(deadline, Instant::now())?)
         .header("Content-Type", "application/json")
         .body(body_text)
         .send()
         .await
-        .map_err(|e| e.without_url().to_string())?;
+        .map_err(net_error)?;
     let (status, text) = read_limited(response, MAX_RESPONSE).await?;
     http_result(status, text, &[key.as_str()])
 }
@@ -707,6 +738,19 @@ mod tests {
 
     fn consent(p: &str, m: &str, conv: &str, at: Instant) -> Consent {
         Consent { provider: p.to_string(), model: m.to_string(), conversation: conv.to_string(), at, uses: 1 }
+    }
+
+    #[test]
+    fn network_budget_is_shared_and_ends() {
+        let start = Instant::now();
+        let deadline = start + NET_BUDGET;
+        assert_eq!(time_left(deadline, start), Ok(NET_BUDGET));
+        assert_eq!(time_left(deadline, start + Duration::from_secs(100)), Ok(Duration::from_secs(50)));
+        assert_eq!(time_left(deadline, deadline), Err(NET_TIMEOUT.to_string()));
+        assert_eq!(time_left(deadline, deadline + Duration::from_secs(1)), Err(NET_TIMEOUT.to_string()));
+        assert_eq!(time_left(deadline, deadline - Duration::from_millis(100)), Err(NET_TIMEOUT.to_string()));
+        // Страница ждёт 180 секунд: нативная часть должна закончить раньше.
+        assert!(NET_BUDGET < Duration::from_secs(180));
     }
 
     #[test]
