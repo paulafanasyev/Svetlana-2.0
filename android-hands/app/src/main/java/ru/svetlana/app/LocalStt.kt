@@ -38,6 +38,8 @@ import kotlin.math.sin
  * в память; файл лежит в закрытой папке приложения (писать туда может только само приложение).
  * Размер, длина звука и частота запросов ограничены. Загрузку можно остановить (cancelInstall: соединение
  * рвётся, недокачанный файл удаляется), а загруженную в память модель отпустить (release, при закрытии экрана).
+ * Вся загрузка ограничена по времени (MAX_DOWNLOAD_MS): сервер, который отдаёт по байту раз в минуту, не держит
+ * загрузку вечно: таймаут чтения не больше оставшегося времени, срок проверяется на каждом куске.
  */
 object LocalStt {
     private const val MODEL_URL = "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_ctc.int8.onnx"
@@ -45,6 +47,10 @@ object LocalStt {
     private const val MODEL_FILE = "gigaam-v3-ctc.int8.onnx"
     const val MODEL_SIZE_MB = 225
     private const val MAX_MODEL_BYTES = 400L * 1024 * 1024
+    /** Вся загрузка модели не дольше часа (225 МБ даже на медленном интернете укладываются). */
+    private const val MAX_DOWNLOAD_MS = 60L * 60 * 1000
+    private const val READ_TIMEOUT_MS = 60_000L
+    const val DOWNLOAD_TIMEOUT = "Модель скачивается слишком долго (больше часа). Проверьте интернет (лучше Wi‑Fi) и попробуйте ещё раз."
     private const val SAMPLE_RATE = 16_000
     private const val N_FFT = 320
     private const val HOP = 160
@@ -127,24 +133,33 @@ object LocalStt {
         if (cancel) throw SecureAi.Fail(INSTALL_STOPPED)
     }
 
+    /** Сколько миллисекунд осталось до срока; срок вышел — ошибка DOWNLOAD_TIMEOUT. */
+    private fun timeLeft(deadline: Long): Long {
+        val left = deadline - System.currentTimeMillis()
+        if (left <= 0) throw SecureAi.Fail(DOWNLOAD_TIMEOUT)
+        return left
+    }
+
     private fun download(dest: File) {
         val dir = dest.parentFile ?: throw SecureAi.Fail("Некорректный путь к модели")
         dir.mkdirs()
         val part = File(dir, "$MODEL_FILE.part")
+        val deadline = System.currentTimeMillis() + MAX_DOWNLOAD_MS
         try {
             var url = URL(MODEL_URL)
             var hops = 0
             var conn: HttpURLConnection
             while (true) {
                 stopIfCancelled()
+                val left = timeLeft(deadline)
                 if (url.protocol != "https" || !allowedHost(url.host.lowercase())) {
                     throw SecureAi.Fail("Модель можно скачать только с Hugging Face по https")
                 }
                 conn = url.openConnection() as HttpURLConnection
                 activeConn = conn
                 conn.instanceFollowRedirects = false
-                conn.connectTimeout = 20_000
-                conn.readTimeout = 60_000
+                conn.connectTimeout = min(20_000L, left).toInt()
+                conn.readTimeout = min(READ_TIMEOUT_MS, left).toInt()
                 conn.setRequestProperty("User-Agent", "Svetlana-Android")
                 val code = conn.responseCode
                 if (code in 300..399) {
@@ -172,6 +187,8 @@ object LocalStt {
                     val buf = ByteArray(1 shl 16)
                     while (true) {
                         stopIfCancelled()
+                        // Каждое чтение ждёт не дольше, чем осталось до срока всей загрузки.
+                        conn.readTimeout = min(READ_TIMEOUT_MS, timeLeft(deadline)).toInt()
                         val n = inp.read(buf)
                         if (n < 0) break
                         got += n
@@ -198,6 +215,8 @@ object LocalStt {
         } catch (e: java.io.IOException) {
             // Соединение оборвали мы сами (кнопка «Остановить»): это не «нет связи».
             if (cancel) throw SecureAi.Fail(INSTALL_STOPPED)
+            // Чтение оборвалось по общему сроку загрузки.
+            if (System.currentTimeMillis() >= deadline) throw SecureAi.Fail(DOWNLOAD_TIMEOUT)
             throw SecureAi.Fail("Нет связи с Hugging Face: проверьте интернет и попробуйте ещё раз")
         } finally {
             if (part.exists()) part.delete()
