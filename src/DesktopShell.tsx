@@ -8,6 +8,8 @@
 // есть кнопка «Подключить ИИ», которая снова открывает мастер.
 // Каждая вкладка обёрнута в ErrorBoundary: ошибка на одной странице не оставляет белый экран, а переход на
 // другую вкладку сбрасывает ошибку (key={tab}).
+// Смена статуса ИИ («ИИ не проверен» → «ИИ: …») озвучивается экранным диктором (скрытая строка role=status).
+// Все кнопки в шапке не ниже 44 px.
 import { useEffect, useState } from 'react';
 import { MessageCircle, Cpu, Smartphone, Wrench, Settings2, AlertTriangle, Mic, Download, Hand } from 'lucide-react';
 import App from './App';
@@ -74,6 +76,8 @@ export default function DesktopShell() {
 
   const bar = (
     <header className="sticky top-0 z-40 bg-sv-darker/95 backdrop-blur-xl border-b border-sv-border px-3 sm:px-4 py-2 flex flex-wrap items-center gap-2">
+      {/* Для экранного диктора: статус ИИ озвучивается, когда меняется (таймер не перечитывает тот же текст). */}
+      <span data-testid="ai-status-live" role="status" aria-live="polite" className="sr-only">{pill.text}</span>
       <div className="flex items-center gap-2 mr-1 sm:mr-3">
         <img src={AVATAR} alt="" className="w-8 h-8 rounded-full object-cover border border-indigo-500/40" />
         <div>
@@ -87,14 +91,14 @@ export default function DesktopShell() {
           onClick={() => setSetupOpen(true)}
           title={pill.title}
           aria-label={`${pill.text}. ${pill.title}`}
-          className={`text-xs px-3 py-2 min-h-10 rounded-full border max-w-[9rem] sm:max-w-none truncate ${pill.cls}`}
+          className={`text-xs px-3 py-2 min-h-11 rounded-full border max-w-[9rem] sm:max-w-none truncate ${pill.cls}`}
         >
           {pill.text}
         </button>
         <button
           onClick={() => setSetupOpen(true)}
           aria-label="Настройка"
-          className="flex items-center gap-1.5 px-3 py-2 min-h-10 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs"
+          className="flex items-center gap-1.5 px-3 py-2 min-h-11 min-w-11 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs"
         >
           <Settings2 className="w-4 h-4" aria-hidden="true" /><span className="hidden sm:inline">Настройка</span>
         </button>
@@ -107,7 +111,7 @@ export default function DesktopShell() {
             onClick={() => setTab(t.id)}
             aria-current={tab === t.id ? 'page' : undefined}
             aria-label={t.label}
-            className={`shrink-0 flex items-center gap-2 px-3 py-2 min-h-10 rounded-lg text-sm transition-colors ${
+            className={`shrink-0 flex items-center gap-2 px-3 py-2 min-h-11 rounded-lg text-sm transition-colors ${
               tab === t.id ? 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/30' : 'text-sv-muted hover:bg-white/5 hover:text-sv-text border border-transparent'
             }`}
           >

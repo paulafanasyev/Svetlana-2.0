@@ -3,6 +3,8 @@
 // Каждый вызов сервиса из чата Светлана выполняет только после подтверждения на экране
 // (кроме просмотра в Vercel, если пользователь сам разрешил его галочкой).
 // Список инструментов показывается только после того, как сервис в этом сеансе заново ответил по токену.
+// Пока идёт подключение, обновление, включение или отключение, карточка занята (aria-busy, кнопки неактивны).
+// Кнопки-значки не меньше 44 px.
 import { useEffect, useId, useState } from 'react';
 import { Plug, ExternalLink, RefreshCw, Trash2, Loader2, X, Key, Eye, EyeOff } from 'lucide-react';
 import { mcpManager, type ServerStatus } from '../services/mcp/McpManager';
@@ -11,6 +13,9 @@ import { secretStorageMode } from '../services/security/SecretStore';
 import { appPlatform } from '../platform';
 
 export const MCP_WEB_NOTE = 'На сайте часть сервисов может не пустить браузер (CORS). В приложениях для Windows и Android такого ограничения меньше.';
+
+const iconBtn = 'min-w-11 min-h-11 inline-flex items-center justify-center rounded-lg';
+const textBtn = 'px-3 py-2 min-h-11 rounded-lg text-xs';
 
 function ServerCard({ s }: { s: ServerStatus }) {
   const [token, setToken] = useState('');
@@ -25,6 +30,7 @@ function ServerCard({ s }: { s: ServerStatus }) {
   const creds = !!s.server.tokenLabel;
 
   const run = async (fn: () => Promise<string>) => {
+    if (busy) return;
     setBusy(true); setMsg(null);
     try { setMsg({ ok: true, text: await fn() }); } catch (e) {
       // Показываем только свои понятные тексты (без токена); всё остальное — общей фразой.
@@ -34,18 +40,20 @@ function ServerCard({ s }: { s: ServerStatus }) {
   const connect = () => run(async () => { const n = await mcpManager.connect(s.server.id, token); setToken(''); setReplace(false); return `Подключено, инструментов: ${n}`; });
   const refresh = () => run(async () => `Обновлено, инструментов: ${await mcpManager.refresh(s.server.id)}`);
   const remove = () => { setConfirmRemove(false); return run(async () => { await mcpManager.disconnect(s.server.id); return creds ? 'Отключено, данные доступа удалены' : 'Отключено, токен удалён'; }); };
+  // Включение и выключение тоже идут через run: ошибка видна, повторный щелчок не запускает второй запрос.
+  const toggleEnabled = (on: boolean) => run(async () => { await mcpManager.setServerEnabled(s.server.id, on); return on ? 'Сервис включён' : 'Сервис выключен'; });
   const onCount = s.tools.filter(t => t.on).length;
 
   return (
-    <div data-testid={`mcp-${s.server.id}`} className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-2">
+    <div data-testid={`mcp-${s.server.id}`} aria-busy={busy} className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-2">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <h4 className="text-sm font-semibold">{s.server.name}</h4>
           <p className="text-xs text-sv-muted">{s.server.description}</p>
         </div>
         {s.connected && (
-          <label className="flex items-center gap-1.5 text-xs shrink-0">
-            <input type="checkbox" checked={s.enabled} onChange={e => { void mcpManager.setServerEnabled(s.server.id, e.target.checked); }} aria-label={`Включить ${s.server.name}`} />
+          <label className="flex items-center gap-1.5 text-xs shrink-0 min-h-11 cursor-pointer">
+            <input type="checkbox" className="w-4 h-4" checked={s.enabled} disabled={busy} onChange={e => { void toggleEnabled(e.target.checked); }} aria-label={`Включить ${s.server.name}`} />
             {s.enabled ? 'включён' : 'выключен'}
           </label>
         )}
@@ -61,22 +69,22 @@ function ServerCard({ s }: { s: ServerStatus }) {
               onChange={e => setToken(e.target.value)}
               placeholder={s.server.tokenLabel ?? (s.server.tokenRequired ? 'токен' : 'токен (необязательно)')}
               aria-label={creds ? `Данные для входа в API ${s.server.name} в формате ${s.server.tokenLabel}` : `Токен ${s.server.name}`}
-              className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-xs focus:outline-none focus:border-indigo-500/50"
+              className="flex-1 min-w-0 px-3 py-2 min-h-11 rounded-lg bg-white/5 border border-white/10 text-xs focus:outline-none focus:border-indigo-500/50"
             />
-            <button type="button" onClick={() => setShow(!show)} aria-pressed={show} aria-label={show ? (creds ? 'Скрыть данные доступа' : 'Скрыть токен') : (creds ? 'Показать данные доступа' : 'Показать токен')} title={show ? (creds ? 'Скрыть данные доступа' : 'Скрыть токен') : (creds ? 'Показать данные доступа' : 'Показать токен')} className="p-2 rounded-lg bg-white/5 hover:bg-white/10">
-              {show ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            <button type="button" onClick={() => setShow(!show)} aria-pressed={show} aria-label={show ? (creds ? 'Скрыть данные доступа' : 'Скрыть токен') : (creds ? 'Показать данные доступа' : 'Показать токен')} title={show ? (creds ? 'Скрыть данные доступа' : 'Скрыть токен') : (creds ? 'Показать данные доступа' : 'Показать токен')} className={`${iconBtn} bg-white/5 hover:bg-white/10`}>
+              {show ? <EyeOff className="w-4 h-4" aria-hidden="true" /> : <Eye className="w-4 h-4" aria-hidden="true" />}
             </button>
             <button
               onClick={connect}
               disabled={busy || (s.server.tokenRequired && !token.trim())}
-              className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium flex items-center gap-1"
+              className="px-3 py-2 min-h-11 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium flex items-center gap-1"
             >
-              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plug className="w-3.5 h-3.5" />} Подключить
+              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" /> : <Plug className="w-3.5 h-3.5" aria-hidden="true" />} {busy ? 'Подключаю…' : 'Подключить'}
             </button>
           </div>
           <p className="text-xs text-sv-muted flex items-start gap-1">
-            <Key className="w-3 h-3 mt-0.5 shrink-0" />
-            <span>{s.server.tokenHint} <a href={s.server.tokenUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline inline-flex items-center gap-0.5">{creds ? 'Как настроить API' : 'Как получить токен'} <ExternalLink className="w-3 h-3" /></a></span>
+            <Key className="w-3 h-3 mt-0.5 shrink-0" aria-hidden="true" />
+            <span>{s.server.tokenHint} <a href={s.server.tokenUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline inline-flex items-center gap-0.5">{creds ? 'Как настроить API' : 'Как получить токен'} <ExternalLink className="w-3 h-3" aria-hidden="true" /></a></span>
           </p>
         </>
       )}
@@ -91,30 +99,30 @@ function ServerCard({ s }: { s: ServerStatus }) {
 
       {s.connected && (
         <div className="flex flex-wrap items-center gap-2">
-          {s.verified && <button onClick={() => setOpen(!open)} aria-expanded={open} aria-controls={listId} className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs">
+          {s.verified && <button onClick={() => setOpen(!open)} aria-expanded={open} aria-controls={listId} className={`${textBtn} bg-white/5 hover:bg-white/10`}>
             Инструменты: {onCount} из {s.tools.length}
           </button>}
           {s.verified && s.canAutoRead && (
-            <label className="flex items-center gap-1.5 text-xs" title="Просмотр проектов, деплоев, логов и доменов выполняется без окна подтверждения. Голосовые команды подтверждаются всегда.">
-              <input type="checkbox" checked={s.autoRead} onChange={e => mcpManager.setAutoRead(s.server.id, e.target.checked)} aria-label={`Чтение без подтверждения: ${s.server.name}`} />
+            <label className="flex items-center gap-1.5 text-xs min-h-11 cursor-pointer" title="Просмотр проектов, деплоев, логов и доменов выполняется без окна подтверждения. Голосовые команды подтверждаются всегда.">
+              <input type="checkbox" className="w-4 h-4" checked={s.autoRead} onChange={e => mcpManager.setAutoRead(s.server.id, e.target.checked)} aria-label={`Чтение без подтверждения: ${s.server.name}`} />
               чтение без подтверждения
             </label>
           )}
-          <button onClick={refresh} disabled={busy} title="Обновить список" aria-label={`Обновить ${s.server.name}`} className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-50">
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+          <button onClick={refresh} disabled={busy} title="Обновить список" aria-label={`Обновить ${s.server.name}`} className={`${iconBtn} bg-white/5 hover:bg-white/10 disabled:opacity-50`}>
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="w-4 h-4" aria-hidden="true" />}
           </button>
-          <button onClick={() => setReplace(!replace)} aria-expanded={replace} className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs">
+          <button onClick={() => setReplace(!replace)} disabled={busy} aria-expanded={replace} className={`${textBtn} bg-white/5 hover:bg-white/10 disabled:opacity-50`}>
             {replace ? 'Отмена' : creds ? 'Сменить данные для входа' : 'Сменить токен'}
           </button>
           {!confirmRemove ? (
-            <button onClick={() => setConfirmRemove(true)} disabled={busy} title={creds ? 'Отключить и удалить данные доступа' : 'Отключить и удалить токен'} aria-label={`Отключить ${s.server.name}`} className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 disabled:opacity-50">
-              <Trash2 className="w-3.5 h-3.5" />
+            <button onClick={() => setConfirmRemove(true)} disabled={busy} title={creds ? 'Отключить и удалить данные доступа' : 'Отключить и удалить токен'} aria-label={`Отключить ${s.server.name}`} className={`${iconBtn} bg-red-500/10 hover:bg-red-500/20 text-red-300 disabled:opacity-50`}>
+              <Trash2 className="w-4 h-4" aria-hidden="true" />
             </button>
           ) : (
             <span className="flex items-center gap-1.5 text-xs" role="group" aria-label="Подтвердите отключение">
               {creds ? 'Удалить данные доступа?' : 'Удалить токен?'}
-              <button onClick={remove} disabled={busy} className="px-2 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white">Да, отключить</button>
-              <button onClick={() => setConfirmRemove(false)} className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20">Нет</button>
+              <button onClick={remove} disabled={busy} className={`${textBtn} bg-red-600 hover:bg-red-500 text-white`}>Да, отключить</button>
+              <button onClick={() => setConfirmRemove(false)} className={`${textBtn} bg-white/10 hover:bg-white/20`}>Нет</button>
             </span>
           )}
         </div>
@@ -123,13 +131,15 @@ function ServerCard({ s }: { s: ServerStatus }) {
       {s.connected && s.verified && open && (
         <ul id={listId} className="max-h-60 overflow-y-auto space-y-1 pr-1">
           {s.tools.map(t => (
-            <li key={t.id} className="flex items-start gap-2 text-xs">
-              <input type="checkbox" checked={t.on} onChange={e => mcpManager.setToolEnabled(s.server.id, t.def.name, e.target.checked)} aria-label={t.def.title || t.def.name} className="mt-0.5" />
-              <span className="min-w-0">
-                <span className="font-medium">{t.def.title || t.def.name}</span>
-                <span className={`ml-1.5 px-1.5 rounded ${t.def.readOnly ? 'bg-emerald-500/10 text-emerald-300' : 'bg-yellow-500/10 text-yellow-300'}`}>{t.def.readOnly ? 'чтение' : 'изменяет'}</span>
-                {t.def.description && <span className="block text-sv-muted truncate">{t.def.description}</span>}
-              </span>
+            <li key={t.id}>
+              <label className="flex items-start gap-2 text-xs py-1.5 min-h-11 cursor-pointer">
+                <input type="checkbox" checked={t.on} onChange={e => mcpManager.setToolEnabled(s.server.id, t.def.name, e.target.checked)} aria-label={t.def.title || t.def.name} className="mt-0.5 w-4 h-4 shrink-0" />
+                <span className="min-w-0">
+                  <span className="font-medium">{t.def.title || t.def.name}</span>
+                  <span className={`ml-1.5 px-1.5 rounded ${t.def.readOnly ? 'bg-emerald-500/10 text-emerald-300' : 'bg-yellow-500/10 text-yellow-300'}`}>{t.def.readOnly ? 'чтение' : 'изменяет'}</span>
+                  {t.def.description && <span className="block text-sv-muted truncate">{t.def.description}</span>}
+                </span>
+              </label>
             </li>
           ))}
         </ul>
@@ -152,7 +162,7 @@ export default function McpPanel({ onClose }: { onClose?: () => void }) {
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-lg font-semibold flex items-center gap-2"><Plug className="w-5 h-5 text-indigo-300" aria-hidden="true" />Сервисы</h3>
         {onClose && (
-          <button onClick={onClose} aria-label="Закрыть сервисы" className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} aria-label="Закрыть сервисы" className={`${iconBtn} bg-white/5 hover:bg-white/10 text-sv-muted`}><X className="w-4 h-4" aria-hidden="true" /></button>
         )}
       </div>
       <p className="text-sm text-sv-muted">

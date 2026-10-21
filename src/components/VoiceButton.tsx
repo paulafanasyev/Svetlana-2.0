@@ -5,6 +5,7 @@
 // Панель настроек — модальное окно (useDialogFocus): фокус на «Закрыть», Tab не уходит на страницу под ним,
 // а затенение не даёт нажать на страницу мышью или пальцем (нажатие на затенение закрывает панель).
 // Уход со страницы отменяет прослушивание (cancel): запоздавшая фраза уже не выполнится как команда.
+// Ошибки распознавания показываются понятной фразой (explainVoiceError). Все кнопки не меньше 44 px.
 import { useEffect, useRef, useState } from 'react';
 import { Mic, MicOff, Settings2, X, Volume2, VolumeX } from 'lucide-react';
 import { sttSupport, getCloudStt, setCloudStt, resetWebStt, STT_PRESETS, type Listener } from '../services/voice/SpeechEngine';
@@ -13,6 +14,7 @@ import VoiceEnroll from './VoiceEnroll';
 import { normalizeSpoken } from '../services/voice/VoiceText';
 import { speakText, stopSpeaking, isMuted, setMuted, ttsAvailable } from '../services/voice/Tts';
 import { detectCRMIntent, runCRMActions } from '../services/crm/CRMTools';
+import { explainVoiceError } from '../services/AiErrors';
 import { isAndroidApp } from '../platform';
 import { onBack } from '../services/BackStack';
 import { useDialogFocus } from './useDialogFocus';
@@ -84,7 +86,7 @@ export default function VoiceButton() {
     const l = listenCommand({
       onPartial: t => show({ heard: t }, 30000),
       onFinal: t => { void handle(t); },
-      onError: m => show({ error: m }),
+      onError: m => show({ error: explainVoiceError(m) }),
       onEnd: () => { listenerRef.current = null; if (aliveRef.current) setListening(false); },
     });
     listenerRef.current = l;
@@ -100,16 +102,16 @@ export default function VoiceButton() {
   return (
     <>
       <div className="flex items-center rounded-full bg-fuchsia-600 shadow-lg shadow-fuchsia-900/40 text-white text-sm font-medium">
-        <button onClick={toggle} className={`flex items-center gap-2 pl-3 sm:pl-4 pr-3 py-2.5 rounded-l-full ${listening ? 'bg-red-600' : 'hover:bg-fuchsia-700'}`} aria-label={listening ? 'Остановить' : 'Сказать команду'} aria-pressed={listening}>
+        <button onClick={toggle} className={`flex items-center gap-2 pl-3 sm:pl-4 pr-3 py-2.5 min-h-11 rounded-l-full ${listening ? 'bg-red-600' : 'hover:bg-fuchsia-700'}`} aria-label={listening ? 'Остановить' : 'Сказать команду'} aria-pressed={listening}>
           {listening ? <MicOff className="w-4 h-4" aria-hidden="true" /> : <Mic className="w-4 h-4" aria-hidden="true" />}Голос
         </button>
-        <button ref={settingsBtnRef} onClick={() => setSettings(s => !s)} className="pl-2 pr-3 py-2.5 rounded-r-full hover:bg-fuchsia-700 border-l border-white/20" aria-label="Настройки голоса" aria-expanded={settings} aria-haspopup="dialog">
+        <button ref={settingsBtnRef} onClick={() => setSettings(s => !s)} className="pl-2 pr-3 py-2.5 min-h-11 min-w-11 flex items-center justify-center rounded-r-full hover:bg-fuchsia-700 border-l border-white/20" aria-label="Настройки голоса" aria-expanded={settings} aria-haspopup="dialog">
           <Settings2 className="w-4 h-4" aria-hidden="true" />
         </button>
       </div>
       {bubble && (
         <div role={bubble.error ? 'alert' : 'status'} className="fixed bottom-20 left-3 right-3 sm:right-auto sm:left-5 z-40 sm:max-w-sm rounded-xl bg-slate-900/95 border border-white/10 p-3 text-sm text-white shadow-xl space-y-1">
-          <button className="float-right text-slate-400 hover:text-white" onClick={() => setBubble(null)} aria-label="Закрыть"><X className="w-4 h-4" aria-hidden="true" /></button>
+          <button className="float-right -mt-2 -mr-2 min-w-11 min-h-11 flex items-center justify-center rounded-lg text-slate-400 hover:text-white" onClick={() => setBubble(null)} aria-label="Закрыть"><X className="w-4 h-4" aria-hidden="true" /></button>
           {bubble.heard && <p className="text-slate-300 italic">«{bubble.heard}»</p>}
           {bubble.reply && <p className="whitespace-pre-line">{bubble.reply}</p>}
           {bubble.error && <p className="text-amber-300">{bubble.error}</p>}
@@ -159,7 +161,7 @@ function VoiceSettings({ onClose }: { onClose: () => void }) {
     <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="voice-settings-title" className="fixed bottom-20 left-3 sm:left-5 z-50 w-[22rem] max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-y-auto rounded-xl bg-slate-900/98 border border-white/10 p-4 text-sm text-white shadow-2xl space-y-3 focus:outline-none">
       <div className="flex items-center justify-between">
         <h3 id="voice-settings-title" className="font-semibold">Голос Светланы</h3>
-        <button ref={closeRef} onClick={onClose} className="text-slate-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400 rounded" aria-label="Закрыть настройки голоса"><X className="w-4 h-4" aria-hidden="true" /></button>
+        <button ref={closeRef} onClick={onClose} className="-mr-2 min-w-11 min-h-11 flex items-center justify-center text-slate-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400 rounded" aria-label="Закрыть настройки голоса"><X className="w-4 h-4" aria-hidden="true" /></button>
       </div>
       {android && (
         <p data-testid="android-voice" className="text-xs text-slate-300">
@@ -177,20 +179,20 @@ function VoiceSettings({ onClose }: { onClose: () => void }) {
       </p>
       <div className="flex gap-2" role="group" aria-label="Сервис распознавания">
         {STT_PRESETS.map(x => (
-          <button key={x.id} onClick={() => setPreset(x.id)} aria-pressed={preset === x.id} className={`px-3 py-1.5 rounded-lg text-xs ${preset === x.id ? 'bg-indigo-600' : 'bg-white/5 hover:bg-white/10'}`}>{x.title}</button>
+          <button key={x.id} onClick={() => setPreset(x.id)} aria-pressed={preset === x.id} className={`px-3 py-2 min-h-11 rounded-lg text-xs ${preset === x.id ? 'bg-indigo-600' : 'bg-white/5 hover:bg-white/10'}`}>{x.title}</button>
         ))}
       </div>
       <label htmlFor="voice-stt-key" className="block text-xs text-slate-300">Ключ {p.title}</label>
       <input id="voice-stt-key" className={input} type="password" autoComplete="off" placeholder="API-ключ" value={key} onChange={e => setKey(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') save(); }} />
       <a className="text-xs text-indigo-300 underline" href={p.keyUrl} target="_blank" rel="noreferrer">Получить ключ {p.title}</a>
       <div className="flex flex-wrap gap-2">
-        <button className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700" onClick={save}>Сохранить</button>
+        <button className="px-3 py-2 min-h-11 rounded-lg bg-indigo-600 hover:bg-indigo-700" onClick={save}>Сохранить</button>
         {ttsAvailable() && (
-          <button className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 inline-flex items-center gap-1.5" aria-pressed={!muted} onClick={() => { const m = !muted; setMuted(m); setMutedState(m); }}>
+          <button className="px-3 py-2 min-h-11 rounded-lg bg-white/5 hover:bg-white/10 inline-flex items-center gap-1.5" aria-pressed={!muted} onClick={() => { const m = !muted; setMuted(m); setMutedState(m); }}>
             {muted ? <VolumeX className="w-4 h-4" aria-hidden="true" /> : <Volume2 className="w-4 h-4" aria-hidden="true" />}{muted ? 'Озвучка выкл.' : 'Озвучка вкл.'}
           </button>
         )}
-        {ttsAvailable() && <button className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10" onClick={() => speakText('Привет! Я Светлана. Слышно меня?', { force: true })}>Тест</button>}
+        {ttsAvailable() && <button className="px-3 py-2 min-h-11 rounded-lg bg-white/5 hover:bg-white/10" onClick={() => speakText('Привет! Я Светлана. Слышно меня?', { force: true })}>Тест</button>}
       </div>
       {msg && <p role="status" className="text-xs text-indigo-200">{msg}</p>}
       {err && <p role="alert" className="text-xs text-amber-300">{err}</p>}

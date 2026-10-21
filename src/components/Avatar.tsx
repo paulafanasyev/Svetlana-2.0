@@ -6,6 +6,7 @@ import { listen, sttSupport, recordedRecognizer, type Listener, type ListenOptio
 import { listenVerified, verifiedVoiceReady } from '../services/voice/VoiceGuard';
 import { hasWakeWord, normalizeSpoken, pickRussianVoice } from '../services/voice/VoiceText';
 import { speakText, speakingNow, stopSpeaking, ttsAvailable } from '../services/voice/Tts';
+import { explainVoiceError } from '../services/AiErrors';
 import { isAndroidApp } from '../platform';
 
 type Emotion = 'neutral' | 'happy' | 'sad' | 'laughing' | 'crying' | 'surprised' | 'talking';
@@ -118,20 +119,20 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
         <div className="absolute inset-0 rounded-full bg-gradient-to-t from-indigo-600/10 to-transparent pointer-events-none" />
       </div>
 
-      {/* Emotion Controls */}
+      {/* Emotion Controls: кнопки 44 px, чтобы попадать пальцем */}
       {interactive && showControls && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           role="group"
           aria-label="Эмоции Светланы"
-          className="absolute -bottom-16 left-1/2 -translate-x-1/2 flex gap-2 p-2 rounded-xl bg-sv-darker/95 border border-sv-border backdrop-blur-xl"
+          className="absolute -bottom-16 left-1/2 -translate-x-1/2 z-10 flex gap-1.5 p-1.5 rounded-xl bg-sv-darker/95 border border-sv-border backdrop-blur-xl"
         >
           {(['neutral', 'happy', 'sad', 'laughing', 'crying', 'surprised'] as Emotion[]).map(emotion => (
             <button
               key={emotion}
               onClick={() => setEmotion(emotion)}
-              className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition-all ${
+              className={`w-11 h-11 rounded-full flex items-center justify-center text-base transition-all ${
                 currentEmotion === emotion ? 'bg-indigo-500 text-white' : 'bg-white/10 text-sv-muted hover:bg-white/20'
               }`}
               title={EMOTION_LABELS[emotion]}
@@ -178,6 +179,7 @@ export function listenCommand(opts: ListenOptions & { accept?: (text: string) =>
 // Every phrase is checked against the owner's voiceprint (VoiceGuard): other voices are ignored.
 // The first command also needs 3 random digits spoken aloud (protection against a recorded voice).
 // onListeningChange — микрофон включён/выключен (для кольца на аватаре).
+// Ошибки распознавания показываются понятной фразой (explainVoiceError), а не текстом сервиса.
 export function VoiceControl({ onCommand, onListeningChange }: { onCommand?: (command: string) => void; onListeningChange?: (listening: boolean) => void }) {
   const [isListening, setIsListening] = useState(false);
   const [handsFree, setHandsFree] = useState(false);
@@ -218,7 +220,7 @@ export function VoiceControl({ onCommand, onListeningChange }: { onCommand?: (co
         const command = normalizeSpoken(t);
         if (command) onCommandRef.current?.(command);
       },
-      onError: m => { if (live()) setError(m); },
+      onError: m => { if (live()) setError(explainVoiceError(m)); },
       onEnd: () => {
         if (!live()) return;
         listenerRef.current = null;
@@ -284,7 +286,7 @@ export function VoiceControl({ onCommand, onListeningChange }: { onCommand?: (co
         {transcript && <p className="text-sm text-indigo-300 italic">"{transcript}"</p>}
         {error && <p className="text-xs text-amber-300" role="alert">{error}</p>}
         {((support.web && !android) || phoneVerified) && (
-          <button data-testid="hands-free" onClick={toggleHandsFree} aria-pressed={handsFree} className={`text-xs px-3 py-1 rounded-full border ${handsFree ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-white/5 border-white/10 text-sv-muted hover:bg-white/10'}`}>
+          <button data-testid="hands-free" onClick={toggleHandsFree} aria-pressed={handsFree} className={`text-xs px-3 py-2 min-h-11 rounded-full border ${handsFree ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-white/5 border-white/10 text-sv-muted hover:bg-white/10'}`}>
             {handsFree ? 'Режим «Светлана, …» включён' : 'Включить «Светлана, …» без рук'}
           </button>
         )}
