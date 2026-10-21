@@ -5,7 +5,11 @@
 // отменённый не «завершить»: иначе книга доходов и записи описывают разное.
 // Данные с диска и от ИИ проверяются: шаг сетки, время ЧЧ:ММ, длительность 5–720 минут, цена не отрицательная
 // (иначе нулевой шаг вешал страницу, а запись с отрицательной длительностью ломала сетку и выручку).
+// Несколько окон (как CRM и «Бизнес», см. SyncedKey): чужая запись подхватывается сразу, а изменение из старой
+// копии не пишется поверх (BOOKING_CHANGED_ELSEWHERE): иначе два окна записали бы двух клиентов на одно время
+// или потеряли отметку визита, а доход в книге остался бы.
 import { safeJsonParse, stripControl, MAX_BYTES } from '../security/SafeData';
+import { readRaw, changedElsewhere, onOtherTabWrite } from '../security/SyncedKey';
 import type { KeyValueStorage } from '../crm/CRMStore';
 
 export type BookingStatus = 'booked' | 'done' | 'cancelled' | 'noshow';
@@ -40,6 +44,8 @@ interface BookingData { version: 1; services: Service[]; schedule: Schedule; app
 export const BOOKING_STATUS_LABELS: Record<BookingStatus, string> = { booked: 'Записан', done: 'Пришёл', cancelled: 'Отменена', noshow: 'Не пришёл' };
 export const WEEKDAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 export const BOOKING_SAVE_FAILED = 'Не удалось сохранить запись: память устройства переполнена или недоступна. Изменение отменено.';
+/** Записи только что изменили в другом окне: изменение из старой копии не записано, данные уже обновлены. */
+export const BOOKING_CHANGED_ELSEWHERE = 'Записи клиентов только что изменили в другом окне Светланы. Данные обновлены, повторите действие.';
 export const BOOKING_DONE_LOCKED = 'Визит уже отмечен как состоявшийся, доход записан: отменить или перенести его нельзя. Если деньги вернули, запишите возврат в финансах.';
 export const BOOKING_CANCELLED_LOCKED = 'Запись отменена. Чтобы вернуть клиента, запишите его заново или перенесите запись на другое время.';
 export const BOOKING_DURATION_RANGE = 'Длительность: от 5 минут до 12 часов';
@@ -263,21 +269,48 @@ export class BookingStore {
   private data: BookingData;
   /** Последнее успешно сохранённое состояние: к нему откатываемся, если запись на диск не удалась. */
   private saved: string;
+  /** Запись на диске, которую мы читали или писали последними: другая запись там — значит, писало другое окно. */
+  private lastRaw: string | null | undefined;
   private listeners = new Set<() => void>();
 
   constructor(storage: KeyValueStorage = defaultStorage(), clock: () => number = Date.now) {
     this.storage = storage;
     this.clock = clock;
-    try {
-      const raw = this.storage.getItem(STORAGE_KEY);
-      this.data = raw ? sanitize(safeJsonParse(raw, MAX_BYTES.storage)) : emptyData();
-    } catch {
-      this.data = emptyData();
-    }
+    this.lastRaw = readRaw(storage, STORAGE_KEY);
+    this.data = this.parse(this.lastRaw);
     this.saved = JSON.stringify(this.data);
+    // Другое окно сохранило записи: сразу берём свежие данные и обновляем экраны.
+    onOtherTabWrite(storage, STORAGE_KEY, raw => { if (raw !== this.lastRaw) this.adopt(raw); });
+  }
+
+  private parse(raw: string | null | undefined): BookingData {
+    try {
+      return raw ? sanitize(safeJsonParse(raw, MAX_BYTES.storage)) : emptyData();
+    } catch {
+      return emptyData();
+    }
+  }
+
+  /** Взять данные, записанные другим окном, и обновить экраны. */
+  private adopt(raw: string | null | undefined): void {
+    this.lastRaw = raw;
+    this.data = this.parse(raw);
+    this.saved = JSON.stringify(this.data);
+    this.notify();
+  }
+
+  private notify(): void {
+    for (const l of [...this.listeners]) {
+      try { l(); } catch { /* ошибка подписчика не отменяет сохранение */ }
+    }
   }
 
   private commit(): void {
+    const disk = readRaw(this.storage, STORAGE_KEY);
+    if (changedElsewhere(disk, this.lastRaw)) {
+      this.adopt(disk);
+      throw new Error(BOOKING_CHANGED_ELSEWHERE);
+    }
     const next = JSON.stringify(this.data);
     try {
       this.storage.setItem(STORAGE_KEY, next);
@@ -286,9 +319,9 @@ export class BookingStore {
       throw new Error(BOOKING_SAVE_FAILED);
     }
     this.saved = next;
-    for (const l of [...this.listeners]) {
-      try { l(); } catch { /* ошибка подписчика не отменяет сохранение */ }
-    }
+    const after = readRaw(this.storage, STORAGE_KEY);
+    this.lastRaw = after === undefined ? next : after;
+    this.notify();
   }
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
