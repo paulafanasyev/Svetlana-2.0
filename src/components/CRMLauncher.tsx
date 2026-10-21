@@ -4,7 +4,8 @@
 // В Android выгрузки файлов из этих разделов идут через системное окно «Сохранить как» (AndroidFiles),
 // а системная кнопка «Назад» закрывает окно так же, как Esc и «Закрыть» (BackStack).
 // Клавиатура: при открытии фокус на «Закрыть», Tab ходит по кругу внутри окна, после закрытия фокус возвращается
-// на кнопку, которой окно открыли. Активный раздел отмечен для экранного диктора (aria-current).
+// на кнопку, которой окно открыли (если окно открыли ссылкой #crm и т. п., — на кнопку CRM, а не в никуда).
+// Активный раздел отмечен для экранного диктора (aria-current).
 // Пока окно открыто, страница под ним недоступна (isolateDialog/inert) и для диктора; окна подтверждения
 // действий (ActionConfirmHost) лежат в контейнере data-svetlana-dialogs и остаются доступными.
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
@@ -42,6 +43,8 @@ export default function CRMLauncher() {
   const bizRef = useRef<HTMLButtonElement>(null);
   /** Какой кнопкой открыли окно: туда вернётся фокус после закрытия. */
   const openedBy = useRef<'crm' | 'biz' | null>(null);
+  /** Окно уже было открыто: только тогда после закрытия возвращаем фокус (при загрузке страницы его не трогаем). */
+  const wasOpen = useRef(false);
   const isOpen = section !== null;
   // Пульс в личный кабинет (только если устройство привязано; иначе ничего не отправляется).
   useEffect(() => startHeartbeat(), []);
@@ -69,9 +72,12 @@ export default function CRMLauncher() {
   }, [isOpen]);
 
   // Фокус: при открытии — на «Закрыть», при закрытии — обратно на кнопку, которой окно открыли.
+  // Окно открыли ссылкой (#crm, #booking…): такой кнопки нет, фокус идёт на «CRM», чтобы не потеряться.
   useEffect(() => {
-    if (isOpen) { closeRef.current?.focus(); return; }
-    const back = openedBy.current === 'biz' ? bizRef.current : openedBy.current === 'crm' ? crmRef.current : null;
+    if (isOpen) { wasOpen.current = true; closeRef.current?.focus(); return; }
+    if (!wasOpen.current) return;
+    wasOpen.current = false;
+    const back = openedBy.current === 'biz' ? bizRef.current : crmRef.current;
     openedBy.current = null;
     back?.focus();
   }, [isOpen]);
