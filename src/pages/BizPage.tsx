@@ -1,6 +1,7 @@
 // Svetlana Business — деньги, документы, должники, налоги, господдержка, профиль.
 // Доступность: у каждого поля есть подпись, ошибки читаются сразу (role=alert).
 // Подтверждения и ввод номера чека — своё окно: в приложении системные confirm/prompt могут молча не сработать.
+// Ошибки показываются через safeErrorText: наши русские тексты как есть, технические заменяются понятной фразой.
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
   Wallet, FileText, AlertTriangle, Calculator, Landmark, UserCog, Plus, Trash2, Printer, Download,
@@ -17,6 +18,7 @@ import {
 } from '../services/biz/SupportCatalog';
 import { crmStore } from '../services/crm/CRMStore';
 import { askConfirm, askText, showCopyText } from '../components/ConfirmDialog';
+import { safeErrorText } from '../services/safeErrorText';
 
 type Tab = 'money' | 'docs' | 'debts' | 'taxes' | 'support' | 'profile';
 
@@ -69,7 +71,7 @@ function PaidButton({ docId, label = 'Оплачен' }: { docId: string; label?
   const pay = () => {
     setErr(null);
     if (npd && !method) { setErr('Выберите, как заплатили'); return; }
-    try { bizStore.markPaid(docId, { payMethod: method || undefined }); } catch (e: any) { setErr(e?.message || 'Не удалось отметить оплату'); }
+    try { bizStore.markPaid(docId, { payMethod: method || undefined }); } catch (e) { setErr(safeErrorText(e, 'Не удалось отметить оплату')); }
   };
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5">
@@ -116,21 +118,21 @@ function MoneyTab() {
         payerType, counterparty: client, contactId: contact?.id, payMethod: kind === 'income' ? payMethod : undefined,
       });
       setAmount(''); setDescription(''); setClient('');
-    } catch (err: any) { setError(err?.message || 'Не удалось сохранить'); }
+    } catch (err) { setError(safeErrorText(err, 'Не удалось сохранить')); }
   };
 
   const askReceipt = async (id: string) => {
     const n = await askText('Чек выбит в «Мой налог»? Номер чека (можно пусто):', { okText: 'Чек выбит', value: '' });
     if (n === null) return;
     setError(null);
-    try { bizStore.setReceipt(id, n); } catch (err: any) { setError(err?.message || 'Не удалось сохранить чек'); }
+    try { bizStore.setReceipt(id, n); } catch (err) { setError(safeErrorText(err, 'Не удалось сохранить чек')); }
   };
 
   const removeEntry = async (id: string, what: string) => {
     const ok = await askConfirm(`Удалить запись${what ? ` «${what}»` : ''}?`, { okText: 'Удалить' });
     if (!ok) return;
     setError(null);
-    try { bizStore.deleteEntry(id); } catch (err: any) { setError(err?.message || 'Не удалось удалить запись'); }
+    try { bizStore.deleteEntry(id); } catch (err) { setError(safeErrorText(err, 'Не удалось удалить запись')); }
   };
 
   return (
@@ -228,19 +230,19 @@ function DocsTab() {
         basis: basis || undefined,
       });
       setService(''); setPrice(''); setQty('1');
-    } catch (err: any) { setError(err?.message || 'Не удалось создать документ'); }
+    } catch (err) { setError(safeErrorText(err, 'Не удалось создать документ')); }
   };
 
   const removeDoc = async (id: string, title: string) => {
     const ok = await askConfirm(`Удалить ${title}?`, { okText: 'Удалить' });
     if (!ok) return;
     setError(null);
-    try { bizStore.deleteDocument(id); } catch (err: any) { setError(err?.message || 'Не удалось удалить документ'); }
+    try { bizStore.deleteDocument(id); } catch (err) { setError(safeErrorText(err, 'Не удалось удалить документ')); }
   };
 
   const markSent = (id: string) => {
     setError(null);
-    try { bizStore.setDocumentStatus(id, 'sent'); } catch (err: any) { setError(err?.message || 'Не удалось изменить статус'); }
+    try { bizStore.setDocumentStatus(id, 'sent'); } catch (err) { setError(safeErrorText(err, 'Не удалось изменить статус')); }
   };
 
   return (
@@ -273,7 +275,7 @@ function DocsTab() {
               </div>
               <button className={btnGhost} onClick={() => printHTML(html())} aria-label={`Печать или PDF: ${title}`}><Printer className="w-4 h-4" aria-hidden="true" />Печать / PDF</button>
               <button className={btnGhost} onClick={() => download(`${DOC_LABELS[d.type]}-${d.number}.html`, html(), 'text/html;charset=utf-8')} aria-label={`Скачать файл: ${title}`}><Download className="w-4 h-4" aria-hidden="true" />Файл</button>
-              {d.type === 'invoice' && d.status !== 'cancelled' && profile.account && (() => { try { return <CopyButton text={paymentString(profile, d.total, `Оплата по счёту № ${d.number} от ${date(d.date)}`)} label="Строка для QR" />; } catch (err: any) { return <span className="text-xs text-amber-300">{err?.message}</span>; } })()}
+              {d.type === 'invoice' && d.status !== 'cancelled' && profile.account && (() => { try { return <CopyButton text={paymentString(profile, d.total, `Оплата по счёту № ${d.number} от ${date(d.date)}`)} label="Строка для QR" />; } catch (err) { return <span className="text-xs text-amber-300">{safeErrorText(err, 'Строку для QR собрать не удалось: проверьте реквизиты в профиле')}</span>; } })()}
               {d.type === 'invoice' && d.status === 'draft' && <button className={btnGhost} onClick={() => markSent(d.id)}><Send className="w-4 h-4" aria-hidden="true" />Отправлен</button>}
               {d.type === 'invoice' && d.status !== 'paid' && d.status !== 'cancelled' && <PaidButton docId={d.id} />}
               <button onClick={() => { void removeDoc(d.id, title); }} className="p-2 text-slate-400 hover:text-red-300" aria-label={`Удалить: ${title}`}><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
@@ -509,7 +511,7 @@ function ProfileTab() {
         usnRate: parsed.usnRate,
       });
       setMsg({ text: 'Сохранено', error: false });
-    } catch (err: any) { setMsg({ text: err?.message || 'Не удалось сохранить профиль', error: true }); }
+    } catch (err) { setMsg({ text: safeErrorText(err, 'Не удалось сохранить профиль'), error: true }); }
   };
 
   return (

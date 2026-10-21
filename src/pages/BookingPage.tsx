@@ -1,6 +1,7 @@
 // Svetlana Business — запись клиентов: день, новая запись по свободным окнам, напоминания, услуги и рабочие часы.
 // Доступность: у полей есть подписи, выбранное время — aria-pressed, результат действия читается как статус, ошибка — как alert.
 // Визит отмечается через completeAppointment: доход записывается один раз и убирается, если отметка не сохранилась.
+// Ошибки показываются через safeErrorText: наши русские тексты как есть, технические заменяются понятной фразой.
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { CalendarClock, ChevronLeft, ChevronRight, Check, X, UserX, Copy, Bell, Plus, Trash2, Download, Settings } from 'lucide-react';
 import { bookingStore, startOfDay, timeOf, dayLabel, toICS, toMinutes, WEEKDAY_LABELS, BOOKING_STATUS_LABELS, type Appointment, type WorkDay, type BookingStatus } from '../services/biz/Booking';
@@ -8,6 +9,7 @@ import { formatRub } from '../services/biz/BizStore';
 import { completeAppointment } from '../services/biz/BookingTools';
 import { crmStore } from '../services/crm/CRMStore';
 import { askConfirm, showCopyText } from '../components/ConfirmDialog';
+import { safeErrorText } from '../services/safeErrorText';
 
 const DAY = 86_400_000;
 const input = 'w-full min-w-0 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-indigo-500/50';
@@ -102,7 +104,7 @@ export default function BookingPage() {
       }
       setMsg({ text: `Записала: ${a.clientName}, ${dayLabel(a.start, now)} в ${timeOf(a.start)}${note}`, error: false });
       setClient(''); setTime(''); setDay(startOfDay(a.start));
-    } catch (err: any) { setMsg({ text: err?.message || 'Не получилось записать', error: true }); }
+    } catch (err) { setMsg({ text: safeErrorText(err, 'Не получилось записать'), error: true }); }
   };
 
   const complete = (a: Appointment) => {
@@ -110,13 +112,13 @@ export default function BookingPage() {
     try {
       const r = completeAppointment(a, undefined);
       setDayMsg({ text: r.income > 0 ? `${a.clientName}: доход ${formatRub(r.income)} записан` : `${a.clientName}: визит отмечен`, error: false });
-    } catch (err: any) { setDayMsg({ text: err?.message || 'Не удалось отметить визит', error: true }); }
+    } catch (err) { setDayMsg({ text: safeErrorText(err, 'Не удалось отметить визит'), error: true }); }
   };
 
   const setStatus = (a: Appointment, status: BookingStatus, done: string) => {
     setDayMsg(null);
     try { bookingStore.setStatus(a.id, status); setDayMsg({ text: `${a.clientName}: ${done}`, error: false }); }
-    catch (err: any) { setDayMsg({ text: err?.message || 'Не удалось изменить запись', error: true }); }
+    catch (err) { setDayMsg({ text: safeErrorText(err, 'Не удалось изменить запись'), error: true }); }
   };
 
   const cancel = async (a: Appointment) => {
@@ -214,7 +216,7 @@ function BookingSettings({ version }: { version: number }) {
     if (!Number.isFinite(schedule.stepMin) || schedule.stepMin < 5 || !Number.isFinite(schedule.bufferMin) || schedule.bufferMin < 0) {
       setMsg({ text: 'Шаг — не меньше 5 минут, пауза — не меньше 0', error: true }); return;
     }
-    try { bookingStore.updateSchedule(schedule); setMsg({ text: 'Рабочие часы сохранены', error: false }); } catch (e: any) { setMsg({ text: e?.message || 'Не удалось сохранить рабочие часы', error: true }); }
+    try { bookingStore.updateSchedule(schedule); setMsg({ text: 'Рабочие часы сохранены', error: false }); } catch (e) { setMsg({ text: safeErrorText(e, 'Не удалось сохранить рабочие часы'), error: true }); }
   };
   const addService = (e: FormEvent) => {
     e.preventDefault();
@@ -222,12 +224,12 @@ function BookingSettings({ version }: { version: number }) {
     const cost = price.trim() ? Number(price.replace(/\s/g, '').replace(',', '.')) : 0;
     if (!Number.isFinite(minutes) || minutes < 5) { setMsg({ text: 'Длительность — не меньше 5 минут', error: true }); return; }
     if (!Number.isFinite(cost) || cost < 0) { setMsg({ text: 'Цену укажите цифрами, например 1500', error: true }); return; }
-    try { bookingStore.addService({ name, durationMin: minutes, price: cost }); setName(''); setPrice(''); setMsg({ text: `Услуга «${name.trim()}» добавлена`, error: false }); } catch (err: any) { setMsg({ text: err?.message || 'Не удалось добавить услугу', error: true }); }
+    try { bookingStore.addService({ name, durationMin: minutes, price: cost }); setName(''); setPrice(''); setMsg({ text: `Услуга «${name.trim()}» добавлена`, error: false }); } catch (err) { setMsg({ text: safeErrorText(err, 'Не удалось добавить услугу'), error: true }); }
   };
   const removeService = async (id: string, title: string) => {
     const ok = await askConfirm(`Удалить услугу «${title}»? Уже сделанные записи останутся.`, { okText: 'Удалить' });
     if (!ok) return;
-    try { bookingStore.deleteService(id); setMsg({ text: `Услуга «${title}» удалена`, error: false }); } catch (err: any) { setMsg({ text: err?.message || 'Не удалось удалить услугу', error: true }); }
+    try { bookingStore.deleteService(id); setMsg({ text: `Услуга «${title}» удалена`, error: false }); } catch (err) { setMsg({ text: safeErrorText(err, 'Не удалось удалить услугу'), error: true }); }
   };
   const valid = (v: string) => { try { toMinutes(v); return true; } catch { return false; } };
 
