@@ -108,6 +108,23 @@ function defaultStorage(): KeyValueStorage | null {
   try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; }
 }
 
+/** Ключ строки в старом формате (до аудита 40): нужен, чтобы уже внесённые выписки не задвоились. */
+function legacyKey(own: string, d: BankDoc, incoming: boolean): string {
+  return [own, d.number, d.date ?? '', d.amount.toFixed(2), incoming ? d.payerInn : d.payeeInn, incoming ? 'in' : 'out'].join('|');
+}
+
+/**
+ * Ключ строки: номер, дата документа и проводки, сумма, ИНН и счёт контрагента, направление.
+ * Если в выписке есть несколько одинаковых строк (два перевода по 500 ₽ без номера в один день),
+ * каждая получает свой порядковый номер: обе вносятся, а повторный импорт той же выписки не задвоит.
+ */
+export function statementRowKey(own: string, d: BankDoc, incoming: boolean, occurrence: number): string {
+  const posted = incoming ? d.creditedAt : d.debitedAt;
+  const account = incoming ? d.payerAccount : d.payeeAccount;
+  const inn = incoming ? d.payerInn : d.payeeInn;
+  return ['v2', own, d.number.trim(), d.date ?? '', posted ?? '', d.amount.toFixed(2), inn.trim(), account.trim(), incoming ? 'in' : 'out', occurrence].join('|');
+}
+
 /**
  * Разносит выписку: поступления → доходы, списания → расходы. Оплаты, где в назначении есть «счёт № N»
  * и сумма совпадает с открытым счётом, закрывают этот счёт. Повторный импорт той же выписки не дублирует записи,
@@ -125,15 +142,21 @@ export function importStatement(parsed: ParsedStatement, opts: { store?: BizStor
     if (!storage) return true;
     try { storage.setItem(IMPORTED_KEY, JSON.stringify([...imported])); return true; } catch { return false; }
   };
+  /** Сколько раз в этой выписке уже встретилась такая же строка. */
+  const seen = new Map<string, number>();
   let done = 0;
 
   for (const d of parsed.docs) {
     const incoming = d.payeeAccount === own && d.payerAccount !== own;
     const outgoing = d.payerAccount === own && d.payeeAccount !== own;
-    if ((!incoming && !outgoing) || d.amount <= 0) { report.skipped++; continue; }
+    if ((!incoming && !outgoing) || !(d.amount > 0)) { report.skipped++; continue; }
     const date = (incoming ? d.creditedAt : d.debitedAt) ?? d.date;
-    const key = [own, d.number, d.date ?? '', d.amount.toFixed(2), incoming ? d.payerInn : d.payeeInn, incoming ? 'in' : 'out'].join('|');
-    if (imported.has(key)) { report.duplicates++; continue; }
+    const base = statementRowKey(own, d, incoming, 0);
+    const occurrence = seen.get(base) ?? 0;
+    seen.set(base, occurrence + 1);
+    const key = statementRowKey(own, d, incoming, occurrence);
+    // Старый ключ учитываем только для первого вхождения: раньше вторая такая же строка не вносилась вовсе.
+    if (imported.has(key) || (occurrence === 0 && imported.has(legacyKey(own, d, incoming)))) { report.duplicates++; continue; }
 
     // Запись строки. Ошибка хранилища останавливает импорт: уже внесённые строки отмечены и не задвоятся.
     let entryId: string;
