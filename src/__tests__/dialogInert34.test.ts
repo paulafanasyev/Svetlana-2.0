@@ -5,32 +5,47 @@ import { resolve } from 'path';
 import { isolateDialog } from '../components/useDialogFocus';
 
 /** Минимальный DOM для проверки обхода: только то, чем пользуется isolateDialog. */
-class El {
-  attrs = new Map<string, string>();
-  children: El[] = [];
-  parentElement: El | null = null;
-  ownerDocument: { body: El } | undefined;
-  constructor(public tagName: string) {}
-  add(...kids: El[]) { for (const k of kids) { k.parentElement = this; this.children.push(k); } return this; }
-  setAttribute(k: string, v: string) { this.attrs.set(k, v); }
-  removeAttribute(k: string) { this.attrs.delete(k); }
-  hasAttribute(k: string) { return this.attrs.has(k); }
-  getAttribute(k: string) { return this.attrs.get(k) ?? null; }
+type Doc = { body: El };
+interface El {
+  tagName: string;
+  attrs: Map<string, string>;
+  children: El[];
+  parentElement: El | null;
+  ownerDocument?: Doc;
+  setAttribute(k: string, v: string): void;
+  removeAttribute(k: string): void;
+  hasAttribute(k: string): boolean;
+  getAttribute(k: string): string | null;
+}
+
+function el(tagName: string): El {
+  const attrs = new Map<string, string>();
+  return {
+    tagName, attrs, children: [], parentElement: null,
+    setAttribute: (k, v) => { attrs.set(k, v); },
+    removeAttribute: k => { attrs.delete(k); },
+    hasAttribute: k => attrs.has(k),
+    getAttribute: k => attrs.get(k) ?? null,
+  };
+}
+
+function add(parent: El, ...kids: El[]) {
+  for (const k of kids) { k.parentElement = parent; parent.children.push(k); }
 }
 
 function page() {
-  const body = new El('BODY');
-  const doc = { body };
-  const appRoot = new El('DIV');
-  const nav = new El('NAV');
-  const main = new El('MAIN');
-  const backdrop = new El('DIV'); backdrop.setAttribute('aria-hidden', 'true');
-  const panel = new El('DIV');
-  const already = new El('DIV'); already.setAttribute('inert', '');
-  const script = new El('SCRIPT');
-  body.add(appRoot, already, script);
-  appRoot.add(nav, main);
-  main.add(backdrop, panel);
+  const body = el('BODY');
+  const doc: Doc = { body };
+  const appRoot = el('DIV');
+  const nav = el('NAV');
+  const main = el('MAIN');
+  const backdrop = el('DIV'); backdrop.setAttribute('aria-hidden', 'true');
+  const panel = el('DIV');
+  const already = el('DIV'); already.setAttribute('inert', '');
+  const script = el('SCRIPT');
+  add(body, appRoot, already, script);
+  add(appRoot, nav, main);
+  add(main, backdrop, panel);
   for (const e of [body, appRoot, nav, main, backdrop, panel, already, script]) e.ownerDocument = doc;
   return { body, appRoot, nav, main, backdrop, panel, already, script };
 }
