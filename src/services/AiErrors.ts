@@ -2,6 +2,7 @@
 // Сообщения, которые уже написаны по-русски (нативная часть, Ollama, GigaChat), остаются как есть, но без
 // технических хвостов вроде «(error sending request: SocketTimeoutException)». Сырой английский текст сервера
 // человеку не показывается: только код ответа (если есть) и что делать дальше.
+// explainVoiceError — то же для распознавания речи (кнопка «Голос», чат голосом).
 
 const CYRILLIC = /[А-Яа-яЁё]/;
 const TECH_TAIL = /\s*\((?:error sending request|[A-Za-z.]*(?:Exception|Error))[^)]*\)/g;
@@ -23,4 +24,22 @@ export function explainAiError(raw: string): string {
   // Код ответа полезен для поддержки, сырой текст сервера — нет (в нём бывает JSON и пути).
   const anyCode = code || Number(/\b([45]\d\d)\b/.exec(s)?.[1] ?? 0);
   return anyCode ? `Ошибка ИИ: ${AI_ERROR_GENERIC} (код ${anyCode})` : `Ошибка ИИ: ${AI_ERROR_GENERIC}`;
+}
+
+/** Ошибка распознавания речи для человека: без английского текста сервиса, JSON и технических хвостов. */
+export function explainVoiceError(raw: string): string {
+  const s = String(raw ?? '').trim();
+  if (!s) return 'Не получилось распознать речь. Попробуйте ещё раз.';
+  const code = Number(/\bHTTP (\d{3})\b/.exec(s)?.[1] ?? 0);
+  if (code === 401 || code === 403) return 'Сервис распознавания не принял ключ. Проверьте ключ: кнопка «Голос» → настройки.';
+  if (code === 402) return 'У сервиса распознавания закончились деньги или бесплатный лимит.';
+  if (code === 429) return 'Слишком много запросов к распознаванию. Подождите минуту и повторите.';
+  if (code >= 500 && code <= 599) return 'Сервис распознавания сейчас не отвечает. Попробуйте позже.';
+  if (CYRILLIC.test(s) && !code) return s.replace(TECH_TAIL, '').slice(0, 300);
+  if (/not-allowed|NotAllowedError|permission|denied/i.test(s)) return 'Нет доступа к микрофону. Разрешите микрофон для Светланы и попробуйте ещё раз.';
+  if (/no-speech/i.test(s)) return 'Ничего не услышала. Нажмите «Голос» и говорите чуть громче.';
+  if (/audio-capture|NotFoundError|NotReadableError/i.test(s)) return 'Микрофон не найден или занят другим приложением.';
+  if (/Failed to fetch|NetworkError|network|Load failed|error sending request|timed? ?out|ECONNREFUSED/i.test(s)) return 'Нет связи с сервисом распознавания. Проверьте интернет и попробуйте ещё раз.';
+  const anyCode = code || Number(/\b([45]\d\d)\b/.exec(s)?.[1] ?? 0);
+  return anyCode ? `Не получилось распознать речь. Попробуйте ещё раз (код ${anyCode}).` : 'Не получилось распознать речь. Попробуйте ещё раз.';
 }
