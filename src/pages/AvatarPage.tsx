@@ -1,5 +1,6 @@
 // Чат со Светланой. Для экранного диктора переписка — журнал (role="log"): зачитываются только новые
 // реплики, у каждой подпись «Вы» или «Светлана». С «Уменьшить движение» чат прокручивается без анимации.
+// Кнопки «Сервисы» и «Настройки голоса» раскрывают панели: диктор слышит «развёрнуто / свёрнуто» (aria-expanded, aria-controls).
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Avatar, { VoiceControl, useSpeech } from '../components/Avatar';
@@ -291,7 +292,8 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
             onClick={() => setShowServices(!showServices)}
             title="Сервисы (MCP): GitHub, Vercel, Timeweb Cloud, Yandex Cloud и другие"
             aria-label="Сервисы (MCP)"
-            aria-pressed={showServices}
+            aria-expanded={showServices}
+            aria-controls="chat-services-panel"
             className="flex items-center gap-1.5 p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted text-xs"
           >
             <Plug className="w-4 h-4" aria-hidden="true" />
@@ -302,6 +304,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
             title="Настройки голоса"
             aria-label="Настройки голоса"
             aria-expanded={showSettings}
+            aria-controls="chat-voice-settings"
             className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted"
           >
             <Settings className="w-4 h-4" aria-hidden="true" />
@@ -335,7 +338,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
         </motion.div>
       )}
 
-      {showServices && <McpPanel onClose={() => setShowServices(false)} />}
+      {showServices && <div id="chat-services-panel"><McpPanel onClose={() => setShowServices(false)} /></div>}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Chat Interface — на телефоне первым, чтобы сразу можно было писать */}
@@ -510,6 +513,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
       {/* Settings Panel */}
       {showSettings && (
         <motion.div
+          id="chat-voice-settings"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           className="glass-card rounded-xl p-5 sm:p-6"

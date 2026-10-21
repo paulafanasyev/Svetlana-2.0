@@ -1,3 +1,5 @@
+// Модели и провайдеры ИИ. Вкладки «Локальные / Облачные» — полный шаблон вкладок: стрелки ←/→, Home/End,
+// у каждой вкладки своя панель (tabpanel). Окно настройки — модальное: фон под ним недоступен (inert).
 import { useState, useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { aiGateway, GIGACHAT_WEB_ONLY, CUSTOM_AI_ID, type AIProvider } from '../services/AIGateway';
@@ -6,6 +8,7 @@ import { SVETLANA_CORE_ORIGIN, SVETLANA_CORE_MODEL } from '../services/SvetlanaC
 import { isNativeApp } from '../services/security/NativeBridge';
 import { isAndroidApp, secureStoreName } from '../platform';
 import { onBack } from '../services/BackStack';
+import { isolateDialog } from '../components/useDialogFocus';
 import {
   Cpu, Server, Settings, Key, Zap, Cloud, HardDrive,
   TestTube, AlertCircle, CheckCircle2, X,
@@ -96,9 +99,23 @@ export function customReady(endpoint: string, model: string): boolean {
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+type Tab = 'offline' | 'online';
+const TABS: readonly Tab[] = ['offline', 'online'];
+
+/** Вкладка после нажатия клавиши (стрелки по кругу, Home/End); null — клавиша не для вкладок. */
+export function nextTab(current: Tab, key: string): Tab | null {
+  const i = TABS.indexOf(current);
+  if (key === 'Home') return TABS[0];
+  if (key === 'End') return TABS[TABS.length - 1];
+  if (key === 'ArrowRight') return TABS[(i + 1) % TABS.length];
+  if (key === 'ArrowLeft') return TABS[(i - 1 + TABS.length) % TABS.length];
+  return null;
+}
+
 // ==================== CONFIG MODAL ====================
 // Клавиатура: фокус сразу в первом поле, Tab не выходит за окно, Escape = «Отмена», после закрытия фокус возвращается
 // на кнопку, которой окно открыли. Щелчок мимо окна закрывает его, только если ничего не введено (введённый ключ не теряется).
+// Пока окно открыто, страница под ним недоступна (inert): диктор не уходит на неё стрелками.
 function ConfigModal({ provider, onSave, onClose }: {
   provider: Omit<AIProvider, 'enabled'> & { enabled?: boolean };
   /** alreadySaved: настройки и ключ уже записаны при проверке — повторно не спрашиваем. */
@@ -125,14 +142,18 @@ function ConfigModal({ provider, onSave, onClose }: {
   // Системная кнопка «Назад» телефона = «Отмена».
   useEffect(() => onBack(onClose), []);
 
-  // Фокус в первое доступное поле; после закрытия — обратно на кнопку, которой открыли окно.
+  // Фон недоступен, фокус в первое доступное поле; после закрытия — обратно на кнопку, которой открыли окно.
   useEffect(() => {
     const opener = typeof document !== 'undefined' ? document.activeElement as HTMLElement | null : null;
     const root = dialogRef.current;
+    const release = root ? isolateDialog(root) : () => undefined;
     const first = root?.querySelector<HTMLElement>('input:not([disabled]):not([readonly]), select:not([disabled])')
       ?? root?.querySelector<HTMLElement>(FOCUSABLE);
     first?.focus();
-    return () => { if (opener && opener.isConnected) opener.focus(); };
+    return () => {
+      release();
+      if (opener && opener.isConnected) opener.focus();
+    };
   }, []);
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -380,11 +401,12 @@ function ConfigModal({ provider, onSave, onClose }: {
 export default function AIProvidersPage() {
   // На телефоне локальные модели тоже есть: они работают на компьютере в домашней сети.
   const android = isAndroidApp();
-  const [activeTab, setActiveTab] = useState<'offline' | 'online'>(android ? 'online' : 'offline');
+  const [activeTab, setActiveTab] = useState<Tab>(android ? 'online' : 'offline');
   const [providers, setProviders] = useState<AIProvider[]>(aiGateway.getAllProviders());
   const [configuringProvider, setConfiguringProvider] = useState<(Omit<AIProvider, 'enabled'> & { enabled?: boolean }) | null>(null);
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -398,6 +420,15 @@ export default function AIProvidersPage() {
 
   const activeProvider = aiGateway.getActiveProvider();
   const tab = activeTab;
+
+  // Стрелки ←/→ и Home/End переключают вкладки и переносят на них фокус (Tab уходит сразу в панель).
+  const onTabKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const next = nextTab(tab, e.key);
+    if (!next) return;
+    e.preventDefault();
+    setActiveTab(next);
+    tabRefs.current[next]?.focus();
+  };
 
   const handleCopy = (command: string) => {
     void navigator.clipboard?.writeText(command).catch(() => undefined);
@@ -470,10 +501,14 @@ export default function AIProvidersPage() {
       )}
 
       {/* Tabs */}
-      <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-2" role="tablist">
+      <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-2" role="tablist" aria-label="Где работает ИИ" onKeyDown={onTabKeyDown}>
         <button
+          ref={el => { tabRefs.current.offline = el; }}
           role="tab"
+          id="ai-tab-offline"
+          aria-controls="ai-panel-offline"
           aria-selected={tab === 'offline'}
+          tabIndex={tab === 'offline' ? 0 : -1}
           onClick={() => setActiveTab('offline')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
             tab === 'offline'
@@ -485,8 +520,12 @@ export default function AIProvidersPage() {
           {android ? 'Локальные модели (на компьютере)' : 'Локальные модели (Офлайн)'}
         </button>
         <button
+          ref={el => { tabRefs.current.online = el; }}
           role="tab"
+          id="ai-tab-online"
+          aria-controls="ai-panel-online"
           aria-selected={tab === 'online'}
+          tabIndex={tab === 'online' ? 0 : -1}
           onClick={() => setActiveTab('online')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
             tab === 'online'
@@ -501,7 +540,7 @@ export default function AIProvidersPage() {
 
       {/* Tab 1: Offline Models Catalog */}
       {tab === 'offline' && (
-        <div className="space-y-6">
+        <div className="space-y-6" role="tabpanel" id="ai-panel-offline" aria-labelledby="ai-tab-offline">
           {android && (
             <div data-testid="phone-local-note" className="rounded-xl p-4 border border-cyan-500/30 bg-cyan-950/20 text-sm text-cyan-100 flex items-start gap-2">
               <HardDrive className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
@@ -640,7 +679,7 @@ export default function AIProvidersPage() {
 
       {/* Tab 2: Online Cloud Providers */}
       {tab === 'online' && (
-        <div className="space-y-4">
+        <div className="space-y-4" role="tabpanel" id="ai-panel-online" aria-labelledby="ai-tab-online">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {PRESET_PROVIDERS.filter(p => p.type === 'online' && (p.id !== CUSTOM_AI_ID || android)).map(p => {
               const configured = providers.find(ep => ep.id === p.id);
