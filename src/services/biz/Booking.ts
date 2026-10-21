@@ -44,6 +44,7 @@ export const BOOKING_DONE_LOCKED = 'Визит уже отмечен как со
 export const BOOKING_CANCELLED_LOCKED = 'Запись отменена. Чтобы вернуть клиента, запишите его заново или перенесите запись на другое время.';
 export const BOOKING_DURATION_RANGE = 'Длительность: от 5 минут до 12 часов';
 export const BOOKING_PRICE_RANGE = 'Цена должна быть числом не меньше нуля';
+export const BOOKING_SERVICE_NOT_FOUND = 'Услуга не найдена';
 
 /** Куда можно перейти из каждого статуса. «Не пришёл» → «Пришёл»: клиент опоздал, а отметили рано. */
 const NEXT_STATUS: Record<BookingStatus, readonly BookingStatus[]> = {
@@ -311,7 +312,7 @@ export class BookingStore {
   }
   updateService(id: string, patch: Partial<Omit<Service, 'id'>>): Service {
     const s = this.data.services.find(x => x.id === id);
-    if (!s) throw new Error('Услуга найдена не была');
+    if (!s) throw new Error(BOOKING_SERVICE_NOT_FOUND);
     const next: Service = { ...s };
     if (patch.name !== undefined) {
       const name = String(patch.name).trim();
