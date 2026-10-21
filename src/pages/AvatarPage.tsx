@@ -1,6 +1,8 @@
 // Чат со Светланой. Для экранного диктора переписка — журнал (role="log"): зачитываются только новые
 // реплики, у каждой подпись «Вы» или «Светлана». С «Уменьшить движение» чат прокручивается без анимации.
 // Кнопки «Сервисы» и «Настройки голоса» раскрывают панели: диктор слышит «развёрнуто / свёрнуто» (aria-expanded, aria-controls).
+// Закрыли панель сервисов: фокус возвращается на кнопку «Сервисы». Чат крутится к новой реплике, только если человек
+// и так внизу или сам написал (см. ChatScroll). Кнопки чата не ниже 44 px.
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Avatar, { VoiceControl, useSpeech } from '../components/Avatar';
@@ -12,6 +14,7 @@ import { mcpSystemPrompt, parseMcpActions, runMcpLoop, MCP_REJECTED_TEXT } from 
 import { toModelHistory } from '../services/security/History';
 import { resetNativeConversation } from '../services/security/NativeBridge';
 import type { ActionSource } from '../services/security/ActionGate';
+import { nearBottom, shouldAutoScroll } from '../services/ChatScroll';
 import { appPlatform } from '../platform';
 import {
   Mic, Volume2, VolumeX, MessageCircle, Send,
@@ -112,7 +115,10 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
   const [listening, setListening] = useState(false);
   const [activeProvider, setActiveProvider] = useState(aiGateway.getActiveProvider());
   const { speak, stop, isSpeaking, voices } = useSpeech();
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
+  /** Человек внизу переписки (не читает старое): новые реплики прокручивают чат. */
+  const atBottomRef = useRef(true);
+  const servicesBtnRef = useRef<HTMLButtonElement>(null);
   const usable = activeProvider ?? null;
   const labels = voiceLabels(platform, voices.length);
 
@@ -121,9 +127,13 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
     resetNativeConversation();
   }, []);
 
+  // Новая реплика: крутим вниз только того, кто и так внизу или сам написал. Крутится только окно чата, не вся страница.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: scrollBehavior() });
-  }, [messages]);
+    const box = logRef.current;
+    if (!box || !shouldAutoScroll(atBottomRef.current, messages[messages.length - 1]?.role)) return;
+    try { box.scrollTo({ top: box.scrollHeight, behavior: scrollBehavior() }); } catch { box.scrollTop = box.scrollHeight; }
+    atBottomRef.current = true;
+  }, [messages, isLoading]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -132,10 +142,16 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
     return () => clearInterval(interval);
   }, []);
 
+  const closeServices = () => {
+    setShowServices(false);
+    servicesBtnRef.current?.focus();
+  };
+
   const newChat = () => {
     if (isLoading) return;
     resetNativeConversation();
     stop();
+    atBottomRef.current = true;
     setMessages([greeting()]);
     setError(null);
     setEmotion('neutral');
@@ -289,12 +305,13 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
             </div>
           )}
           <button
+            ref={servicesBtnRef}
             onClick={() => setShowServices(!showServices)}
             title="Сервисы (MCP): GitHub, Vercel, Timeweb Cloud, Yandex Cloud и другие"
             aria-label="Сервисы (MCP)"
             aria-expanded={showServices}
             aria-controls="chat-services-panel"
-            className="flex items-center gap-1.5 p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted text-xs"
+            className="flex items-center justify-center gap-1.5 p-2 min-h-11 min-w-11 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted text-xs"
           >
             <Plug className="w-4 h-4" aria-hidden="true" />
             <span className="hidden sm:inline">Сервисы</span>
@@ -305,7 +322,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
             aria-label="Настройки голоса"
             aria-expanded={showSettings}
             aria-controls="chat-voice-settings"
-            className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted"
+            className="flex items-center justify-center p-2 min-h-11 min-w-11 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted"
           >
             <Settings className="w-4 h-4" aria-hidden="true" />
           </button>
@@ -320,7 +337,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
           </span>
           <button
             onClick={onConnectAi}
-            className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium"
+            className="px-3 py-2 min-h-11 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium"
           >
             Подключить ИИ
           </button>
@@ -338,7 +355,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
         </motion.div>
       )}
 
-      {showServices && <div id="chat-services-panel"><McpPanel onClose={() => setShowServices(false)} /></div>}
+      {showServices && <div id="chat-services-panel"><McpPanel onClose={closeServices} /></div>}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Chat Interface — на телефоне первым, чтобы сразу можно было писать */}
@@ -367,7 +384,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                   disabled={isLoading}
                   title="Новый чат"
                   aria-label="Новый чат"
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-sv-muted disabled:opacity-50"
+                  className="flex items-center justify-center gap-1.5 px-3 py-2 min-h-11 min-w-11 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-sv-muted disabled:opacity-50"
                 >
                   <RotateCcw className="w-4 h-4" aria-hidden="true" />
                   <span className="hidden sm:inline">Новый чат</span>
@@ -376,7 +393,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                   onClick={() => isSpeaking ? stop() : speak('Привет! Я Светлана.')}
                   title={isSpeaking ? 'Остановить голос' : 'Проверить голос'}
                   aria-label={isSpeaking ? 'Остановить голос' : 'Проверить голос'}
-                  className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted"
+                  className="flex items-center justify-center p-2 min-h-11 min-w-11 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted"
                 >
                   {isSpeaking ? <VolumeX className="w-4 h-4" aria-hidden="true" /> : <Volume2 className="w-4 h-4" aria-hidden="true" />}
                 </button>
@@ -384,6 +401,8 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
             </div>
 
             <div
+              ref={logRef}
+              onScroll={e => { const b = e.currentTarget; atBottomRef.current = nearBottom(b.scrollHeight, b.scrollTop, b.clientHeight); }}
               className="flex-1 p-3 sm:p-4 overflow-y-auto space-y-3 min-h-[300px] sm:min-h-[400px] max-h-[60vh] sm:max-h-[500px]"
               role="log"
               aria-label="Переписка со Светланой"
@@ -435,7 +454,6 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                   Светлана думает...
                 </motion.div>
               )}
-              <div ref={messagesEndRef} />
             </div>
 
             <div className="p-3 sm:p-4 border-t border-white/10">
@@ -446,7 +464,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                   onKeyDown={e => e.key === 'Enter' && sendMessage(input)}
                   placeholder={usable ? 'Напишите Светлане...' : 'CRM-команды работают и без ИИ'}
                   aria-label="Сообщение Светлане"
-                  className="flex-1 min-w-0 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm focus:outline-none focus:border-indigo-500/50 disabled:opacity-50"
+                  className="flex-1 min-w-0 px-4 py-2.5 min-h-11 rounded-xl bg-white/5 border border-white/10 text-sm focus:outline-none focus:border-indigo-500/50 disabled:opacity-50"
                   disabled={isLoading}
                 />
                 <button
@@ -454,7 +472,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                   disabled={!input.trim() || isLoading}
                   title="Отправить"
                   aria-label="Отправить"
-                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white transition-colors"
+                  className="flex items-center justify-center px-4 py-2.5 min-h-11 min-w-11 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white transition-colors"
                 >
                   <Send className="w-4 h-4" aria-hidden="true" />
                 </button>
@@ -466,7 +484,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                     key={phrase}
                     onClick={() => sendMessage(phrase)}
                     disabled={isLoading}
-                    className="px-3 py-1.5 text-xs rounded-full bg-white/5 border border-white/10 text-sv-muted hover:bg-white/10 transition-colors disabled:opacity-50"
+                    className="px-3 py-2 min-h-11 text-xs rounded-full bg-white/5 border border-white/10 text-sv-muted hover:bg-white/10 transition-colors disabled:opacity-50"
                   >
                     {phrase}
                   </button>
@@ -491,7 +509,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                   key={btn.emotion}
                   onClick={() => setEmotion(btn.emotion)}
                   aria-pressed={emotion === btn.emotion}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                  className={`flex items-center gap-1.5 px-3 py-2 min-h-11 rounded-full text-xs font-medium transition-all ${
                     emotion === btn.emotion
                       ? 'bg-white/10 border border-white/20'
                       : 'bg-white/5 border border-white/5 hover:bg-white/10'
