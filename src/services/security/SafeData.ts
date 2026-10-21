@@ -1,5 +1,5 @@
 // Безопасный разбор и вывод данных: лимиты размеров, JSON без загрязнения прототипов,
-// CSV без формул, удаление управляющих символов. Используется всеми импортами/экспортами.
+// CSV без формул, удаление управляющих и невидимых символов. Используется всеми импортами/экспортами.
 
 export const MAX_BYTES = {
   backupJson: 20 * 1024 * 1024,   // резервные копии CRM/бизнеса
@@ -43,10 +43,13 @@ export function sanitizeArgs(v: unknown, depth = 0): Record<string, unknown> {
   return out;
 }
 
+// Управляющие C0/DEL, смена направления текста (LRE…RLO, LRI…PDI, ALM, LRM/RLM) и невидимые символы
+// нулевой ширины (ZWSP, ZWNJ, ZWJ, WJ, невидимые операторы, BOM, мягкий перенос, монгольский разделитель,
+// якоря аннотаций). Ими можно спрятать или перевернуть часть текста в окне подтверждения (Trojan Source).
 // eslint-disable-next-line no-control-regex
-const CONTROL = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/g;
+const CONTROL = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\ufff9-\ufffb]/g;
 
-/** Удаляет управляющие символы и символы смены направления текста (Trojan Source). */
+/** Удаляет управляющие, невидимые символы и символы смены направления текста (Trojan Source). */
 export function stripControl(s: unknown, keepNewlines = true): string {
   const str = String(s ?? '').replace(CONTROL, '');
   return keepNewlines ? str : str.replace(/[\r\n\t]+/g, ' ');
