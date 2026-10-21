@@ -1,7 +1,8 @@
 // Svetlana CRM — contacts, deals pipeline, tasks, summary, import/export.
 // Доступность: у каждого поля и списка есть подпись для экранного диктора (не только подсказка внутри поля),
-// ошибки читаются сразу (role=alert), результаты импорта — как статус (role=status).
+// ошибки читаются сразу (role=alert), результаты импорта — как статус (role=status), сбой импорта — как alert.
 // Подтверждения — своё окно (askConfirm): в приложении системное window.confirm может молча вернуть «нет».
+// Удаление любой записи (контакт, сделка, задача, вся CRM) спрашивает подтверждение; текст ошибки — через safeErrorText.
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
 import { assertFileSize, MAX_BYTES } from '../services/security/SafeData';
 import {
@@ -10,11 +11,12 @@ import {
 } from 'lucide-react';
 import {
   crmStore, DEAL_STAGES, STAGE_LABELS, STATUS_LABELS, ACTIVITY_LABELS,
-  type ActivityType, type ContactStatus, type CRMContact, type CRMDeal,
+  type ActivityType, type ContactStatus, type CRMContact, type CRMDeal, type CRMActivity,
 } from '../services/crm/CRMStore';
 import { importPhoneContacts } from '../services/crm/CRMTools';
 import { isAndroidApp } from '../platform';
 import { askConfirm } from '../components/ConfirmDialog';
+import { safeErrorText } from '../services/safeErrorText';
 
 type Tab = 'contacts' | 'deals' | 'tasks' | 'summary' | 'data';
 const STATUSES: ContactStatus[] = ['lead', 'client', 'partner', 'other'];
@@ -96,8 +98,8 @@ function ContactForm({ contact, onDone }: { contact?: CRMContact; onDone: (id?: 
         if (dup) { setError(`Такой номер или e-mail уже есть у «${dup.name}»`); return; }
         onDone(crmStore.addContact({ ...fields, source: 'manual' }).id);
       }
-    } catch (err: any) {
-      setError(err?.message || 'Не удалось сохранить');
+    } catch (err) {
+      setError(safeErrorText(err, 'Не удалось сохранить'));
     }
   };
 
@@ -139,7 +141,7 @@ function ContactDetail({ contact, onEdit, onDeleted }: { contact: CRMContact; on
     try {
       crmStore.addActivity({ type: logType, text: logText, contactId: contact.id });
       setLogText('');
-    } catch (err: any) { setError(err?.message || 'Не удалось добавить запись'); }
+    } catch (err) { setError(safeErrorText(err, 'Не удалось добавить запись')); }
   };
 
   const remove = async () => {
@@ -148,7 +150,7 @@ function ContactDetail({ contact, onEdit, onDeleted }: { contact: CRMContact; on
     try {
       crmStore.deleteContact(contact.id);
       onDeleted();
-    } catch (err: any) { setError(err?.message || 'Не удалось удалить контакт'); }
+    } catch (err) { setError(safeErrorText(err, 'Не удалось удалить контакт')); }
   };
 
   return (
@@ -277,18 +279,20 @@ function DealsTab() {
     try {
       crmStore.addDeal({ title, contactId: contactId || undefined, amount: value });
       setTitle(''); setAmount(''); setContactId('');
-    } catch (err: any) { setError(err?.message || 'Не удалось создать сделку'); }
+    } catch (err) { setError(safeErrorText(err, 'Не удалось создать сделку')); }
   };
 
   const move = (deal: CRMDeal, dir: -1 | 1) => {
     const idx = DEAL_STAGES.indexOf(deal.stage) + dir;
-    if (idx >= 0 && idx < DEAL_STAGES.length) crmStore.moveDeal(deal.id, DEAL_STAGES[idx]);
+    if (idx < 0 || idx >= DEAL_STAGES.length) return;
+    setError(null);
+    try { crmStore.moveDeal(deal.id, DEAL_STAGES[idx]); } catch (err) { setError(safeErrorText(err, 'Не удалось перенести сделку')); }
   };
 
   const removeDeal = async (deal: CRMDeal) => {
     const ok = await askConfirm(`Удалить сделку «${deal.title}»?`, { okText: 'Удалить' });
     if (!ok) return;
-    try { crmStore.deleteDeal(deal.id); } catch (err: any) { setError(err?.message || 'Не удалось удалить сделку'); }
+    try { crmStore.deleteDeal(deal.id); } catch (err) { setError(safeErrorText(err, 'Не удалось удалить сделку')); }
   };
 
   return (
@@ -344,6 +348,7 @@ function TasksTab() {
   const [due, setDue] = useState('');
   const [showDone, setShowDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const contacts = crmStore.listContacts();
   const now = Date.now();
   const tasks = showDone ? crmStore.listActivities({ type: 'task' }) : crmStore.listActivities({ openTasks: true });
@@ -351,13 +356,29 @@ function TasksTab() {
   const add = (e: FormEvent) => {
     e.preventDefault();
     if (!text.trim()) return;
-    setError(null);
+    setError(null); setNotice(null);
     const dueAt = due ? new Date(`${due}T09:00`).getTime() : undefined;
     if (dueAt !== undefined && !Number.isFinite(dueAt)) { setError('Срок указан неверно'); return; }
     try {
       crmStore.addActivity({ type: 'task', text, contactId: contactId || undefined, dueAt });
       setText(''); setDue('');
-    } catch (err: any) { setError(err?.message || 'Не удалось добавить задачу'); }
+    } catch (err) { setError(safeErrorText(err, 'Не удалось добавить задачу')); }
+  };
+
+  const toggleDone = (t: CRMActivity, done: boolean) => {
+    setError(null);
+    try { crmStore.setActivityDone(t.id, done); } catch (err) { setError(safeErrorText(err, 'Не удалось отметить задачу')); }
+  };
+
+  // Удаление задачи — только после вопроса: кнопка маленькая и стоит рядом с каждой задачей.
+  const removeTask = async (t: CRMActivity) => {
+    const ok = await askConfirm(`Удалить задачу «${t.text}»?`, { okText: 'Удалить' });
+    if (!ok) return;
+    setError(null); setNotice(null);
+    try {
+      crmStore.deleteActivity(t.id);
+      setNotice(`Задача удалена: ${t.text}`);
+    } catch (err) { setError(safeErrorText(err, 'Не удалось удалить задачу')); }
   };
 
   return (
@@ -372,6 +393,7 @@ function TasksTab() {
         <button type="submit" className={`${btnPrimary} md:col-span-4 justify-center`} disabled={!text.trim()}><Plus className="w-4 h-4" aria-hidden="true" />Добавить задачу</button>
         {error && <p role="alert" className="md:col-span-4 text-sm text-red-400">{error}</p>}
       </form>
+      {notice && <p role="status" className="text-sm text-indigo-200">{notice}</p>}
       <label className="flex items-center gap-2 text-sm text-slate-400">
         <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} />Показывать выполненные
       </label>
@@ -382,12 +404,12 @@ function TasksTab() {
           const who = t.contactId ? crmStore.getContact(t.contactId)?.name : undefined;
           return (
             <div key={t.id} className="flex items-center gap-3 px-4 py-2.5">
-              <input type="checkbox" className="w-5 h-5 shrink-0" checked={t.done} onChange={e => crmStore.setActivityDone(t.id, e.target.checked)} aria-label={`Выполнено: ${t.text}`} />
+              <input type="checkbox" className="w-5 h-5 shrink-0" checked={t.done} onChange={e => toggleDone(t, e.target.checked)} aria-label={`Выполнено: ${t.text}`} />
               <div className="flex-1 min-w-0">
                 <p className={`text-sm break-words ${t.done ? 'line-through text-slate-400' : ''}`}>{t.text}</p>
                 <p className={`text-xs ${overdue ? 'text-red-400' : 'text-slate-400'}`}>{[who, t.dueAt ? `до ${date(t.dueAt)}` : '', overdue ? 'просрочено' : ''].filter(Boolean).join(' · ')}</p>
               </div>
-              <button onClick={() => crmStore.deleteActivity(t.id)} className="p-2 text-slate-400 hover:text-red-300" aria-label={`Удалить задачу: ${t.text}`}><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
+              <button onClick={() => { void removeTask(t); }} className="p-2 text-slate-400 hover:text-red-300" aria-label={`Удалить задачу: ${t.text}`}><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
             </div>
           );
         })}
@@ -444,7 +466,9 @@ function SummaryTab() {
 function DataTab() {
   useCRMVersion();
   const android = isAndroidApp();
-  const [message, setMessage] = useState<string | null>(null);
+  // Успех читается спокойно (status), сбой — сразу (alert): иначе легко не заметить, что данные не импортированы.
+  const [msg, setMsg] = useState<{ text: string; error: boolean } | null>(null);
+  const setMessage = (text: string | null, error = false) => setMsg(text === null ? null : { text, error });
   const [busy, setBusy] = useState(false);
 
   const fromPhone = async () => {
@@ -452,8 +476,8 @@ function DataTab() {
     try {
       const r = await importPhoneContacts();
       setMessage(`Готово: добавлено ${r.added}, обновлено ${r.merged}, без изменений ${r.skipped} из ${r.total}.`);
-    } catch (err: any) {
-      setMessage(err?.message || (typeof err === 'string' ? err : 'Импорт не удался'));
+    } catch (err) {
+      setMessage(safeErrorText(err, 'Импорт не удался'), true);
     } finally { setBusy(false); }
   };
 
@@ -464,13 +488,13 @@ function DataTab() {
     try {
       assertFileSize(file, /\.json$/i.test(file.name) ? MAX_BYTES.backupJson : MAX_BYTES.csv);
       setMessage(await handler(await file.text()));
-    } catch (err: any) { setMessage(err?.message || 'Не удалось прочитать файл'); }
+    } catch (err) { setMessage(safeErrorText(err, 'Не удалось прочитать файл'), true); }
   };
 
   const clearAll = async () => {
     const ok = await askConfirm('Удалить ВСЕ данные CRM на этом устройстве? Вернуть их можно только из резервной копии.', { okText: 'Удалить всё' });
     if (!ok) return;
-    try { crmStore.clearAll(); setMessage('CRM очищена'); } catch (err: any) { setMessage(err?.message || 'Не удалось очистить CRM'); }
+    try { crmStore.clearAll(); setMessage('CRM очищена'); } catch (err) { setMessage(safeErrorText(err, 'Не удалось очистить CRM'), true); }
   };
 
   const stamp = new Date().toISOString().slice(0, 10);
@@ -513,7 +537,7 @@ function DataTab() {
         <p className="text-sm text-slate-400">Удалит все данные на этом устройстве. Сначала сделайте резервную копию.</p>
         <button className={`${btnGhost} text-red-300`} onClick={() => { void clearAll(); }}><Trash2 className="w-4 h-4" aria-hidden="true" />Очистить</button>
       </div>
-      {message && <p role="status" className="md:col-span-2 text-sm text-indigo-200">{message}</p>}
+      {msg && <p role={msg.error ? 'alert' : 'status'} className={`md:col-span-2 text-sm ${msg.error ? 'text-red-300' : 'text-indigo-200'}`}>{msg.text}</p>}
     </div>
   );
 }
