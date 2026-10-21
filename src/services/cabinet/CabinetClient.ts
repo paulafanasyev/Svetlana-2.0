@@ -24,6 +24,8 @@ const MAX_REPLY = 64 * 1024;
 export const HEARTBEAT_MS = 10 * 60_000;
 /** Версия приложения — одна на всё приложение (src/version.ts). */
 export const APP_VERSION = CURRENT_VERSION;
+/** Кабинет уже принял код, но на этом устройстве привязку сохранить не удалось. */
+export const LINK_SAVE_FAILED = 'Кабинет принял код, но сохранить привязку на этом устройстве не удалось. Отключите это устройство в личном кабинете, возьмите новый код и повторите.';
 const DEFAULT_OLLAMA = 'http://127.0.0.1:11434';
 const OLLAMA_RE = /^http:\/\/(?:localhost|127(?:\.\d{1,3}){3}|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?::\d{1,5})?$/;
 
@@ -73,6 +75,10 @@ export function loadMeta(s: KV | null = kv()): CabinetMeta | null {
 function saveMeta(m: CabinetMeta | null, s: KV | null = kv()): void {
   if (m) s?.setItem(META_KEY, JSON.stringify(m)); else s?.removeItem?.(META_KEY);
 }
+/** Запись служебного состояния пульса: переполненное хранилище не должно ронять пульс. */
+function trySaveMeta(m: CabinetMeta | null, s: KV | null): void {
+  try { saveMeta(m, s); } catch { /* не критично */ }
+}
 
 async function call(f: FetchLike, url: string, init: RequestInit): Promise<{ status: number; body: any }> {
   const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -106,16 +112,26 @@ export async function linkDevice(opts: { code: string; name: string; origin?: st
   if (status !== 200 || typeof body?.device_token !== 'string' || typeof body?.device_id !== 'string' || !/^[A-Za-z0-9_-]{40,100}$/.test(body.device_token)) {
     throw new Error(typeof body?.message === 'string' ? body.message.slice(0, 200) : `Не удалось привязать (HTTP ${status})`);
   }
-  await setSecret(TOKEN_SECRET, body.device_token);
+  const storage = opts.storage === undefined ? kv() : opts.storage;
   const meta: CabinetMeta = { origin, deviceId: body.device_id.slice(0, 64), linkedAt: Date.now() };
-  saveMeta(meta, opts.storage === undefined ? kv() : opts.storage);
+  // Кабинет уже создал устройство. Если сохранить локально не вышло, не оставляем
+  // половинчатое состояние (токен без описания или наоборот) и честно говорим, что делать.
+  try {
+    await setSecret(TOKEN_SECRET, body.device_token);
+    saveMeta(meta, storage);
+  } catch {
+    try { await deleteSecret(TOKEN_SECRET); } catch { /* уже нечего удалять */ }
+    trySaveMeta(null, storage);
+    throw new Error(LINK_SAVE_FAILED);
+  }
   return meta;
 }
 
 /** Забыть привязку на этом устройстве (в кабинете устройство отключается кнопкой «Отключить»). */
 export async function unlinkLocal(storage: KV | null = kv()): Promise<void> {
+  // Сначала описание: даже если хранилище ключей сбоит, приложение перестанет считать себя привязанным.
+  trySaveMeta(null, storage);
   await deleteSecret(TOKEN_SECRET);
-  saveMeta(null, storage);
 }
 
 /** Адрес Ollama из настроек «★ Светлана Локальная» (только домашняя сеть или это устройство). */
@@ -161,26 +177,32 @@ export async function collectHeartbeat(opts: { fetchImpl?: FetchLike | null; sto
   };
 }
 
-/** Отправить пульс. 401 — устройство отключено в кабинете: локальная привязка стирается. */
+/** Отправить пульс. 401 — устройство отключено в кабинете: локальная привязка стирается. Никогда не бросает. */
 export async function sendHeartbeat(opts: { fetchImpl?: FetchLike; storage?: KV | null; heartbeat?: Heartbeat } = {}): Promise<'ok' | 'unlinked' | 'not_linked' | 'error'> {
   const s = opts.storage === undefined ? kv() : opts.storage;
   const meta = loadMeta(s);
-  const token = await getSecret(TOKEN_SECRET);
-  if (!meta || !token) return 'not_linked';
-  const f = opts.fetchImpl ?? defaultFetch();
+  if (!meta) return 'not_linked';
+  let token: string | null = null;
+  try { token = await getSecret(TOKEN_SECRET); } catch { return 'error'; }
+  if (!token) return 'not_linked';
   try {
+    const f = opts.fetchImpl ?? defaultFetch();
     const hb = opts.heartbeat ?? await collectHeartbeat({ fetchImpl: f, storage: s });
     const { status } = await call(f, `${meta.origin}${API}/heartbeat`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Device ${token}` },
       body: JSON.stringify(hb),
     });
-    if (status === 401) { await unlinkLocal(s); return 'unlinked'; }
-    if (status !== 200) { saveMeta({ ...meta, lastError: `HTTP ${status}` }, s); return 'error'; }
-    saveMeta({ ...meta, lastOk: Date.now(), lastError: undefined }, s);
+    if (status === 401) {
+      try { await unlinkLocal(s); } catch { /* описание уже стёрто */ }
+      return 'unlinked';
+    }
+    if (status !== 200) { trySaveMeta({ ...meta, lastError: `HTTP ${status}` }, s); return 'error'; }
+    trySaveMeta({ ...meta, lastOk: Date.now(), lastError: undefined }, s);
     return 'ok';
   } catch (e: any) {
-    saveMeta({ ...meta, lastError: String(e?.message ?? e).slice(0, 120) }, s);
+    const aborted = e?.name === 'AbortError';
+    trySaveMeta({ ...meta, lastError: aborted ? 'Нет ответа сервера' : 'Нет связи с кабинетом' }, s);
     return 'error';
   }
 }
@@ -189,8 +211,8 @@ let timer: ReturnType<typeof setInterval> | null = null;
 /** Запустить периодический пульс (идемпотентно). */
 export function startHeartbeat(intervalMs = HEARTBEAT_MS): () => void {
   if (!timer) {
-    void sendHeartbeat();
-    timer = setInterval(() => { void sendHeartbeat(); }, intervalMs);
+    void sendHeartbeat().catch(() => undefined);
+    timer = setInterval(() => { void sendHeartbeat().catch(() => undefined); }, intervalMs);
   }
   return () => { if (timer) clearInterval(timer); timer = null; };
 }
