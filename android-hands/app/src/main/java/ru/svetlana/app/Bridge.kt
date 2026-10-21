@@ -28,6 +28,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * Фоновая работа идёт в пуле из 4 потоков с ограниченной очередью (MAX_QUEUED): если страница шлёт
  * запросы быстрее, чем они выполняются, лишние сразу получают ответ «занято», а не копятся в памяти.
+ * У каждого запроса страницы есть срок (WAIT_MS в SHIM): если ответ так и не пришёл, обещание
+ * отклоняется, а не висит вечно. Экран закрыт — идущие запросы к облаку рвутся (SecureAi.cancelAll).
  */
 class Bridge(private val act: MainActivity) {
     companion object {
@@ -48,7 +50,11 @@ class Bridge(private val act: MainActivity) {
             return s.take(100).ifBlank { "svetlana.txt" }
         }
 
-        /** Ставится до загрузки страницы: тот же window.__TAURI_INTERNALS__.invoke, что в Windows. */
+        /**
+         * Ставится до загрузки страницы: тот же window.__TAURI_INTERNALS__.invoke, что в Windows.
+         * У каждого запроса свой срок: 10 минут (там же ждут нативные окна подтверждения), загрузка модели
+         * речи — 66 минут (сама загрузка ограничена 60 минутами в LocalStt). Без знака доллара: это raw-строка Kotlin.
+         */
         val SHIM = """
 (function () {
   'use strict';
@@ -57,6 +63,9 @@ class Bridge(private val act: MainActivity) {
   if (!port || typeof port.postMessage !== 'function') return;
   var pending = new Map();
   var seq = 0;
+  var WAIT_MS = 10 * 60 * 1000;
+  var LONG_WAIT = { local_stt_install: 66 * 60 * 1000 };
+  var TIMEOUT = 'Приложение не ответило вовремя, попробуйте ещё раз';
   port.onmessage = function (event) {
     var m;
     try { m = JSON.parse(event.data); } catch (e) { return; }
@@ -64,16 +73,26 @@ class Bridge(private val act: MainActivity) {
     var p = pending.get(m.id);
     if (!p) return;
     pending.delete(m.id);
+    clearTimeout(p.timer);
     if (m.ok) p.resolve(m.value); else p.reject(String(m.error || 'Ошибка приложения'));
   };
   function invoke(cmd, args) {
     return new Promise(function (resolve, reject) {
       var id = ++seq;
-      pending.set(id, { resolve: resolve, reject: reject });
+      var name = String(cmd);
+      var ms = Object.prototype.hasOwnProperty.call(LONG_WAIT, name) ? LONG_WAIT[name] : WAIT_MS;
+      var entry = { resolve: resolve, reject: reject, timer: 0 };
+      entry.timer = setTimeout(function () {
+        if (pending.get(id) !== entry) return;
+        pending.delete(id);
+        reject(TIMEOUT);
+      }, ms);
+      pending.set(id, entry);
       try {
-        port.postMessage(JSON.stringify({ id: id, cmd: String(cmd), args: args || {} }));
+        port.postMessage(JSON.stringify({ id: id, cmd: name, args: args || {} }));
       } catch (e) {
         pending.delete(id);
+        clearTimeout(entry.timer);
         reject('Связь с приложением недоступна');
       }
     });
@@ -266,6 +285,9 @@ class Bridge(private val act: MainActivity) {
 
     fun close() {
         voice.close()
+        // Экран закрыт: идущие запросы к облаку рвутся сразу, а не висят в фоне до 150 секунд
+        // (ответ всё равно некому показать). Ключи и разрешения при этом не трогаются.
+        runCatching { SecureAi.cancelAll() }
         pool.shutdownNow()
         // Идущая загрузка дойдёт до конца сама (поток фоновый), новые не принимаются.
         installer.shutdown()
