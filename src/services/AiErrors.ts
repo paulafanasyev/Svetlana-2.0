@@ -1,7 +1,12 @@
 // Понятные ошибки ИИ для человека: вместо «HTTP 401: {...}» или «Failed to fetch» — коротко по-русски, что делать.
-// Сообщения, которые уже написаны по-русски (нативная часть, Ollama, GigaChat), остаются как есть.
+// Сообщения, которые уже написаны по-русски (нативная часть, Ollama, GigaChat), остаются как есть, но без
+// технических хвостов вроде «(error sending request: SocketTimeoutException)». Сырой английский текст сервера
+// человеку не показывается: только код ответа (если есть) и что делать дальше.
 
 const CYRILLIC = /[А-Яа-яЁё]/;
+const TECH_TAIL = /\s*\((?:error sending request|[A-Za-z.]*(?:Exception|Error))[^)]*\)/g;
+
+export const AI_ERROR_GENERIC = 'сервис ответил ошибкой. Попробуйте ещё раз или выберите другой ИИ во вкладке «Модели ИИ».';
 
 export function explainAiError(raw: string): string {
   const s = String(raw ?? '').trim();
@@ -13,7 +18,9 @@ export function explainAiError(raw: string): string {
   if (code === 404) return 'Сервис ИИ не нашёл модель. Выберите другую модель во вкладке «Модели ИИ».';
   if (code === 429) return 'Слишком много запросов к ИИ. Подождите минуту и повторите.';
   if (code >= 500 && code <= 599) return 'Сервис ИИ сейчас не отвечает. Попробуйте позже или выберите другой ИИ.';
-  if (CYRILLIC.test(s)) return s.slice(0, 300);
+  if (CYRILLIC.test(s) && !code) return s.replace(TECH_TAIL, '').slice(0, 300);
   if (/Failed to fetch|NetworkError|Load failed|error sending request|timed? ?out|ECONNREFUSED|dns/i.test(s)) return 'Нет связи с ИИ. Проверьте интернет и попробуйте ещё раз.';
-  return `Ошибка ИИ: ${s.slice(0, 200)}`;
+  // Код ответа полезен для поддержки, сырой текст сервера — нет (в нём бывает JSON и пути).
+  const anyCode = code || Number(/\b([45]\d\d)\b/.exec(s)?.[1] ?? 0);
+  return anyCode ? `Ошибка ИИ: ${AI_ERROR_GENERIC} (код ${anyCode})` : `Ошибка ИИ: ${AI_ERROR_GENERIC}`;
 }
