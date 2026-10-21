@@ -1,8 +1,11 @@
 // Svetlana CRM — local-first store (localStorage on web/Windows, in-memory in tests).
 // Contacts, companies-as-text, deals with a pipeline, activities (notes, calls, meetings, tasks).
 // Наружу отдаются только КОПИИ: экран или инструмент ИИ не может изменить контакт или сделку в обход проверок
-// и сохранения (такое изменение жило бы до перезапуска или попало бы в файл со следующим чужим сохранением).
+// и сохранения (такое изменение жило бы до перезапуска или попало в файл со следующим чужим сохранением).
+// Несколько окон: чужая запись подхватывается сразу (событие storage), а если не успела, изменение из старой
+// копии не записывается поверх (CRM_CHANGED_ELSEWHERE): данные обновляются, действие нужно повторить (см. SyncedKey).
 import { safeJsonParse, csvSafe, MAX_BYTES } from '../security/SafeData';
+import { readRaw, changedElsewhere, onOtherTabWrite } from '../security/SyncedKey';
 
 export type ContactStatus = 'lead' | 'client' | 'partner' | 'other';
 export type ContactSource = 'manual' | 'phone' | 'import' | 'chat';
@@ -105,6 +108,8 @@ export const ACTIVITY_LABELS: Record<ActivityType, string> = {
 
 /** Текст ошибки, если изменение не удалось сохранить (и оно отменено). */
 export const CRM_SAVE_FAILED = 'Не удалось сохранить CRM: в хранилище нет места или оно недоступно. Изменение отменено.';
+/** CRM только что изменили в другом окне: изменение из старой копии не записано, данные уже обновлены. */
+export const CRM_CHANGED_ELSEWHERE = 'CRM только что изменили в другом окне Светланы. Данные обновлены, повторите действие.';
 
 const STORAGE_KEY = 'svetlana_crm_v1';
 const CONTACT_STATUSES: ContactStatus[] = ['lead', 'client', 'partner', 'other'];
@@ -204,30 +209,54 @@ export class CRMStore {
   private data: CRMData;
   /** Последнее состояние, которое точно сохранено: если запись не удалась, данные откатываются к нему. */
   private saved: string;
+  /** Запись на диске, которую мы читали или писали последними (другая запись там — значит, писало другое окно). */
+  private lastRaw: string | null | undefined;
   private listeners = new Set<() => void>();
 
   constructor(storage: KeyValueStorage = defaultStorage(), clock: () => number = Date.now) {
     this.storage = storage;
     this.clock = clock;
-    this.data = this.load();
+    this.lastRaw = readRaw(storage, STORAGE_KEY);
+    this.data = this.parse(this.lastRaw);
     this.saved = JSON.stringify(this.data);
+    // Другое окно сохранило CRM: сразу берём свежие данные и обновляем экраны.
+    onOtherTabWrite(storage, STORAGE_KEY, raw => { if (raw !== this.lastRaw) this.adopt(raw); });
   }
 
   // ---------- persistence ----------
-  private load(): CRMData {
+  private parse(raw: string | null | undefined): CRMData {
     try {
-      const raw = this.storage.getItem(STORAGE_KEY);
       return raw ? sanitize(safeJsonParse(raw, MAX_BYTES.backupJson)) : emptyData();
     } catch {
       return emptyData();
     }
   }
 
+  /** Взять данные, записанные другим окном, и обновить экраны. */
+  private adopt(raw: string | null | undefined): void {
+    this.lastRaw = raw;
+    this.data = this.parse(raw);
+    this.saved = JSON.stringify(this.data);
+    this.notify();
+  }
+
+  private notify(): void {
+    for (const l of [...this.listeners]) {
+      try { l(); } catch { /* ошибка одного экрана не отменяет сохранение */ }
+    }
+  }
+
   /**
    * Сохранить всё или ничего: если хранилище не приняло запись (нет места, доступ запрещён), изменение
    * откатывается целиком. Иначе оно жило бы только в памяти и молча пропало после перезапуска.
+   * Если другое окно уже записало своё, старая копия поверх не пишется: берём свежие данные и просим повторить.
    */
   private commit(): void {
+    const disk = readRaw(this.storage, STORAGE_KEY);
+    if (changedElsewhere(disk, this.lastRaw)) {
+      this.adopt(disk);
+      throw new Error(CRM_CHANGED_ELSEWHERE);
+    }
     const next = JSON.stringify(this.data);
     try {
       this.storage.setItem(STORAGE_KEY, next);
@@ -236,9 +265,9 @@ export class CRMStore {
       throw new Error(CRM_SAVE_FAILED);
     }
     this.saved = next;
-    for (const l of [...this.listeners]) {
-      try { l(); } catch { /* ошибка одного экрана не отменяет сохранение */ }
-    }
+    const after = readRaw(this.storage, STORAGE_KEY);
+    this.lastRaw = after === undefined ? next : after;
+    this.notify();
   }
 
   subscribe(listener: () => void): () => void {

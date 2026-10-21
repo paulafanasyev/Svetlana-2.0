@@ -3,8 +3,11 @@
 // Запись всё или ничего (как CRMStore): если хранилище не приняло изменение, данные возвращаются к последнему
 // сохранённому состоянию и бросается BIZ_SAVE_FAILED: экран не покажет доход, который исчезнет после перезапуска.
 // Наружу отдаются только КОПИИ записей и документов: экран или инструмент ИИ не может изменить данные в обход проверок и сохранения.
+// Несколько окон: чужая запись подхватывается сразу (событие storage), а если не успела, изменение из старой
+// копии не записывается поверх (BIZ_CHANGED_ELSEWHERE): данные обновляются, действие нужно повторить (см. SyncedKey).
 import type { KeyValueStorage } from '../crm/CRMStore';
 import { safeJsonParse, csvSafe, stripControl, MAX_BYTES } from '../security/SafeData';
+import { readRaw, changedElsewhere, onOtherTabWrite } from '../security/SyncedKey';
 import { contributionsFor, onePercent, dueDate, npdReceiptDeadline, vatStatusUsn, patentPayments, usnRate, USN_RATE_LIMITS, type VatStatus, type PayMethod } from './TaxRules';
 
 export type TaxRegime = 'npd' | 'usn6' | 'usn15' | 'patent' | 'ooo' | 'none';
@@ -22,6 +25,8 @@ export const DOC_LABELS: Record<DocType, string> = { invoice: 'Счёт', act: '
 export const DOC_STATUS_LABELS: Record<DocStatus, string> = { draft: 'Черновик', sent: 'Отправлен', paid: 'Оплачен', cancelled: 'Отменён' };
 /** Хранилище не приняло изменение (переполнено или недоступно): изменение отменено. */
 export const BIZ_SAVE_FAILED = 'Не удалось сохранить данные раздела «Бизнес»: хранилище переполнено или недоступно. Изменение отменено, сделайте резервную копию.';
+/** Раздел «Бизнес» только что изменили в другом окне: изменение из старой копии не записано, данные уже обновлены. */
+export const BIZ_CHANGED_ELSEWHERE = 'Раздел «Бизнес» только что изменили в другом окне Светланы. Данные обновлены, повторите действие.';
 
 export interface BizProfile {
   regime: TaxRegime;
@@ -294,26 +299,52 @@ export class BizStore {
   private data: BizData;
   /** Последнее состояние, которое точно лежит в хранилище (для отката). */
   private saved: string;
+  /** Запись на диске, которую мы читали или писали последними (другая запись там — значит, писало другое окно). */
+  private lastRaw: string | null | undefined;
   private listeners = new Set<() => void>();
 
   constructor(storage: KeyValueStorage = defaultStorage(), clock: () => number = Date.now) {
     this.storage = storage;
     this.clock = clock;
-    this.data = this.load();
+    this.lastRaw = readRaw(storage, STORAGE_KEY);
+    this.data = this.parse(this.lastRaw);
     this.saved = JSON.stringify(this.data);
+    // Другое окно сохранило «Бизнес»: сразу берём свежие данные и обновляем экраны.
+    onOtherTabWrite(storage, STORAGE_KEY, raw => { if (raw !== this.lastRaw) this.adopt(raw); });
   }
 
-  private load(): BizData {
+  private parse(raw: string | null | undefined): BizData {
     try {
-      const raw = this.storage.getItem(STORAGE_KEY);
       return raw ? sanitize(safeJsonParse(raw, MAX_BYTES.backupJson)) : emptyData();
     } catch {
       return emptyData();
     }
   }
 
-  /** Запись всё или ничего: хранилище не приняло — данные возвращаются, подписчики не уведомляются. */
+  /** Взять данные, записанные другим окном, и обновить экраны. */
+  private adopt(raw: string | null | undefined): void {
+    this.lastRaw = raw;
+    this.data = this.parse(raw);
+    this.saved = JSON.stringify(this.data);
+    this.notify();
+  }
+
+  private notify(): void {
+    for (const l of [...this.listeners]) {
+      try { l(); } catch { /* ошибка одного экрана не отменяет запись и не мешает другим */ }
+    }
+  }
+
+  /**
+   * Запись всё или ничего: хранилище не приняло — данные возвращаются, подписчики не уведомляются.
+   * Если другое окно уже записало своё, старая копия поверх не пишется: берём свежие данные и просим повторить.
+   */
   private commit(): void {
+    const disk = readRaw(this.storage, STORAGE_KEY);
+    if (changedElsewhere(disk, this.lastRaw)) {
+      this.adopt(disk);
+      throw new Error(BIZ_CHANGED_ELSEWHERE);
+    }
     const json = JSON.stringify(this.data);
     try {
       this.storage.setItem(STORAGE_KEY, json);
@@ -322,9 +353,9 @@ export class BizStore {
       throw new Error(BIZ_SAVE_FAILED);
     }
     this.saved = json;
-    for (const l of [...this.listeners]) {
-      try { l(); } catch { /* ошибка одного экрана не отменяет запись и не мешает другим */ }
-    }
+    const after = readRaw(this.storage, STORAGE_KEY);
+    this.lastRaw = after === undefined ? json : after;
+    this.notify();
   }
 
   subscribe(listener: () => void): () => void {
