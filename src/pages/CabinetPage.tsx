@@ -1,8 +1,9 @@
 // Личный кабинет: привязка устройства (компьютера или телефона) к сайту «Мир Самозанятых», состояние защиты
 // и кнопка полного удаления данных с этого устройства. Одинаковая на сайте, в Windows и в Android:
 // те же пять проверок защиты и список локальных моделей (на телефоне — с компьютера в домашней сети).
-// Проверки подписаны словами («включено / не включено»), а не только цветом иконки. Полное удаление
-// подтверждается в окне Светланы (askConfirm), и только после настоящего нажатия человеком.
+// Проверки подписаны словами («включено / не включено»), а не только цветом иконки. Пока проверки идут, написано
+// «Проверяю защиту…», а если проверить не удалось — так и написано (а не пять ложных «не включено»).
+// Полное удаление подтверждается в окне Светланы (askConfirm), и только после настоящего нажатия человеком.
 // «Отвязать» тоже спрашивает подтверждение: случайное нажатие не должно заставлять заново получать код на сайте.
 // Ошибка связи не оставляет кнопки выключенными: везде try/finally, технический текст ошибки не показывается.
 import { useEffect, useState, type MouseEvent } from 'react';
@@ -26,6 +27,11 @@ const CHECKS: [keyof Heartbeat['status'], string][] = [
   ['paired_with', 'Подключён Svetlana-home'],
 ];
 
+/** Проверки защиты: ещё идут, готовы или не удались. */
+type CheckState = 'loading' | 'ready' | 'failed';
+export const CABINET_CHECKING = 'Проверяю защиту…';
+export const CABINET_CHECK_FAILED = 'Не удалось проверить защиту. Откройте страницу ещё раз чуть позже.';
+
 const errText = (e: unknown): string => safeErrorText(e, 'отменено');
 
 export default function CabinetPage() {
@@ -34,6 +40,7 @@ export default function CabinetPage() {
   const onDevice = android ? 'на этом телефоне' : 'на этом компьютере';
   const [meta, setMeta] = useState<CabinetMeta | null>(loadMeta());
   const [hb, setHb] = useState<Heartbeat | null>(null);
+  const [checks, setChecks] = useState<CheckState>('loading');
   const [code, setCode] = useState('');
   const [name, setName] = useState(android ? 'Мой телефон' : 'Мой компьютер');
   const [busy, setBusy] = useState(false);
@@ -42,7 +49,13 @@ export default function CabinetPage() {
 
   /** Состояние защиты и привязки. Сбой не роняет страницу: остаётся прежнее состояние. */
   const refresh = async () => {
-    try { setHb(await collectHeartbeat()); } catch { /* проверки покажутся при следующем обновлении */ }
+    try {
+      setHb(await collectHeartbeat());
+      setChecks('ready');
+    } catch {
+      // Уже показанные проверки не стираем; если их ещё не было — честно пишем, что проверить не удалось.
+      setChecks(s => (s === 'ready' ? 'ready' : 'failed'));
+    }
     try { setMeta(loadMeta()); } catch { /* хранилище недоступно */ }
   };
   useEffect(() => { void refresh(); }, []);
@@ -132,19 +145,23 @@ export default function CabinetPage() {
         {msg && <p role={msg.error ? 'alert' : 'status'} className={`text-sm break-words ${msg.error ? 'text-amber-300' : 'text-indigo-200'}`}>{msg.text}</p>}
       </div>
 
-      <div className={card}>
+      <div className={card} aria-busy={checks === 'loading'}>
         <h3 className="font-semibold">Защита {android ? 'этого телефона' : 'этого компьютера'}</h3>
-        <ul className="space-y-1 text-sm">
-          {CHECKS.map(([k, label]) => {
-            const on = hb ? !!hb.status[k] : false;
-            return (
-              <li key={k} className="flex items-center gap-2">
-                {on ? <ShieldCheck className="w-4 h-4 text-emerald-400" aria-hidden="true" /> : <ShieldAlert className="w-4 h-4 text-yellow-400" aria-hidden="true" />}
-                <span>{label}: <span className={on ? 'text-emerald-300' : 'text-yellow-300'}>{on ? 'включено' : 'не включено'}</span></span>
-              </li>
-            );
-          })}
-        </ul>
+        {hb ? (
+          <ul className="space-y-1 text-sm">
+            {CHECKS.map(([k, label]) => {
+              const on = !!hb.status[k];
+              return (
+                <li key={k} className="flex items-center gap-2">
+                  {on ? <ShieldCheck className="w-4 h-4 text-emerald-400" aria-hidden="true" /> : <ShieldAlert className="w-4 h-4 text-yellow-400" aria-hidden="true" />}
+                  <span>{label}: <span className={on ? 'text-emerald-300' : 'text-yellow-300'}>{on ? 'включено' : 'не включено'}</span></span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p role="status" className={`text-sm ${checks === 'failed' ? 'text-amber-300' : 'text-slate-400'}`}>{checks === 'failed' ? CABINET_CHECK_FAILED : CABINET_CHECKING}</p>
+        )}
         {hb && <p className="text-xs text-slate-400">Локальные модели: {hb.models.length ? hb.models.map(m => m.id).join(', ') : (android ? 'не найдены (укажите адрес Ollama на компьютере в «Модели ИИ» → «Локальные модели»)' : 'не найдены (установите Ollama и модель qwen3:4b)')}</p>}
       </div>
 
