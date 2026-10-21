@@ -6,7 +6,8 @@
 //   а НЕ повторяем действие (дважды отправленное сообщение или платёж хуже ошибки);
 // - одновременно идёт одна задача; reset() отменяет текущую (после отмены ни одно действие не запускается);
 //   если в момент сброса действие уже выполняется, новая задача ждёт его окончания (два действия сразу не идут);
-// - настройки из хранилища проверяются (sanitizeOrchestratorConfig), ошибка подписчика не ломает задачу.
+// - настройки из хранилища проверяются (sanitizeOrchestratorConfig), ошибка подписчика не ломает задачу;
+// - дневной лимит инструмента списывается только после успешного действия (policyEngine.recordExecution).
 
 import { planner, type Task, type TaskStep } from './Planner';
 import { memory } from './Memory';
@@ -278,6 +279,8 @@ class Orchestrator {
     if (!actionResult.success) {
       return this.fail(task, step, actionResult.error || 'Действие не выполнено');
     }
+    // Действие состоялось: списываем дневной лимит (даже если потом задачу отменили или проверка не прошла).
+    policyEngine.recordExecution(tool.id);
     if (!this.alive(id)) return this.cancelled();
 
     // VERIFY - Real verification: ответ инструмента + (для шагов на экране) изменение экрана.
