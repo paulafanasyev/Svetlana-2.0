@@ -15,6 +15,8 @@ fun norm(s: String): String = s.lowercase()
  * Один шаг «рук». Их предлагает Светлана (JSON в ответе) или быстрая команда («открой Telegram»).
  * В подписях для окна подтверждения нет переводов строки, управляющих и bidi-символов (Steps.safe):
  * ИИ или название приложения не могут дорисовать в окне лишние строки.
+ * Текст для «Напечатать» показывается ЦЕЛИКОМ (до MAX_TYPE символов): человек подтверждает ровно то, что будет
+ * напечатано. Более длинный текст от ИИ не принимается: иначе в окне видно начало, а печатается скрытый хвост.
  * Шаги те же, что у рук телефона в Windows-версии (Svetlana-home): открыть, нажать, долго нажать, смахнуть,
  * напечатать, очистить поле, «Ввод», прокрутка, «Назад»/«Домой»/«Недавние», чтение экрана.
  */
@@ -25,7 +27,7 @@ sealed class Step(val title: String) {
     class Tap(val target: String) : Step("Нажать «${Steps.safe(target, 80)}»")
     class LongPress(val target: String) : Step("Долго нажать «${Steps.safe(target, 80)}»")
     class Type(val text: String, val field: String?) :
-        Step("Напечатать «${Steps.safe(text, 60)}${if (text.length > 60) "…" else ""}»${if (field != null) " в поле «${Steps.safe(field, 40)}»" else ""}")
+        Step("Напечатать «${Steps.safe(text, Steps.MAX_TYPE)}» (${text.length} симв.)${if (field != null) " в поле «${Steps.safe(field, 40)}»" else ""}")
     class Clear(val field: String?) : Step(if (field != null) "Очистить поле «${Steps.safe(field, 40)}»" else "Очистить поле ввода")
     object Enter : Step("Нажать «Ввод» на клавиатуре")
     class Scroll(val down: Boolean) : Step(if (down) "Пролистать вниз" else "Пролистать вверх")
@@ -42,6 +44,8 @@ object Steps {
     private val RISKY = listOf("отправ", "оплат", "заплат", "купить", "купи", "удал", "позвон", "вызов", "перевест", "перевод", "подтверд", "опублик", "send", "pay", "buy", "delete", "call")
     private val BIDI = Regex("[\\u061C\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2069\\uFEFF]")
     private val SWIPE_DIRS = setOf("left", "right", "up", "down")
+    /** Сколько символов можно напечатать за один шаг: столько же показывается в окне подтверждения. */
+    const val MAX_TYPE = 600
     const val NEED_OPEN_APP = "после «Назад», «Домой» или уведомлений сначала нужно открыть приложение («открой …»), чтобы не нажать в случайном"
     const val TYPE_WARNING = "⚠ Светлана напечатает текст в другом приложении или очистит поле. Не разрешайте, если это пароль, код из СМС или номер карты."
 
@@ -70,8 +74,9 @@ object Steps {
                 "open_app" -> a.optString("name").takeIf { it.isNotBlank() }?.let { Step.OpenApp(it.take(60)) }
                 "tap" -> a.optString("target").takeIf { it.isNotBlank() }?.let { Step.Tap(it.take(80)) }
                 "long_press" -> a.optString("target").takeIf { it.isNotBlank() }?.let { Step.LongPress(it.take(80)) }
-                "type" -> a.optString("text").takeIf { it.isNotEmpty() }?.let { t ->
-                    Step.Type(t.take(2000), a.optString("field").takeIf { f -> f.isNotBlank() })
+                // Длиннее MAX_TYPE — отказ: не обрезаем молча и не печатаем то, чего не было в окне.
+                "type" -> a.optString("text").takeIf { it.isNotEmpty() && it.length <= MAX_TYPE }?.let { t ->
+                    Step.Type(t, a.optString("field").takeIf { f -> f.isNotBlank() })
                 }
                 "clear" -> Step.Clear(a.optString("field").takeIf { it.isNotBlank() }?.take(80))
                 "enter" -> Step.Enter
@@ -134,7 +139,8 @@ object Steps {
             return listOf(Step.Tap(it.groupValues[1]))
         }
         Regex("^\\s*(?:света,?\\s+)?(?:напечатай|введи)\\s+(.+)$", RegexOption.IGNORE_CASE).find(input.trim())?.let {
-            return listOf(Step.Type(it.groupValues[1].trim(), null))
+            val text = it.groupValues[1].trim()
+            return if (text.length <= MAX_TYPE) listOf(Step.Type(text, null)) else null
         }
         return null
     }
