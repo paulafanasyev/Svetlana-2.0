@@ -16,16 +16,23 @@ typealias Done = (Boolean, Any?) -> Unit
  * В Android WebView нет ни Web Speech, ни speechSynthesis, поэтому они идут через нативный мост.
  * Все методы вызываются в главном потоке. Запрос на распознавание всегда завершается: по результату,
  * по ошибке или по таймауту (20 с, а после «стоп» — 4 с).
+ * Приложение ушло с экрана — cancelListening: распознавание отменяется без результата (сказанное в фоне не станет командой).
+ * Озвучка тоже всегда завершается: если синтез телефона завис и не сообщил о конце, её закрывает сторож
+ * (15 с плюс время на текст), и страница не остаётся в состоянии «говорит».
  */
 class NativeVoice(private val act: MainActivity) : TextToSpeech.OnInitListener {
     companion object {
         private const val LISTEN_TIMEOUT_MS = 20_000L
         private const val STOP_TIMEOUT_MS = 4_000L
+        private const val SPEAK_BASE_MS = 15_000L
+        private const val SPEAK_PER_CHAR_MS = 120L
     }
 
     private var tts: TextToSpeech? = TextToSpeech(act.applicationContext, this)
     private var ttsReady = false
     private val speaking = HashMap<String, Done>()
+    /** Сторож каждой озвучки: завершает её, если синтез молчит. */
+    private val speakWatch = HashMap<String, Runnable>()
     private var seq = 0
     private var recognizer: SpeechRecognizer? = null
     private var listenDone: Done? = null
@@ -53,11 +60,21 @@ class NativeVoice(private val act: MainActivity) : TextToSpeech.OnInitListener {
         }
     }
 
+    private fun clearWatch(id: String) {
+        speakWatch.remove(id)?.let { act.main.removeCallbacks(it) }
+    }
+
     private fun finish(id: String?) {
-        act.main.post { if (id != null) speaking.remove(id)?.invoke(true, null) }
+        act.main.post {
+            if (id == null) return@post
+            clearWatch(id)
+            speaking.remove(id)?.invoke(true, null)
+        }
     }
 
     private fun releaseSpeaking() {
+        speakWatch.values.forEach { act.main.removeCallbacks(it) }
+        speakWatch.clear()
         val waiting = speaking.values.toList()
         speaking.clear()
         waiting.forEach { it(true, null) }
@@ -74,7 +91,17 @@ class NativeVoice(private val act: MainActivity) : TextToSpeech.OnInitListener {
         releaseSpeaking()
         val id = "u${++seq}"
         speaking[id] = done
+        // Синтез не ответил о конце за разумное время: останавливаем и отвечаем странице, чтобы она не висела.
+        val watch = Runnable {
+            speakWatch.remove(id)
+            val d = speaking.remove(id) ?: return@Runnable
+            runCatching { tts?.stop() }
+            d(true, null)
+        }
+        speakWatch[id] = watch
+        act.main.postDelayed(watch, SPEAK_BASE_MS + clean.length * SPEAK_PER_CHAR_MS)
         if (t.speak(clean, TextToSpeech.QUEUE_FLUSH, null, id) != TextToSpeech.SUCCESS) {
+            clearWatch(id)
             speaking.remove(id)
             done(false, "Не удалось озвучить")
         }
@@ -146,7 +173,7 @@ class NativeVoice(private val act: MainActivity) : TextToSpeech.OnInitListener {
         d?.invoke(ok, value)
     }
 
-    /** Дослушать и распознать уже сказанное; если служба молчит — завершить через 4 с. */
+    /** Дослушать и распознать уже сказанное (кнопка «Стоп» на экране); если служба молчит — завершить через 4 с. */
     fun stopListening() {
         if (listenDone == null) return
         recognizer?.stopListening()
@@ -154,7 +181,11 @@ class NativeVoice(private val act: MainActivity) : TextToSpeech.OnInitListener {
         act.main.postDelayed(listenTimeout, STOP_TIMEOUT_MS)
     }
 
-    private fun cancelListening() {
+    /**
+     * Отменить распознавание без результата: страница получает пустую фразу, и ничего не выполняется.
+     * Вызывается перед новым прослушиванием и когда приложение уходит с экрана (Bridge.pause).
+     */
+    fun cancelListening() {
         act.main.removeCallbacks(listenTimeout)
         val d = listenDone
         listenDone = null

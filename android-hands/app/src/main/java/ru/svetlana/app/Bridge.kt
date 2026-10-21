@@ -2,8 +2,11 @@ package ru.svetlana.app
 
 import android.Manifest
 import org.json.JSONObject
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -15,12 +18,16 @@ import java.util.concurrent.atomic.AtomicBoolean
  * удаление ключей (secret_wipe_all). Любая другая команда отклоняется.
  *
  * Микрофон распознавания телефона (voice_listen) включается, как и буфер обмена, только сразу после настоящего
- * нажатия: скрипт сам по себе не может тихо послушать комнату. Приложение ушло с экрана — слушание прерывается.
+ * нажатия: скрипт сам по себе не может тихо послушать комнату. Приложение ушло с экрана — слушание
+ * отменяется без результата (сказанное в фоне командой не станет).
  *
  * Сообщения принимаются только из главного окна своего адреса (проверка в MainActivity), размер — до
  * разбора JSON. Ключи, облако, руки, контакты, скачивание модели и первая отправка данных на новое
  * устройство домашней сети всегда спрашивают человека в нативном окне; файл сохраняется только туда,
  * куда человек сам выбрал в системном окне.
+ *
+ * Фоновая работа идёт в пуле из 4 потоков с ограниченной очередью (MAX_QUEUED): если страница шлёт
+ * запросы быстрее, чем они выполняются, лишние сразу получают ответ «занято», а не копятся в памяти.
  */
 class Bridge(private val act: MainActivity) {
     companion object {
@@ -28,6 +35,9 @@ class Bridge(private val act: MainActivity) {
         private const val MAX_MESSAGE = 3 * 1024 * 1024
         private const val MAX_SAVE_CHARS = 2_500_000
         private const val MAX_CLIP_CHARS = 100_000
+        /** Сколько задач может ждать свободный поток; дальше ответ «приложение занято». */
+        private const val MAX_QUEUED = 32
+        const val BUSY = "Приложение занято, попробуйте ещё раз"
         private val SAVE_MIMES = setOf("text/csv", "application/json", "text/html", "text/calendar", "text/plain")
         const val INSTALL_BUSY = "Модель речи уже скачивается, дождитесь окончания"
         const val LISTEN_TAP = "Слушать можно только по нажатию на микрофон"
@@ -74,7 +84,8 @@ class Bridge(private val act: MainActivity) {
 """
     }
 
-    private val pool = Executors.newFixedThreadPool(4)
+    /** 4 потока и ограниченная очередь: лишние задачи отклоняются (RejectedExecutionException → BUSY). */
+    private val pool = ThreadPoolExecutor(4, 4, 30L, TimeUnit.SECONDS, ArrayBlockingQueue(MAX_QUEUED))
     /** Долгая загрузка модели речи: свой поток (не занимает общий пул) и только одна за раз. */
     private val installer = Executors.newSingleThreadExecutor { r -> Thread(r, "svetlana-stt-install").apply { isDaemon = true } }
     private val installBusy = AtomicBoolean(false)
@@ -241,13 +252,16 @@ class Bridge(private val act: MainActivity) {
                 }
             }
         } catch (e: RejectedExecutionException) {
-            done(false, "Приложение занято, попробуйте ещё раз")
+            done(false, BUSY)
         }
     }
 
-    /** Приложение ушло с экрана: распознавание телефона в фоне не слушает (голос ответа доиграет). Главный поток. */
+    /**
+     * Приложение ушло с экрана: распознавание телефона отменяется без результата (фраза, сказанная в фоне,
+     * командой не станет). Голос ответа доиграет. Главный поток.
+     */
     fun pause() {
-        runCatching { voice.stopListening() }
+        runCatching { voice.cancelListening() }
     }
 
     fun close() {
