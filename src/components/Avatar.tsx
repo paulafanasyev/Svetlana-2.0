@@ -180,6 +180,7 @@ export function listenCommand(opts: ListenOptions & { accept?: (text: string) =>
 // The first command also needs 3 random digits spoken aloud (protection against a recorded voice).
 // onListeningChange — микрофон включён/выключен (для кольца на аватаре).
 // Ошибки распознавания показываются понятной фразой (explainVoiceError), а не текстом сервиса.
+// Подпись режима распознавания — обычный приглушённый текст 12 px без прозрачности (контраст около 7:1).
 export function VoiceControl({ onCommand, onListeningChange }: { onCommand?: (command: string) => void; onListeningChange?: (listening: boolean) => void }) {
   const [isListening, setIsListening] = useState(false);
   const [handsFree, setHandsFree] = useState(false);
@@ -290,7 +291,7 @@ export function VoiceControl({ onCommand, onListeningChange }: { onCommand?: (co
             {handsFree ? 'Режим «Светлана, …» включён' : 'Включить «Светлана, …» без рук'}
           </button>
         )}
-        <p className="text-[11px] text-sv-muted opacity-60">{modeText}</p>
+        <p data-testid="voice-mode" className="text-xs text-sv-muted">{modeText}</p>
       </div>
     </div>
   );
