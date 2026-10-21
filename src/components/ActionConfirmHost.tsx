@@ -2,6 +2,8 @@
 // Показывает точные параметры и предупреждение о последствиях (изменение данных, списание денег);
 // по умолчанию фокус на «Отмена», Esc и системная кнопка «Назад» телефона — отмена.
 // Пока окно открыто, остальная страница недоступна (inert), а Tab не выходит за пределы окна.
+// Когда очередь подтверждений кончилась, фокус возвращается туда, где был до окна (поле чата, кнопка микрофона),
+// а не в начало страницы.
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { ShieldAlert, AlertTriangle } from 'lucide-react';
@@ -16,11 +18,28 @@ export default function ActionConfirmHost() {
   const [queue, setQueue] = useState<Pending[]>([]);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  /** Где был фокус до первого окна очереди. */
+  const openerRef = useRef<HTMLElement | null>(null);
   const current = queue[0];
+  const open = !!current;
 
   useEffect(() => setActionConfirmer((_req, summary) => new Promise<boolean>(resolve => {
     setQueue(q => [...q, { summary, resolve }]);
   })), []);
+
+  // Запоминаем, откуда пришли (до того, как фокус уйдёт на «Отмена»), и возвращаемся туда, когда очередь пуста.
+  // Этот эффект стоит первым: эффекты выполняются по порядку.
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return;
+    const active = document.activeElement;
+    openerRef.current = active instanceof HTMLElement && active !== document.body && !dialogRef.current?.contains(active) ? active : null;
+    return () => {
+      const back = openerRef.current;
+      openerRef.current = null;
+      // После снятия inert с фона (оно снимается в той же фазе): иначе фокус не встанет.
+      setTimeout(() => { if (back && back.isConnected) back.focus(); }, 0);
+    };
+  }, [open]);
 
   useEffect(() => { if (current) cancelRef.current?.focus(); }, [current]);
 
