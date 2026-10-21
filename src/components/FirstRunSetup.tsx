@@ -12,6 +12,7 @@
 // Крестик, Escape и системная кнопка «Назад» телефона только закрывают мастер (при следующем запуске он
 // покажется снова); считать настройку законченной без ИИ можно только явной кнопкой «Пока пропустить».
 // Клавиатура: фокус сразу в поле ключа, Tab не уходит за пределы окна, после закрытия фокус возвращается назад.
+// Пока мастер открыт, остальная страница inert: чтение экрана и мышь не уходят на фон.
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Key, HardDrive, Loader2, CheckCircle2, AlertCircle, X, Sparkles, Gift } from 'lucide-react';
 import { aiGateway, GIGACHAT_WEB_ONLY } from '../services/AIGateway';
@@ -21,6 +22,7 @@ import { isNativeApp } from '../services/security/NativeBridge';
 import { isAndroidApp } from '../platform';
 import { onBack } from '../services/BackStack';
 import { GIGACHAT_KEY_HINT } from '../pages/AIProvidersPage';
+import { isolateDialog } from './useDialogFocus';
 
 const DONE_KEY = 'svetlana_setup_done_v1';
 const OLLAMA = 'http://127.0.0.1:11434';
@@ -165,12 +167,16 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
   // Системная кнопка «Назад» телефона = крестик «Закрыть».
   useEffect(() => onBack(close), []);
 
-  // Фокус в поле ключа; после закрытия — обратно туда, где был. Таймер «Открываю чат» не переживает окно.
+  // Фон недоступен (inert), фокус в поле ключа; после закрытия фон освобождается и фокус
+  // возвращается туда, где был. Таймер «Открываю чат» не переживает окно.
   useEffect(() => {
     const opener = typeof document !== 'undefined' ? document.activeElement as HTMLElement | null : null;
+    const root = dialogRef.current;
+    const release = root ? isolateDialog(root) : () => undefined;
     keyRef.current?.focus();
     return () => {
       if (readyTimer.current) clearTimeout(readyTimer.current);
+      release();
       if (opener && opener.isConnected) opener.focus();
     };
   }, []);
