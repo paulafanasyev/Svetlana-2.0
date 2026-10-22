@@ -25,8 +25,31 @@ async function inflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
   if (typeof DecompressionStream === 'undefined') {
     throw new Error('Этот Android WebView не умеет распаковывать ZIP. Обновите Android System WebView или Chrome.');
   }
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw' as CompressionFormat));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+  // Copy into a definite ArrayBuffer for strict TypeScript DOM typings.
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream('deflate-raw' as CompressionFormat));
+  const reader = stream.getReader();
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_ENTRY_BYTES) {
+        await reader.cancel();
+        throw new Error('Превышен лимит размера распакованного файла.');
+      }
+      parts.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) { result.set(part, offset); offset += part.byteLength; }
+  return result;
 }
 
 /** Reads ZIP central directory, accepts stored/deflate entries, skips binary and dependency/build folders. */
