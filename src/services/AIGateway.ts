@@ -54,7 +54,7 @@ export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
   /** Optional base64 image payloads. Only user messages may carry media. */
-  media?: Array<{ mimeType: string; dataBase64: string }>;
+  media?: Array<{ mimeType: string; dataBase64: string; kind?: 'image' | 'audio' }>;
 }
 
 function openAICompatibleMessages(messages: ChatMessage[]) {
@@ -62,7 +62,7 @@ function openAICompatibleMessages(messages: ChatMessage[]) {
     role,
     content: media?.length ? [
       { type: 'text', text: content },
-      ...media.map(item => ({ type: 'image_url', image_url: { url: 'data:' + item.mimeType + ';base64,' + item.dataBase64 } })),
+      ...media.filter(item => item.kind !== 'audio').map(item => ({ type: 'image_url', image_url: { url: 'data:' + item.mimeType + ';base64,' + item.dataBase64 } })),
     ] : content,
   }));
 }
@@ -77,7 +77,7 @@ function anthropicMessages(messages: ChatMessage[]) {
     role,
     content: [
       { type: 'text', text: content },
-      ...(media ?? []).map(item => ({ type: 'image', source: { type: 'base64', media_type: item.mimeType, data: item.dataBase64 } })),
+      ...(media ?? []).filter(item => item.kind !== 'audio').map(item => ({ type: 'image', source: { type: 'base64', media_type: item.mimeType, data: item.dataBase64 } })),
     ],
   }));
 }
@@ -610,6 +610,9 @@ class AIGateway {
   private async callProvider(provider: AIProvider, messages: ChatMessage[], options?: any): Promise<AIResponse> {
     // Повторная проверка адреса перед каждым запросом: объект провайдера мог быть изменён в обход updateProvider.
     validateEndpoint(provider);
+    if (messages.some(message => message.media?.some(item => item.kind === 'audio')) && provider.id !== 'google') {
+      throw new Error('Для анализа аудио выберите Google Gemini. Остальные подключённые модели в этой версии не настроены на входные аудиофайлы.');
+    }
     // Единая Светлана: всегда напрямую на свой сервер (без стороннего прокси), в приложениях — через нативную часть.
     if (provider.id === 'svetlana') {
       if (messages.some(message => message.media?.length)) {
