@@ -506,7 +506,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                 <input
                   id="chat-file-picker"
                   type="file"
-                  accept=".zip,.txt,.md,.rst,.csv,.tsv,.json,.jsonc,.json5,.log,.xml,.yaml,.yml,.html,.htm,.js,.mjs,.cjs,.ts,.tsx,.jsx,.py,.sql,.toml,.ini,.cfg,.conf,.css,.scss,.sh,.ps1,.bat,.go,.rs,.java,.kt,.c,.h,.cpp,.hpp,.cs,.php,.rb,.swift,.dart,.vue,.svelte,.gradle,.properties,.env,.gitignore,.dockerfile,.makefile,.graphql,.proto,.tf,.pdf,.docx,.pptx,.xlsx,.odt,.odp,.ods,.epub,.jpg,.jpeg,.png,.webp,.gif,.bmp,.heic,.mp4,.webm,.mov,.m4v,.ogv"
+                  accept=".zip,.txt,.md,.rst,.csv,.tsv,.json,.jsonc,.json5,.log,.xml,.yaml,.yml,.html,.htm,.js,.mjs,.cjs,.ts,.tsx,.jsx,.py,.sql,.toml,.ini,.cfg,.conf,.css,.scss,.sh,.ps1,.bat,.go,.rs,.java,.kt,.c,.h,.cpp,.hpp,.cs,.php,.rb,.swift,.dart,.vue,.svelte,.gradle,.properties,.env,.gitignore,.dockerfile,.makefile,.graphql,.proto,.tf,.pdf,.docx,.pptx,.xlsx,.odt,.odp,.ods,.epub,.jpg,.jpeg,.png,.webp,.gif,.bmp,.heic,.mp4,.webm,.mov,.m4v,.ogv,.mp3,.wav,.m4a,.aac,.ogg,.oga,.flac,.weba"
                   multiple
                   className="hidden"
                   disabled={isLoading}
