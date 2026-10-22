@@ -165,7 +165,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
    */
   const handleFileSelection = async (file?: File) => {
     if (!file) return;
-    const allowed = /\\.(txt|md|csv|json|log|xml|yaml|yml|html?|js|ts|tsx|jsx|py|sql|toml|ini|css|sh)$/i.test(file.name);
+    const allowed = /\.(txt|md|csv|json|log|xml|yaml|yml|html?|js|ts|tsx|jsx|py|sql|toml|ini|css|sh)$/i.test(file.name);
     if (!allowed) {
       setError('Этот формат пока не поддерживается. Выбери текстовый файл: TXT, MD, CSV, JSON, PDF пока не поддерживается.');
       return;
@@ -188,13 +188,13 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
     const attachment = selectedFile;
     if ((!text.trim() && !attachment) || isLoading) return;
     const modelText = attachment
-      ? [text.trim(), `Содержимое прикреплённого файла «${attachment.name}»:\\n${attachment.content}`].filter(Boolean).join('\\n\\n')
+      ? [text.trim(), `Содержимое прикреплённого файла «${attachment.name}»:\n${attachment.content}`].filter(Boolean).join('\n\n')
       : text.trim();
 
     const userMessage: Message = {
       role: 'user',
       content: modelText,
-      displayContent: [text.trim(), attachment ? `📎 ${attachment.name} (${Math.max(1, Math.ceil(attachment.size / 1024))} КБ)` : ''].filter(Boolean).join('\\n'),
+      displayContent: [text.trim(), attachment ? `📎 ${attachment.name} (${Math.max(1, Math.ceil(attachment.size / 1024))} КБ)` : ''].filter(Boolean).join('\n'),
       timestamp: Date.now(),
     };
     setMessages(prev => [...prev, userMessage]);
