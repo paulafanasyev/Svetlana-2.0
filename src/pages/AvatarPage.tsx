@@ -16,7 +16,7 @@ import { resetNativeConversation } from '../services/security/NativeBridge';
 import type { ActionSource } from '../services/security/ActionGate';
 import { nearBottom, shouldAutoScroll } from '../services/ChatScroll';
 import { appPlatform } from '../platform';
-import { readChatAttachment, type ChatAttachmentMedia } from '../services/FileAttachments';
+import { readChatAttachment, type ChatAttachmentMedia, type ChatAttachmentText } from '../services/FileAttachments';
 import {
   Mic, Volume2, VolumeX, MessageCircle, Send, Paperclip, X,
   Sparkles, Heart, Smile, Frown, Laugh, AlertCircle,
@@ -172,7 +172,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
       return;
     }
     try {
-      const additions = [];
+      const additions: ChatAttachmentText[] = [];
       for (const file of chosen) additions.push(await readChatAttachment(file));
       const totalText = [...selectedFiles, ...additions].reduce((sum, item) => sum + item.content.length, 0);
       const mediaCount = [...selectedFiles, ...additions].reduce((sum, item) => sum + (item.media?.length ?? 0), 0);
