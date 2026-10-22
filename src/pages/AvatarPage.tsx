@@ -314,7 +314,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
             className="flex items-center justify-center gap-1.5 p-2 min-h-11 min-w-11 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted text-xs"
           >
             <Plug className="w-4 h-4" aria-hidden="true" />
-            <span className="hidden sm:inline">Сервисы</span>
+            <span className="text-xs">MCP</span>
           </button>
           <button
             onClick={() => setShowSettings(!showSettings)}
