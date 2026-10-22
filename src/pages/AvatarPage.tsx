@@ -172,8 +172,9 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
       return;
     }
     try {
-      const additions: ChatAttachmentText[] = [];
-      for (const file of chosen) additions.push(await readChatAttachment(file));
+      const additions: ChatAttachmentText[] = await Promise.all(
+        chosen.map((file): Promise<ChatAttachmentText> => readChatAttachment(file)),
+      );
       const totalText = [...selectedFiles, ...additions].reduce((sum, item) => sum + item.content.length, 0);
       const mediaCount = [...selectedFiles, ...additions].reduce((sum, item) => sum + (item.media?.length ?? 0), 0);
       if (totalText > 240000) throw new Error('Слишком много текста во вложениях. Лимит общего контекста — 240 000 символов.');
