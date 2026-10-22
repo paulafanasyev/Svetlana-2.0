@@ -12,7 +12,13 @@ on:
   pull_request:
     paths:
       - "android-hands/**"
+      - "src/**"
+      - "public/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/svetlana-android.yml"
+      - "ci/workflows/svetlana-android.yml"
   workflow_dispatch: {}
 
 permissions:
