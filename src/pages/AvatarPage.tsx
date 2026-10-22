@@ -17,7 +17,7 @@ import type { ActionSource } from '../services/security/ActionGate';
 import { nearBottom, shouldAutoScroll } from '../services/ChatScroll';
 import { appPlatform } from '../platform';
 import {
-  Mic, Volume2, VolumeX, MessageCircle, Send,
+  Mic, Volume2, VolumeX, MessageCircle, Send, Paperclip, X,
   Sparkles, Heart, Smile, Frown, Laugh, AlertCircle,
   Settings, Wifi, WifiOff, Zap, Loader2, RotateCcw, Plug
 } from 'lucide-react';
@@ -27,6 +27,7 @@ type Emotion = 'neutral' | 'happy' | 'sad' | 'laughing' | 'crying' | 'surprised'
 interface Message {
   role: 'user' | 'svetlana';
   content: string;
+  displayContent?: string;
   emotion?: Emotion;
   timestamp: number;
   provider?: string;
@@ -107,6 +108,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
   const [emotion, setEmotion] = useState<Emotion>('neutral');
   const [messages, setMessages] = useState<Message[]>(() => [greeting()]);
   const [input, setInput] = useState('');
+  const [selectedFile, setSelectedFile] = useState<{ name: string; size: number; content: string } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -161,22 +163,49 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
    * @param source 'voice' — команда пришла голосом: любое действие (даже чтение) — только после нажатия,
    *   а данные CRM/бизнеса (текущие и из прошлых реплик) не передаются модели (запись голоса можно воспроизвести).
    */
+  const handleFileSelection = async (file?: File) => {
+    if (!file) return;
+    const allowed = /\\.(txt|md|csv|json|log|xml|yaml|yml|html?|js|ts|tsx|jsx|py|sql|toml|ini|css|sh)$/i.test(file.name);
+    if (!allowed) {
+      setError('Этот формат пока не поддерживается. Выбери текстовый файл: TXT, MD, CSV, JSON, PDF пока не поддерживается.');
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      setError('Файл слишком большой. Максимальный размер — 1 МБ.');
+      return;
+    }
+    try {
+      const content = await file.text();
+      if (!content.trim()) throw new Error('Файл пустой или не содержит читаемого текста.');
+      setSelectedFile({ name: file.name, size: file.size, content: content.slice(0, 60000) });
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось прочитать файл.');
+    }
+  };
+
   const sendMessage = async (text: string, source: ActionSource = 'unknown') => {
-    if (!text.trim() || isLoading) return;
+    const attachment = selectedFile;
+    if ((!text.trim() && !attachment) || isLoading) return;
+    const modelText = attachment
+      ? [text.trim(), `Содержимое прикреплённого файла «${attachment.name}»:\\n${attachment.content}`].filter(Boolean).join('\\n\\n')
+      : text.trim();
 
     const userMessage: Message = {
       role: 'user',
-      content: text,
+      content: modelText,
+      displayContent: [text.trim(), attachment ? `📎 ${attachment.name} (${Math.max(1, Math.ceil(attachment.size / 1024))} КБ)` : ''].filter(Boolean).join('\\n'),
       timestamp: Date.now(),
     };
     setMessages(prev => [...prev, userMessage]);
     setInput('');
+    setSelectedFile(null);
     setIsLoading(true);
     setError(null);
 
     try {
       // Local CRM commands work without any AI provider (offline, on device).
-      const crmIntent = detectCRMIntent(text);
+      const crmIntent = attachment ? null : detectCRMIntent(text);
       if (crmIntent) {
         const lines = await runCRMActions([crmIntent], source);
         const reply = lines.join('\n');
@@ -207,7 +236,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
       const history: ChatMessage[] = [
         { role: 'system', content: SYSTEM_PROMPT + crmSystemPrompt(undefined, !voice) + mcpSystemPrompt() },
         ...toModelHistory(messages.slice(-10), { hideData: voice }),
-        { role: 'user', content: text },
+        { role: 'user', content: modelText },
       ];
 
       const response = await aiGateway.chat(history, { temperature: 0.8, max_tokens: 1024 });
@@ -434,7 +463,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                           {msg.emotion === 'talking' && '💬'}
                         </span>
                       )}
-                      <p className="text-sm whitespace-pre-line break-words"><span className="sr-only">{speakerLabel(msg.role)} </span>{msg.content}</p>
+                      <p className="text-sm whitespace-pre-line break-words"><span className="sr-only">{speakerLabel(msg.role)} </span>{msg.displayContent ?? msg.content}</p>
                       {msg.provider && (
                         <p className="text-xs text-sv-muted mt-1 opacity-50" aria-hidden="true">{msg.provider}</p>
                       )}
@@ -457,7 +486,29 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
             </div>
 
             <div className="p-3 sm:p-4 border-t border-white/10">
+              {selectedFile && (
+                <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs">
+                  <span className="min-w-0 truncate text-sv-text">📎 {selectedFile.name} · {Math.max(1, Math.ceil(selectedFile.size / 1024))} КБ</span>
+                  <button type="button" onClick={() => setSelectedFile(null)} aria-label="Убрать файл" title="Убрать файл" className="flex min-h-11 min-w-11 items-center justify-center rounded-lg hover:bg-white/10" disabled={isLoading}><X className="h-4 w-4" /></button>
+                </div>
+              )}
               <div className="flex gap-2">
+                <input
+                  id="chat-file-picker"
+                  type="file"
+                  accept=".txt,.md,.csv,.json,.log,.xml,.yaml,.yml,.html,.htm,.js,.ts,.tsx,.jsx,.py,.sql,.toml,.ini,.css,.sh"
+                  className="hidden"
+                  disabled={isLoading}
+                  onChange={e => { void handleFileSelection(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }}
+                />
+                <button
+                  type="button"
+                  onClick={() => document.getElementById('chat-file-picker')?.click()}
+                  disabled={isLoading}
+                  title="Прикрепить текстовый файл"
+                  aria-label="Прикрепить файл"
+                  className="flex min-h-11 min-w-11 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-sv-muted hover:bg-white/10 disabled:opacity-50"
+                ><Paperclip className="h-4 w-4" /></button>
                 <input
                   value={input}
                   onChange={e => setInput(e.target.value)}
@@ -469,7 +520,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                 />
                 <button
                   onClick={() => sendMessage(input)}
-                  disabled={!input.trim() || isLoading}
+                  disabled={(!input.trim() && !selectedFile) || isLoading}
                   title="Отправить"
                   aria-label="Отправить"
                   className="flex items-center justify-center px-4 py-2.5 min-h-11 min-w-11 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white transition-colors"
