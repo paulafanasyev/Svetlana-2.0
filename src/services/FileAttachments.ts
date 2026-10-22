@@ -16,7 +16,7 @@ export interface ChatAttachmentText {
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 const MAX_FILES = 100;
 const MAX_TEXT_BYTES = 240 * 1024;
-const MAX_ENTRY_BYTES = 80 * 1024;
+const MAX_ENTRY_BYTES = 512 * 1024;
 const MAX_DIRECT_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_MEDIA_BYTES = 8 * 1024 * 1024;
 const TEXT_EXTENSIONS = /\.(txt|md|rst|csv|tsv|json|jsonc|json5|log|xml|ya?ml|html?|css|scss|sass|less|js|mjs|cjs|jsx|ts|tsx|mts|cts|py|pyi|ipynb|sql|toml|ini|cfg|conf|sh|bash|zsh|ps1|bat|cmd|go|rs|java|kt|kts|c|h|cc|cpp|hpp|cs|php|rb|swift|dart|vue|svelte|astro|gradle|properties|env|gitignore|dockerignore|makefile|cmake|diff|patch|graphql|proto|tf|hcl|ex|exs|erl|hrl|scala|clj|cljs|lua|pl|r|jl)$/i;
@@ -183,15 +183,21 @@ async function readVideo(file: File): Promise<ChatAttachmentText> {
       video.onerror = () => reject(new Error('Не удалось открыть видео. Используйте MP4 или WEBM.'));
     });
     if (!Number.isFinite(video.duration) || video.duration <= 0) throw new Error('Не удалось определить длительность видео.');
+    await new Promise<void>((resolve, reject) => {
+      video.onloadeddata = () => resolve();
+      video.onerror = () => reject(new Error('Не удалось загрузить первый кадр видео.'));
+    });
     const duration = video.duration;
     const times = Array.from(new Set([0, duration * 0.25, duration * 0.5, duration * 0.75, Math.max(0, duration - 0.1)])).slice(0, 5);
     const media: ChatAttachmentMedia[] = [];
-    for (const time of times) {
-      video.currentTime = time;
-      await new Promise<void>((resolve, reject) => {
-        video.onseeked = () => resolve();
-        video.onerror = () => reject(new Error('Не удалось прочитать кадр видео.'));
-      });
+    for (const [index, time] of times.entries()) {
+      if (index > 0 && Math.abs(video.currentTime - time) > 0.02) {
+        await new Promise<void>((resolve, reject) => {
+          video.onseeked = () => resolve();
+          video.onerror = () => reject(new Error('Не удалось прочитать кадр видео.'));
+          video.currentTime = time;
+        });
+      }
       const scale = Math.min(1, 768 / Math.max(video.videoWidth, video.videoHeight));
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
