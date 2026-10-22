@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.2] - 2026-10-23
+
+### Fixed
+- Resolve Windows TypeScript inference in chat attachment selection.
+- Keep frontend, Tauri and Rust package versions aligned for the release.
+
+
 ## [2.1.1] - 2026-10-22
 
 ### Added
