@@ -53,6 +53,33 @@ export interface AIProvider {
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
+  /** Optional base64 image payloads. Only user messages may carry media. */
+  media?: Array<{ mimeType: string; dataBase64: string }>;
+}
+
+function openAICompatibleMessages(messages: ChatMessage[]) {
+  return messages.map(({ role, content, media }) => ({
+    role,
+    content: media?.length ? [
+      { type: 'text', text: content },
+      ...media.map(item => ({ type: 'image_url', image_url: { url: 'data:' + item.mimeType + ';base64,' + item.dataBase64 } })),
+    ] : content,
+  }));
+}
+function googleContents(messages: ChatMessage[]) {
+  return messages.filter(m => m.role !== 'system').map(({ role, content, media }) => ({
+    role: role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: content }, ...(media ?? []).map(item => ({ inlineData: { mimeType: item.mimeType, data: item.dataBase64 } }))],
+  }));
+}
+function anthropicMessages(messages: ChatMessage[]) {
+  return messages.filter(m => m.role !== 'system').map(({ role, content, media }) => ({
+    role,
+    content: [
+      { type: 'text', text: content },
+      ...(media ?? []).map(item => ({ type: 'image', source: { type: 'base64', media_type: item.mimeType, data: item.dataBase64 } })),
+    ],
+  }));
 }
 
 export interface AIResponse {
@@ -585,6 +612,9 @@ class AIGateway {
     validateEndpoint(provider);
     // Единая Светлана: всегда напрямую на свой сервер (без стороннего прокси), в приложениях — через нативную часть.
     if (provider.id === 'svetlana') {
+      if (messages.some(message => message.media?.length)) {
+        throw new Error('Выбранный сервер Светланы пока не поддерживает анализ изображений. Выберите мультимодальную модель с поддержкой изображений.');
+      }
       return isNativeApp() ? this.callNative(provider, messages, options) : this.callSvetlanaCore(provider, messages);
     }
     // Приложения (Windows и Android): облачный запрос делает нативная часть, ключ в JavaScript не попадает.
@@ -653,17 +683,17 @@ class AIGateway {
     if (provider.id === 'svetlana') {
       body = { ...toSvetlanaCoreBody(messages) };
     } else if (provider.id === 'anthropic') {
-      body = { model: provider.model, max_tokens: options?.max_tokens ?? 4096, system: systemMessage?.content, messages: chatMessages, temperature };
+      body = { model: provider.model, max_tokens: options?.max_tokens ?? 4096, system: systemMessage?.content, messages: anthropicMessages(messages), temperature };
     } else if (provider.id === 'google') {
       body = {
-        contents: chatMessages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
+        contents: googleContents(messages),
         systemInstruction: systemMessage ? { parts: [{ text: systemMessage.content }] } : undefined,
         generationConfig: { temperature, maxOutputTokens: options?.max_tokens },
       };
     } else if (provider.id === 'gigachat') {
-      body = { model: provider.model, messages, temperature: gigachatTemperature(temperature), max_tokens: options?.max_tokens ?? 4096 };
+      body = { model: provider.model, messages: openAICompatibleMessages(messages), temperature: gigachatTemperature(temperature), max_tokens: options?.max_tokens ?? 4096 };
     } else {
-      body = { model: provider.model, messages, temperature, max_tokens: options?.max_tokens ?? 4096 };
+      body = { model: provider.model, messages: openAICompatibleMessages(messages), temperature, max_tokens: options?.max_tokens ?? 4096 };
     }
     const data: any = await nativeCloudChat(provider.id, provider.model, body);
     if (provider.id === 'svetlana') {
@@ -685,7 +715,7 @@ class AIGateway {
       body: JSON.stringify({
         provider: provider.id,
         model: provider.model,
-        messages,
+        messages: openAICompatibleMessages(messages),
         options,
       }),
     });
@@ -712,7 +742,7 @@ class AIGateway {
         },
         body: JSON.stringify({
           model: provider.model,
-          messages,
+          messages: messages.map(({ role, content, media }) => ({ role, content, ...(media?.length ? { images: media.map(item => item.dataBase64) } : {}) })),
           stream: false,
           options: {
             temperature: options?.temperature ?? 0.7,
@@ -747,7 +777,7 @@ class AIGateway {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: provider.model,
-        messages,
+        messages: openAICompatibleMessages(messages),
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.max_tokens ?? 4096,
       }),
@@ -776,7 +806,7 @@ class AIGateway {
       },
       body: JSON.stringify({
         model: provider.model,
-        messages,
+        messages: openAICompatibleMessages(messages),
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.max_tokens ?? 4096,
       }),
@@ -828,7 +858,7 @@ class AIGateway {
         model: provider.model,
         max_tokens: options?.max_tokens ?? 4096,
         system: systemMessage?.content,
-        messages: chatMessages,
+        messages: anthropicMessages(messages),
         temperature: options?.temperature ?? 0.7,
       }),
     });
@@ -848,10 +878,7 @@ class AIGateway {
     const systemMessage = messages.find(m => m.role === 'system');
     const chatMessages = messages.filter(m => m.role !== 'system');
     
-    const contents = chatMessages.map(m => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }]
-    }));
+    const contents = googleContents(messages);
 
     // Ключ — в заголовке, а не в адресе: адреса попадают в журналы и историю.
     const response = await fetchAi(
