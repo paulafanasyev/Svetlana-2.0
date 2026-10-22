@@ -5,6 +5,7 @@
 export interface ChatAttachmentMedia {
   mimeType: string;
   dataBase64: string;
+  kind?: 'image' | 'audio';
 }
 export interface ChatAttachmentText {
   name: string;
@@ -169,6 +170,23 @@ async function readImage(file: File): Promise<ChatAttachmentText> {
     return { name: file.name, size: file.size, content: 'Изображение прикреплено: ' + file.name + ' (' + bitmap.width + '×' + bitmap.height + '). Модели необходимо проанализировать само изображение.', media: [{ mimeType: 'image/jpeg', dataBase64 }] };
   } finally { bitmap.close(); }
 }
+async function readAudio(file: File): Promise<ChatAttachmentText> {
+  if (file.size > MAX_MEDIA_BYTES) throw new Error('Аудиофайл больше 8 МБ. Сократите запись перед отправкой.');
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  const types: Record<string, string> = { mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', mp4: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', flac: 'audio/flac', weba: 'audio/webm', webm: 'audio/webm' };
+  const mimeType = file.type.startsWith('audio/') ? file.type : types[ext];
+  if (!mimeType || !/^(audio\/(mpeg|wav|mp4|aac|ogg|flac|webm|x-wav))$/i.test(mimeType)) {
+    throw new Error('Формат аудио не поддерживается. Используйте MP3, WAV, M4A, AAC, OGG или FLAC.');
+  }
+  const dataBase64 = toBase64(new Uint8Array(await file.arrayBuffer()));
+  return {
+    name: file.name,
+    size: file.size,
+    content: 'Аудиофайл прикреплён: ' + file.name + '. Передайте аудио модели для распознавания речи/звука. Для обработки выберите Google Gemini или другую модель с входным аудио.',
+    media: [{ mimeType, dataBase64, kind: 'audio' }],
+    note: 'Расшифровка аудио зависит от выбранной модели; в этом клиенте отдельная локальная транскрипция не выполняется.',
+  };
+}
 async function readVideo(file: File): Promise<ChatAttachmentText> {
   if (file.size > 100 * 1024 * 1024) throw new Error('Видео больше 100 МБ. Выберите короткий фрагмент до 100 МБ.');
   const url = URL.createObjectURL(file);
@@ -219,6 +237,7 @@ export async function readChatAttachment(file: File): Promise<ChatAttachmentText
   if (OFFICE_EXT.test(name)) return readOffice(file);
   if (/\.pdf$/i.test(name) || file.type === 'application/pdf') return readPdf(file);
   if (file.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|heic)$/i.test(name)) return readImage(file);
+  if (file.type.startsWith('audio/') || /\.(mp3|wav|m4a|aac|ogg|oga|flac|weba)$/i.test(name)) return readAudio(file);
   if (file.type.startsWith('video/') || /\.(mp4|webm|mov|m4v|ogv)$/i.test(name)) return readVideo(file);
   if (file.size > MAX_DIRECT_FILE_BYTES) throw new Error('Файл «' + file.name + '» больше 5 МБ. Для проекта используйте ZIP до 25 МБ.');
   if (TEXT_EXTENSIONS.test(name) || /(^|\/)(Dockerfile|Makefile|README(?:\..*)?|LICENSE|CHANGELOG)$/i.test(name)) {
@@ -226,5 +245,5 @@ export async function readChatAttachment(file: File): Promise<ChatAttachmentText
     if (!content.trim()) throw new Error('Файл «' + file.name + '» пустой или не содержит читаемого текста.');
     return { name: file.name, size: file.size, content: content.slice(0, 50000) };
   }
-  throw new Error('Формат «' + file.name + '» пока не поддерживается. Поддерживаются код, ZIP, PDF, DOCX/PPTX/XLSX/ODT/ODP/ODS/EPUB, изображения JPG/PNG/WEBP/GIF и видео MP4/WEBM/MOV.');
+  throw new Error('Формат «' + file.name + '» пока не поддерживается. Поддерживаются код, ZIP, PDF, DOCX/PPTX/XLSX/ODT/ODP/ODS/EPUB, изображения JPG/PNG/WEBP/GIF изображения JPG/PNG/WEBP/GIF, видео MP4/WEBM/MOV и аудио MP3/WAV/M4A/AAC/OGG/FLAC.');
 }
