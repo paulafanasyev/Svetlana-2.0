@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.1.1] - 2026-10-22
+
+### Added
+- Chat attachments for text/code, ZIP archives, supported Office documents, images, video frames and audio input on compatible AI providers.
+
+### Fixed
+- Align the application version across package.json, Tauri, Cargo and the frontend release constant.
+
+
 Все значимые изменения в проекте будут документироваться в этом файле.
 
 Формат основан на [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
