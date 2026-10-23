@@ -75,7 +75,10 @@ class BrowserWorkerClient {
   async wait(sessionId: string, ms: number): Promise<{ success: boolean; observation: BrowserObservation }> {
     return this.request('/v1/sessions/' + encodeURIComponent(sessionId) + '/wait', 'POST', { ms });
   }
-  async screenshot(sessionId: string): Promise<{ success: boolean; mimeType: string; base64: string; url: string }> {\n    return this.request('/v1/sessions/' + encodeURIComponent(sessionId) + '/screenshot', 'POST', {});\n  }\n  async closeSession(sessionId: string): Promise<{ closed: boolean }> {
+  async screenshot(sessionId: string): Promise<{ success: boolean; mimeType: string; base64: string; url: string }> {
+    return this.request('/v1/sessions/' + encodeURIComponent(sessionId) + '/screenshot', 'POST', {});
+  }
+  async closeSession(sessionId: string): Promise<{ closed: boolean }> {
     return this.request('/v1/sessions/' + encodeURIComponent(sessionId), 'DELETE');
   }
 }
