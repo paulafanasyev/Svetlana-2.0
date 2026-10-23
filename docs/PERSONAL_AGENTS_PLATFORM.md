@@ -139,14 +139,18 @@ This document is an architecture and delivery contract only. It does not assert 
 
 ## Implementation checkpoint — 2026-10-23
 
-The current feature branch includes a first implementation slice; the following are **implemented in code, pending CI confirmation**:
+The feature branch now contains an implementation slice for local personal agents and the first authenticated cloud-sync path:
 
-- Local-first workspace persistence in `src/services/PersonalWorkspaceStore.ts` for agent definitions, scoped thread histories, messages, and agent memory notes, with schema validation, bounded record counts, and recognizable-secret redaction.
-- `src/pages/PersonalAgentsPage.tsx` provides agent create/edit/delete, provider selection, memory management (including explicit `Запомни: …` commands), saved threads, MCP connection panel, and JSON import/export.
-- `src/DesktopShell.tsx` exposes the workspace in the main app navigation.
-- `src/pages/AvatarPage.tsx` persists the default Svetlana chat and allows switching/deleting history threads.
-- `src/__tests__/personalWorkspace.test.ts` covers store reload, scope isolation, secret redaction, export/import, and agent deletion.
+- `src/services/PersonalWorkspaceStore.ts` persists agent definitions, scoped thread histories, messages, memory notes and deletion tombstones. Sync snapshots are schema-checked, bounded, secret-redacted and merged with deletion markers so stale devices do not silently restore deleted records.
+- `src/pages/PersonalAgentsPage.tsx` provides agent create/edit/delete, per-agent provider settings, memory management (including explicit `Запомни: …` commands), saved threads, the existing MCP connection panel, JSON import/export and a cloud-sync panel.
+- `src/pages/AvatarPage.tsx` saves the default Svetlana chat and supports switching/deleting saved history threads.
+- `src/services/CloudWorkspaceSync.ts` implements Supabase email/password authentication, explicit per-device/account binding, revision-checked snapshot sync and bounded conflict retries.
+- `supabase/migrations/20261023060000_svetlana_personal_workspace_sync.sql` defines a user-owned snapshot table, RLS, and a revision compare-and-swap RPC. The client receives only a public anon/publishable key.
+- `docs/CLOUD_SYNC_SETUP.md` records required Supabase setup, Vercel build-time variables, account binding and current limits.
+- Unit tests cover local reload, per-agent isolation, secret redaction, export/import, delete tombstones, cross-device merge semantics and the SQL/client security contract.
 
-**Known limits (not implemented yet):** cloud sync/authentication, server-side tenancy and shared workspaces, automatic memory extraction, semantic/vector retrieval, per-tool granular MCP allowlists, OAuth connection setup, and real-device E2E. The workspace exposes the existing MCP connection panel and per-agent opt-in, but these are not separate credentials or tool permissions for each agent. Local storage is not a substitute for a secured multi-user backend. Tool execution remains subject to the existing MCP/security path; the new workspace must not bypass it.
+**Cloud sync is not live in a deployment until a Supabase project is configured, the migration is applied, the public environment variables are set and the deployed flow is tested.** No Supabase credentials were added to the repository. The initial local-first workflow remains available without cloud configuration.
 
-CI should determine whether the current code compiles and tests pass. Until those checks complete, the UI and store are implementation-present but **not yet VERIFIED at runtime**.
+**Remaining work:** team workspaces and roles, automatic memory extraction/review, semantic/vector retrieval, granular per-tool allowlists from the agent UI, OAuth connector setup, large-history chunking, and real-device E2E. MCP calls still use the existing confirmation/security path; local storage is not a substitute for server-side tenancy.
+
+Use CI for compile/test evidence, and a configured test account plus two separate browser/device profiles for runtime cloud-sync verification. No runtime verification is implied by the presence of code or migration alone.
