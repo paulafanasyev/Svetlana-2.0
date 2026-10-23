@@ -173,12 +173,13 @@ export class PersonalWorkspaceStore {
     this.load();
   }
   private applyTombstones() {
-    const goneAgent = (id: string, timestamp: number) => (this.data.tombstones.agents[id] ?? -1) >= timestamp;
-    const goneThread = (id: string, timestamp: number) => (this.data.tombstones.threads[id] ?? -1) >= timestamp;
-    const goneMemory = (id: string, timestamp: number) => (this.data.tombstones.memories[id] ?? -1) >= timestamp;
-    this.data.agents = this.data.agents.filter(a => !goneAgent(a.id, a.updatedAt));
-    this.data.threads = this.data.threads.filter(t => !goneThread(t.id, t.updatedAt) && (t.agentId === null || !goneAgent(t.agentId, t.updatedAt)));
-    this.data.memories = this.data.memories.filter(m => !goneMemory(m.id, m.createdAt) && (m.agentId === null || !goneAgent(m.agentId, m.createdAt)));
+    // IDs are never reused. A deletion marker always wins, even when device clocks disagree.
+    const goneAgent = (id: string) => this.data.tombstones.agents[id] !== undefined;
+    const goneThread = (id: string) => this.data.tombstones.threads[id] !== undefined;
+    const goneMemory = (id: string) => this.data.tombstones.memories[id] !== undefined;
+    this.data.agents = this.data.agents.filter(a => !goneAgent(a.id));
+    this.data.threads = this.data.threads.filter(t => !goneThread(t.id) && (t.agentId === null || !goneAgent(t.agentId)));
+    this.data.memories = this.data.memories.filter(m => !goneMemory(m.id) && (m.agentId === null || !goneAgent(m.agentId)));
   }
   private load() {
     try {
@@ -420,7 +421,8 @@ export class PersonalWorkspaceStore {
         const current = merged.get(item.id);
         if (!current || timestamp(item) > timestamp(current)) merged.set(item.id, item);
       }
-      return Array.from(merged.values()).filter(item => (this.data.tombstones[kind][item.id] ?? -1) < timestamp(item));
+      // A tombstone wins regardless of timestamps; IDs are generated uniquely and never revived. 
+      return Array.from(merged.values()).filter(item => this.data.tombstones[kind][item.id] === undefined);
     };
     this.data.agents = mergeById(this.data.agents, remoteAgents, 'agents', item => (item as PersonalAgent).updatedAt).slice(-MAX_AGENTS);
     this.data.threads = mergeById(this.data.threads, remoteThreads, 'threads', item => (item as WorkspaceThread).updatedAt).slice(-MAX_THREADS);
