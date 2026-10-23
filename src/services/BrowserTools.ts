@@ -42,10 +42,10 @@ const browserSnapshot: Tool = {
 };
 const browserFollowLink: Tool = {
   id: 'browser_follow_link', name: 'Follow browser link',
-  description: 'Переходит по ссылке с точным доступным именем на текущей странице. Не нажимает кнопки отправки, оплаты, удаления или другие элементы с побочными эффектами.',
+  description: 'Переходит по безопасной навигационной ссылке с точным доступным именем. Ссылки, похожие на выход, оплату, отправку, удаление или подтверждение операции, блокируются; для намеренного действия используйте browser_click, который требует подтверждения.',
   category: 'navigation', riskLevel: 'low',
   inputSchema: { type: 'object', properties: { sessionId: sessionProp, name: { type: 'string', description: 'Точное доступное имя ссылки' } }, required: ['sessionId', 'name'] },
-  async execute(p) { try { return result(await browserWorkerClient.click(sessionId(p), 'link', p.name)); } catch (e) { return errorResult(e); } },
+  async execute(p) { try { return result(await browserWorkerClient.followLink(sessionId(p), p.name)); } catch (e) { return errorResult(e); } },
   async verify(_p, r) { return r.success === true && typeof r.observation?.url === 'string'; },
   async isAvailable() { return browserWorkerClient.isConfigured(); },
 };
