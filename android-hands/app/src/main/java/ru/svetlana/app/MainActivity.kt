@@ -182,6 +182,9 @@ class MainActivity : Activity() {
 
     val main = Handler(Looper.getMainLooper())
     private lateinit var web: WebView
+    private lateinit var browserHost: FrameLayout
+    lateinit var agentBrowser: AgentBrowser
+        private set
     private var bridge: Bridge? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var pendingSave: PendingSave? = null
@@ -207,7 +210,10 @@ class MainActivity : Activity() {
         val root = FrameLayout(this)
         root.setBackgroundColor(0xFF0B1020.toInt())
         root.addView(web, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        browserHost = FrameLayout(this).apply { visibility = android.view.View.GONE; isClickable = false }
+        root.addView(browserHost, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(root)
+        agentBrowser = AgentBrowser(this, browserHost)
         if (Build.VERSION.SDK_INT >= 30) {
             // Сами отступаем от строки состояния, жестов и клавиатуры (Android 15 всегда как edge-to-edge).
             window.setDecorFitsSystemWindows(false)
@@ -584,12 +590,14 @@ class MainActivity : Activity() {
         bridge?.pause()
         super.onPause()
         if (::web.isInitialized) web.onPause()
+        if (::agentBrowser.isInitialized) agentBrowser.onPause()
     }
 
     override fun onResume() {
         super.onResume()
         resumed = true
         if (::web.isInitialized) web.onResume()
+        if (::agentBrowser.isInitialized) agentBrowser.onResume()
     }
 
     override fun onDestroy() {
@@ -602,6 +610,7 @@ class MainActivity : Activity() {
         releasePrint?.invoke()
         releasePrint = null
         printView = null
+        if (::agentBrowser.isInitialized) agentBrowser.closeAll()
         bridge?.close()
         bridge = null
         fileCallback?.onReceiveValue(null)
