@@ -129,7 +129,7 @@ class Bridge(private val act: MainActivity) {
             // The browsing engine is Android System WebView owned by this app; it never receives the
             // main app's SvetlanaNative bridge. Page text is treated as untrusted data by the agent.
             "browser_worker_status", "browser_create_session", "browser_navigate", "browser_snapshot",
-            "browser_click", "browser_fill", "browser_wait", "browser_screenshot", "browser_close_session" ->
+            "browser_follow_link", "browser_click", "browser_fill", "browser_wait", "browser_screenshot", "browser_close_session" ->
                 act.agentBrowser.handle(msg.optString("cmd"), args, done)
             "app_info" -> done(true, JSONObject().put("platform", "android").put("version", act.versionName()))
             "secret_has" -> bg(done) { SecureAi.secretHas(act, args.optString("name")) }
