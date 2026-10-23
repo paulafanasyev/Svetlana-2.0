@@ -53,7 +53,7 @@ The worker is a local development/runtime component, not a cloud service. It is 
 
 ## Verification status
 
-- Static implementation: present in this branch.
-- Browser runtime / Chromium installation: must be installed and tested on the target machine.
-- Svetlana UI integration and end-to-end agent action loop: pending.
+- Static implementation and TypeScript integration tests: covered by the repository CI.
+- Browser Worker runtime smoke test: CI installs Chromium, authenticates, creates an isolated session, snapshots the blank page, navigates to `https://example.com`, checks the returned page title, verifies that loopback navigation is rejected, and closes the session.
+- Target-machine setup is still manual: the Windows installer and Android APK do not bundle Node.js/Playwright/Chromium or automatically launch the worker. Android-native browser automation is not part of this release.
 - Persistent logged-in sessions or direct ego(lite) adapter: not implemented.
