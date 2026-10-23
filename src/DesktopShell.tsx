@@ -11,9 +11,10 @@
 // Смена статуса ИИ («ИИ не проверен» → «ИИ: …») озвучивается экранным диктором (скрытая строка role=status).
 // Все кнопки в шапке не ниже 44 px.
 import { useEffect, useState } from 'react';
-import { MessageCircle, Cpu, Smartphone, Wrench, Settings2, AlertTriangle, Mic, Download, Hand } from 'lucide-react';
+import { MessageCircle, Cpu, Smartphone, Wrench, Settings2, AlertTriangle, Mic, Download, Hand, Bot } from 'lucide-react';
 import App from './App';
 import AvatarPage from './pages/AvatarPage';
+import PersonalAgentsPage from './pages/PersonalAgentsPage';
 import AIProvidersPage from './pages/AIProvidersPage';
 import AndroidConnectionPage from './pages/AndroidConnectionPage';
 import AndroidHandsPage from './pages/AndroidHandsPage';
@@ -25,12 +26,13 @@ import { isNativeApp } from './services/security/NativeBridge';
 import { isAndroidApp } from './platform';
 import { APP_VERSION } from './version';
 
-type Tab = 'chat' | 'providers' | 'phone' | 'hands' | 'download' | 'dev';
+type Tab = 'chat' | 'agents' | 'providers' | 'phone' | 'hands' | 'download' | 'dev';
 
 // Только то, что реально работает. Оркестратор задач пока демо, он во вкладке «Для разработчика».
 // short — надпись на узком экране (телефон). notOnWindows — нет только в Windows-приложении (там своё обновление).
 const TABS: { id: Tab; label: string; short: string; icon: typeof MessageCircle; notOnWindows?: boolean; androidOnly?: boolean }[] = [
   { id: 'chat', label: 'Чат со Светланой', short: 'Чат', icon: MessageCircle },
+  { id: 'agents', label: 'Мои агенты', short: 'Агенты', icon: Bot },
   { id: 'providers', label: 'Модели ИИ', short: 'ИИ', icon: Cpu },
   { id: 'hands', label: 'Руки', short: 'Руки', icon: Hand, androidOnly: true },
   { id: 'phone', label: 'Телефон', short: 'Телефон', icon: Smartphone },
@@ -177,6 +179,7 @@ export default function DesktopShell() {
               <AvatarPage onConnectAi={() => setSetupOpen(true)} />
             </>
           )}
+          {tab === 'agents' && <PersonalAgentsPage />}
           {tab === 'providers' && <AIProvidersPage />}
           {tab === 'phone' && <AndroidConnectionPage />}
           {tab === 'hands' && <AndroidHandsPage />}
