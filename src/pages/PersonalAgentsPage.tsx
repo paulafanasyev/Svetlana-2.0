@@ -9,6 +9,7 @@ import BrowserWorkerSettings from './BrowserWorkerSettings';
 import McpPanel from '../components/McpPanel';
 import { createWorkspaceId, personalWorkspace, parseExplicitMemoryCommand, type PersonalAgent, type WorkspaceMessage, type WorkspaceThread } from '../services/PersonalWorkspaceStore';
 import { mcpSystemPrompt, parseMcpActions, runMcpLoop, MCP_REJECTED_TEXT } from '../services/mcp/McpManager';
+import { setActiveAgentWorkspaceAgentId } from '../services/AgentWorkspaceTools';
 import { suggestMemoryCandidates } from '../services/MemorySuggestions';
 
 const STARTERS = [
@@ -232,6 +233,7 @@ export default function PersonalAgentsPage() {
     personalWorkspace.replaceMessages(threadId, withUser);
     setMessages(withUser);
     try {
+      setActiveAgentWorkspaceAgentId(selectedAgent.useMcp ? selectedAgent.id : null);
       const explicitMemory = parseExplicitMemoryCommand(text);
       if (explicitMemory) {
         setMemorySuggestions([]);
@@ -306,6 +308,7 @@ export default function PersonalAgentsPage() {
       personalWorkspace.replaceMessages(threadId, completed);
       setMessages(completed);
     } finally {
+      setActiveAgentWorkspaceAgentId(null);
       setLoading(false);
       refreshThreads(selectedAgentId);
     }
@@ -398,7 +401,7 @@ export default function PersonalAgentsPage() {
                 </label>
                 <label className="flex items-start gap-3 rounded-lg border border-white/10 bg-white/[0.02] p-3 text-sm">
                   <input type="checkbox" checked={draft.useMcp} onChange={e => changeDraft('useMcp', e.target.checked)} className="mt-1" />
-                  <span><span className="font-medium flex items-center gap-2"><Plug size={16}/> Разрешить MCP и браузер</span><span className="block text-xs text-sv-muted mt-1">Агент сможет запрашивать инструменты подключённых MCP-сервисов и локального браузера, если Browser Worker настроен. Вызовы проходят существующую проверку; действия с последствиями требуют подтверждения.</span></span>
+                  <span><span className="font-medium flex items-center gap-2"><Plug size={16}/> Разрешить инструменты, браузер и хранилище</span><span className="block text-xs text-sv-muted mt-1">Агент сможет использовать подключённые MCP-сервисы, настроенный локальный браузер и своё приватное текстовое хранилище на этом устройстве. Хранилище не является общей папкой Android; запись, удаление и чтение содержимого требуют подтверждения.</span></span>
                 </label>
                 <div className="flex flex-wrap gap-2">
                   <button onClick={saveAgent} disabled={saving || !draft.name.trim()} className="inline-flex min-h-11 items-center gap-2 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm text-white"><Save size={16}/> {saving ? 'Сохранение…' : 'Сохранить агента'}</button>

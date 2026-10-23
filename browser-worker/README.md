@@ -49,7 +49,7 @@ Every endpoint except GET /health requires Authorization: Bearer <token>.
 
 Web-page text is untrusted input and must never be treated as policy or system instructions. The model must use Svetlana's existing ToolRegistry, ActionGate, policy checks, and confirmation UI before actions with consequences. The worker itself does not decide that a click is authorized just because a page asks for it.
 
-The worker is a local development/runtime component, not a cloud service. It is not production-ready for exposing to the Internet. DNS/IP checks reduce SSRF risk but are not a substitute for OS-level network isolation; review before using it with sensitive accounts. Authenticated browser profiles, password import, payments, sending messages, file uploads, and downloads are intentionally out of scope for this first version.
+The worker is a local development/runtime component, not a cloud service. It is not production-ready for exposing to the Internet. It is not bundled into the Android APK and requires a compatible Node.js + Playwright/Chromium runtime; passing Android build checks does not make this worker available on Android. The private text-file workspace in Svetlana is separate: it uses app-origin local storage and does not grant access to the shared Android filesystem. DNS/IP checks reduce SSRF risk but are not a substitute for OS-level network isolation; review before using it with sensitive accounts. Authenticated browser profiles, password import, payments, sending messages, file uploads, and downloads are intentionally out of scope for this first version.
 
 ## Verification status
 

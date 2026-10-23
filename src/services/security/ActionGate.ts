@@ -88,6 +88,7 @@ const READ_ONLY = new Set([
   'biz_receivables', 'biz_tax_summary', 'biz_find_support', 'biz_analytics', 'biz_check_inn',
   'biz_free_slots', 'biz_agenda', 'biz_booking_reminders',
   'browser_create_session', 'browser_navigate', 'browser_snapshot', 'browser_wait',
+  'agent_workspace_status', 'agent_workspace_list',
 ]);
 
 /**
@@ -95,7 +96,7 @@ const READ_ONLY = new Set([
  * По просьбе нейросети — только после подтверждения (результат уйдёт в разговор с ней).
  */
 const SENSITIVE_READ = new Set([
-  'crm_find_contacts', 'biz_receivables', 'biz_analytics', 'biz_agenda', 'biz_booking_reminders',
+  'crm_find_contacts', 'biz_receivables', 'biz_analytics', 'biz_agenda', 'biz_booking_reminders', 'agent_workspace_read',
 ]);
 
 /** Предупреждение в окне подтверждения, когда нейросеть просит личные данные клиентов. */
@@ -112,6 +113,10 @@ const LABELS: Record<string, string> = {
   biz_receivables: 'Показать неоплаченные счета', biz_analytics: 'Показать аналитику по клиентам',
   biz_agenda: 'Показать расписание', biz_booking_reminders: 'Показать напоминания клиентам',
   biz_tax_summary: 'Показать налоги', biz_free_slots: 'Показать свободные окна',
+  agent_workspace_create: 'Создать личное хранилище агента', agent_workspace_status: 'Проверить личное хранилище агента',
+  agent_workspace_list: 'Показать файлы личного хранилища', agent_workspace_read: 'Прочитать файл личного хранилища',
+  agent_workspace_write: 'Записать файл в личное хранилище', agent_workspace_delete_file: 'Удалить файл из личного хранилища',
+  agent_workspace_remove: 'Удалить всё личное хранилище агента',
 };
 
 /**
@@ -196,6 +201,7 @@ export function summarizeAction(req: ActionRequest): ActionSummary {
   if (what) lines.unshift(`Что будет: ${stripControl(what, false).slice(0, 400)}`);
   let warning: string | null = null;
   try { warning = WARN.get(req.tool)?.(req.args) ?? null; } catch { warning = null; }
+  if (!warning && req.tool === 'agent_workspace_read' && req.source !== 'user') warning = 'Содержимое файла будет передано выбранному ИИ-провайдеру. Продолжайте только если разрешаете этой модели читать файл.';
   if (!warning && SENSITIVE_READ.has(req.tool) && req.source !== 'user') warning = SENSITIVE_READ_WARNING;
   return {
     ...(warning ? { warning: stripControl(warning, false).slice(0, 400) } : {}),
