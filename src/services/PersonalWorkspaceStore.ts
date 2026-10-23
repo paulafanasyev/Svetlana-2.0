@@ -425,9 +425,35 @@ export class PersonalWorkspaceStore {
       // A tombstone wins regardless of timestamps; IDs are generated uniquely and never revived. 
       return Array.from(merged.values()).filter(item => this.data.tombstones[kind][item.id] === undefined);
     };
-    this.data.agents = mergeById(this.data.agents, remoteAgents, 'agents', item => (item as PersonalAgent).updatedAt).slice(-MAX_AGENTS);
-    this.data.threads = mergeById(this.data.threads, remoteThreads, 'threads', item => (item as WorkspaceThread).updatedAt).slice(-MAX_THREADS);
-    this.data.memories = mergeById(this.data.memories, remoteMemories, 'memories', item => (item as AgentMemory).createdAt).slice(-MAX_MEMORIES);
+    this.data.agents = mergeById(this.data.agents, remoteAgents, 'agents', item => (item as PersonalAgent).updatedAt)
+      .sort((a, b) => (b as PersonalAgent).updatedAt - (a as PersonalAgent).updatedAt)
+      .slice(0, MAX_AGENTS);
+
+    // Merge messages by ID so concurrent replies from two devices are not dropped when one whole thread wins LWW.
+    const mergedThreads = new Map(this.data.threads.map(thread => [thread.id, thread]));
+    for (const remote of remoteThreads) {
+      const local = mergedThreads.get(remote.id);
+      if (!local) { mergedThreads.set(remote.id, remote); continue; }
+      const messages = new Map(local.messages.map(message => [message.id, message]));
+      for (const message of remote.messages) {
+        const current = messages.get(message.id);
+        if (!current || message.timestamp > current.timestamp) messages.set(message.id, message);
+      }
+      const latest = remote.updatedAt > local.updatedAt ? remote : local;
+      mergedThreads.set(remote.id, {
+        ...latest,
+        messages: Array.from(messages.values()).sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id)).slice(-MAX_MESSAGES_PER_THREAD),
+        updatedAt: Math.max(local.updatedAt, remote.updatedAt),
+        archived: local.archived || remote.archived,
+      });
+    }
+    this.data.threads = Array.from(mergedThreads.values())
+      .filter(thread => this.data.tombstones.threads[thread.id] === undefined)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, MAX_THREADS);
+    this.data.memories = mergeById(this.data.memories, remoteMemories, 'memories', item => (item as AgentMemory).createdAt)
+      .sort((a, b) => (b as AgentMemory).createdAt - (a as AgentMemory).createdAt)
+      .slice(0, MAX_MEMORIES);
     const ids = new Set(this.data.agents.map(a => a.id));
     this.data.threads = this.data.threads.filter(t => t.agentId === null || ids.has(t.agentId));
     this.data.memories = this.data.memories.filter(m => m.agentId === null || ids.has(m.agentId));
