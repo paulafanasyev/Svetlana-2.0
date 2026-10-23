@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { aiGateway } from '../services/AIGateway';
 import McpPanel from '../components/McpPanel';
-import { personalWorkspace, type PersonalAgent, type WorkspaceMessage, type WorkspaceThread } from '../services/PersonalWorkspaceStore';
+import { personalWorkspace, parseExplicitMemoryCommand, type PersonalAgent, type WorkspaceMessage, type WorkspaceThread } from '../services/PersonalWorkspaceStore';
 import { mcpSystemPrompt, parseMcpActions, runMcpLoop, MCP_REJECTED_TEXT } from '../services/mcp/McpManager';
 
 const STARTERS = [
@@ -213,6 +213,22 @@ export default function PersonalAgentsPage() {
     personalWorkspace.replaceMessages(threadId, withUser);
     setMessages(withUser);
     try {
+      const explicitMemory = parseExplicitMemoryCommand(text);
+      if (explicitMemory) {
+        personalWorkspace.addMemory(selectedAgent.id, explicitMemory, 'user');
+        refreshMemories(selectedAgent.id);
+        const acknowledgement: WorkspaceMessage = {
+          id: 'msg_' + (Date.now() + 1).toString(36),
+          role: 'assistant',
+          content: ['Запомнила для агента «' + selectedAgent.name + '»: ' + explicitMemory, 'Эта запись сохранена отдельно от переписки и будет добавляться в контекст его следующих диалогов.'].join('\n'),
+          timestamp: Date.now(),
+        };
+        const completed = [...withUser, acknowledgement].slice(-500);
+        personalWorkspace.replaceMessages(threadId, completed);
+        setMessages(completed);
+        setNotice('Добавлена явная команда сохранения в память.');
+        return;
+      }
       const provider = selectedAgent.providerId ? providers.find(p => p.id === selectedAgent.providerId) : activeProvider;
       if (!provider) throw new Error('Для агента не выбрана доступная модель. Откройте «Модели ИИ» и настройте провайдера.');
       const mem = personalWorkspace.listMemories(selectedAgent.id).map(m => '- ' + m.content).join('\n');
