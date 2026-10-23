@@ -26,6 +26,28 @@ describe('workspace cloud snapshot merge', () => {
     expect(b.getAgent(agentB.id)).toBeDefined();
   });
 
+  it('preserves concurrent messages added on separate devices to the same thread', () => {
+    const a = new PersonalWorkspaceStore(makeStorage());
+    const b = new PersonalWorkspaceStore(makeStorage());
+    const agent = a.createAgent({ name: 'Общий агент' });
+    const thread = a.createThread(agent.id, 'Новый чат');
+    a.replaceMessages(thread.id, [{ id: 'base', role: 'user', content: 'Начало', timestamp: 10 }]);
+    b.mergeSyncSnapshot(a.exportSyncSnapshot());
+
+    const threadA = a.getThread(thread.id)!;
+    const threadB = b.getThread(thread.id)!;
+    a.replaceMessages(thread.id, [...threadA.messages, { id: 'from-a', role: 'assistant', content: 'Ответ A', timestamp: 20 }]);
+    b.replaceMessages(thread.id, [...threadB.messages, { id: 'from-b', role: 'assistant', content: 'Ответ B', timestamp: 21 }]);
+
+    a.mergeSyncSnapshot(b.exportSyncSnapshot());
+    b.mergeSyncSnapshot(a.exportSyncSnapshot());
+
+    const messagesA = a.getThread(thread.id)?.messages ?? [];
+    const messagesB = b.getThread(thread.id)?.messages ?? [];
+    expect(messagesA.map(m => m.id).sort()).toEqual(['base', 'from-a', 'from-b']);
+    expect(messagesB.map(m => m.id).sort()).toEqual(['base', 'from-a', 'from-b']);
+  });
+
   it('does not resurrect an agent, its threads, or memory after deletion', () => {
     const localStorage = makeStorage();
     const deviceA = new PersonalWorkspaceStore(localStorage);
