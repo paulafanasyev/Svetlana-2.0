@@ -52,7 +52,7 @@ function fromStoredMessage(message: WorkspaceMessage): Message {
   };
 }
 function toStoredMessages(messages: Message[]): WorkspaceMessage[] {
-  return messages.slice(-500).map((message, index) => ({
+  return messages.slice(-500).map(message => ({
     id: message.id,
     role: message.role === 'user' ? 'user' : 'assistant',
     content: message.content,
