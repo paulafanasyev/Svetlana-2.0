@@ -62,7 +62,17 @@ const makeId = (prefix: string) => {
   return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 12);
 };
 const now = () => Date.now();
-const cleanText = (value: unknown, max = MAX_TEXT) => redactSecrets(stripControl(typeof value === 'string' ? value : String(value ?? '')).slice(0, max));
+const cleanText = (value: unknown, max = MAX_TEXT) => {
+  const text = stripControl(typeof value === 'string' ? value : String(value ?? '')).slice(0, max);
+  // Also hide credentials written as JSON/key-value pairs, not only recognizable token formats.
+  return redactSecrets(text).replace(/(["']?)(api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|password|passwd|authorization|secret)(["']?\\s*[:=]\\s*["']?)([^\\s"',;}]+)/gi, '$1$2$3[скрыто]');
+};
+export function parseExplicitMemoryCommand(text: string): string | null {
+  const match = text.trim().match(/^(?:запомни|запиши\\s+в\\s+память|remember)\\s*(?:[:,—-])\\s*(.{1,2000})$/i);
+  if (!match) return null;
+  const content = cleanText(match[1].replace(/^что\\s+/i, ''), 2000).trim();
+  return content || null;
+}
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 function defaultStorage(): KV | null {
