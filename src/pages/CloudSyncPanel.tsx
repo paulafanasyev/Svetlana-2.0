@@ -33,6 +33,7 @@ export default function CloudSyncPanel({ onSynced }: { onSynced?: () => void }) 
   const [boundId, setBoundId] = useState<string | null>(() => boundWorkspaceOwnerId());
   const [lastSync, setLastSync] = useState<SyncResult | null>(null);
   const syncLock = useRef(false);
+  const autoSyncStartedForUser = useRef<string | null>(null);
   const onSyncedRef = useRef(onSynced);
   onSyncedRef.current = onSynced;
 
@@ -66,6 +67,7 @@ export default function CloudSyncPanel({ onSynced }: { onSynced?: () => void }) 
     setMessage(null);
     try {
       const result = firstBinding ? await enableAndSyncWorkspace(user.id) : await syncBoundWorkspace();
+      if (firstBinding) autoSyncStartedForUser.current = user.id;
       setLastSync(result);
       setBoundId(boundWorkspaceOwnerId());
       setMessage('Синхронизация завершена: агентов — ' + result.agents + ', диалогов — ' + result.threads + ', записей памяти — ' + result.memories + '.');
@@ -83,7 +85,10 @@ export default function CloudSyncPanel({ onSynced }: { onSynced?: () => void }) 
   // while the workspace is open. A new account is never bound silently.
   useEffect(() => {
     if (!user || boundId !== user.id) return;
-    void runSync(false);
+    if (autoSyncStartedForUser.current !== user.id) {
+      autoSyncStartedForUser.current = user.id;
+      void runSync(false);
+    }
     const interval = window.setInterval(() => { void runSync(false); }, 60_000);
     return () => window.clearInterval(interval);
   }, [user?.id, boundId, runSync]);
