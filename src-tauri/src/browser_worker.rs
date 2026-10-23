@@ -77,19 +77,26 @@ impl BrowserWorkerManager {
             "Не удалось запустить встроенный браузер ({:?}): {}. Проверьте целостность установщика.",
             node.file_name().unwrap_or_default(), e
         ))?;
-        let ready = (0..80).any(|_| {
-            if child.try_wait().ok().flatten().is_some() {
-                return false;
+        let address = format!("127.0.0.1:{port}").parse().map_err(|e| format!("Некорректный локальный адрес браузера: {e}"))?;
+        let mut ready = false;
+        for _ in 0..80 {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    return Err(format!("Встроенный браузер завершился при запуске ({status}). Проверьте комплект runtime в установщике."));
+                }
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("Не удалось проверить состояние браузера: {error}"));
+                }
+                Ok(None) => {}
             }
-            if TcpStream::connect_timeout(
-                &format!("127.0.0.1:{port}").parse().expect("valid loopback address"),
-                Duration::from_millis(100),
-            ).is_ok() {
-                return true;
+            if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
+                ready = true;
+                break;
             }
             thread::sleep(Duration::from_millis(100));
-            false
-        });
+        }
         if !ready {
             let _ = child.kill();
             let _ = child.wait();
