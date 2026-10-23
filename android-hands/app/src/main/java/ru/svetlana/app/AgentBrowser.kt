@@ -67,6 +67,7 @@ class AgentBrowser(private val act: MainActivity, private val host: FrameLayout)
                 "browser_create_session" -> createSession(args.optString("agentId"), done)
                 "browser_navigate" -> navigate(args.optString("sessionId"), args.optString("url"), done)
                 "browser_snapshot" -> withSession(args.optString("sessionId"), done) { s -> observe(s, done) }
+                "browser_follow_link" -> followLink(args.optString("sessionId"), args.optString("name"), done)
                 "browser_click" -> click(args.optString("sessionId"), args.optString("role"), args.optString("name"), done)
                 "browser_fill" -> fill(args.optString("sessionId"), args.optString("role"), args.optString("name"), args.optString("value"), done)
                 "browser_wait" -> waitFor(args.optString("sessionId"), args.optInt("ms", -1), done)
@@ -304,6 +305,55 @@ class AgentBrowser(private val act: MainActivity, private val host: FrameLayout)
                 done(true, parsed)
             }
         }
+    }
+
+    /**
+     * Follows ordinary navigation links without executing arbitrary click handlers. Action-like
+     * links are rejected here; the caller can then deliberately use browser_click through ActionGate.
+     */
+    private fun followLink(id: String, name: String, done: Done) {
+        if (name.isBlank() || name.length > 300) { done(false, "Имя ссылки имеет недопустимую длину"); return }
+        val session = sessions[id]
+        if (session == null) { done(false, "Браузерная сессия не найдена или закрыта"); return }
+        show(session)
+        session.view.evaluateJavascript(followLinkScript(name)) { raw ->
+            val result = runCatching { JSONObject(decodeJsString(raw)) }.getOrNull()
+            if (result == null || !result.optBoolean("ok")) {
+                done(false, result?.optString("error") ?: "Не удалось проверить ссылку")
+                return@evaluateJavascript
+            }
+            val target = result.optString("url")
+            if (isPotentiallyConsequentialLink(name, target)) {
+                done(false, "Ссылка похожа на действие с последствиями и не открыта автоматически. Используйте browser_click после подтверждения.")
+                return@evaluateJavascript
+            }
+            // navigate() rechecks the URL and DNS destinations before loading the target.
+            navigate(id, target, done)
+        }
+    }
+
+    private fun followLinkScript(name: String): String {
+        val nameJson = JSONObject.quote(name)
+        return """
+          (function(){
+            const name=$nameJson;
+            const links=Array.from(document.querySelectorAll('a[href]')).slice(0,1000);
+            const labelOf=e=>String(e.getAttribute('aria-label')||e.getAttribute('title')||e.innerText||e.textContent||'').replace(/\\s+/g,' ').trim().slice(0,240);
+            const matches=links.filter(e=>labelOf(e)===name);
+            if(matches.length!==1)return JSON.stringify({ok:false,error:matches.length?'Найдено несколько ссылок с таким именем':'Ссылка не найдена'});
+            const url=new URL(matches[0].getAttribute('href'),location.href);
+            if(!['http:','https:'].includes(url.protocol)||url.username||url.password)return JSON.stringify({ok:false,error:'Разрешены только публичные HTTP/HTTPS-ссылки'});
+            return JSON.stringify({ok:true,url:url.href});
+          })()
+        """.trimIndent()
+    }
+
+    private fun isPotentiallyConsequentialLink(name: String, url: String): Boolean {
+        val pattern = Regex(
+            "(logout|log[ -]?out|sign[ -]?out|delete|remove|unsubscribe|cancel[ -]?(subscription|account|order)?|checkout|payment|pay now|purchase|buy now|submit|send|transfer|revoke|reset[ -]?password|verify[ -]?email|confirm[ -]?email|activate[ -]?account|удал(?:ить|ение)|отпис(?:аться|ка)|отмен(?:ить|а)|оплат(?:ить|а)|покуп(?:ка|ать)|перевод|отправ(?:ить|ка)|подтверд(?:ить|ение)|сброс(?:ить| пароля))",
+            RegexOption.IGNORE_CASE
+        )
+        return pattern.containsMatchIn("$name $url")
     }
 
     private fun click(id: String, role: String, name: String, done: Done) {
