@@ -69,7 +69,7 @@ jobs:
           New-Item -ItemType Directory -Force $env:PLAYWRIGHT_BROWSERS_PATH | Out-Null
           Push-Location browser-worker
           try {
-            npx playwright install chromium
+            npx playwright install --only-shell chromium
             if ($LASTEXITCODE -ne 0) { throw "Не удалось скачать Chromium для Browser Worker" }
           } finally {
             Pop-Location
