@@ -147,6 +147,6 @@ The current feature branch includes a first implementation slice; the following 
 - `src/pages/AvatarPage.tsx` persists the default Svetlana chat and allows switching/deleting history threads.
 - `src/__tests__/personalWorkspace.test.ts` covers store reload, scope isolation, secret redaction, export/import, and agent deletion.
 
-**Known limits (not implemented yet):** cloud sync/authentication, server-side tenancy and shared workspaces, automatic memory extraction, semantic/vector retrieval, per-tool granular MCP allowlists from this page, OAuth connection setup, and real-device E2E. Local storage is not a substitute for a secured multi-user backend. Tool execution remains subject to the existing MCP/security path; the new workspace must not bypass it.
+**Known limits (not implemented yet):** cloud sync/authentication, server-side tenancy and shared workspaces, automatic memory extraction, semantic/vector retrieval, per-tool granular MCP allowlists, OAuth connection setup, and real-device E2E. The workspace exposes the existing MCP connection panel and per-agent opt-in, but these are not separate credentials or tool permissions for each agent. Local storage is not a substitute for a secured multi-user backend. Tool execution remains subject to the existing MCP/security path; the new workspace must not bypass it.
 
 CI should determine whether the current code compiles and tests pass. Until those checks complete, the UI and store are implementation-present but **not yet VERIFIED at runtime**.
