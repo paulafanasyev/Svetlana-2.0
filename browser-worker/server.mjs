@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
 import net from 'node:net';
 import { chromium } from 'playwright';
+import { isPotentiallyConsequentialLink } from './browser-policy.mjs';
 
 const HOST = process.env.SVETLANA_BROWSER_HOST || '127.0.0.1';
 const PORT = Number(process.env.SVETLANA_BROWSER_PORT || 4178);
@@ -173,7 +174,7 @@ const server = http.createServer(async (req, res) => {
       const session = await createSession(agentId);
       return json(res, 201, { sessionId: session.id, agentId, isolated: true, expiresAfterMs: SESSION_TTL_MS });
     }
-    const match = url.pathname.match(/^\/v1\/sessions\/([a-f0-9-]{36})(?:\/(navigate|snapshot|click|fill|wait|screenshot))?$/);
+    const match = url.pathname.match(/^\/v1\/sessions\/([a-f0-9-]{36})(?:\/(navigate|snapshot|click|fill|wait|screenshot|follow-link))?$/);
     if (!match) return json(res, 404, { error: 'Not found' });
     const [, id, action] = match;
     if (req.method === 'DELETE' && !action) return json(res, 200, { closed: await closeSession(id) });
@@ -187,6 +188,21 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { success: true, observation: await snapshot(session) });
     }
     if (action === 'snapshot') return json(res, 200, { success: true, observation: await snapshot(session) });
+    if (action === 'follow-link') {
+      const name = safeText(body.name, 'name', 300);
+      const locator = page.getByRole('link', { name, exact: true });
+      const count = await locator.count();
+      if (count !== 1) return json(res, 400, { success: false, error: count ? 'Ambiguous link name' : 'Link not found' });
+      const href = await locator.getAttribute('href');
+      if (!href) return json(res, 400, { success: false, error: 'Link has no URL' });
+      const target = await assertPublicUrl(new URL(href, page.url()).href);
+      if (isPotentiallyConsequentialLink(name, target.href)) {
+        return json(res, 403, { success: false, error: 'Potentially consequential link blocked. Use browser_click, which requires confirmation.' });
+      }
+      // Navigate to the link target instead of executing arbitrary page click handlers.
+      await page.goto(target.href, { waitUntil: 'domcontentloaded' });
+      return json(res, 200, { success: true, observation: await snapshot(session) });
+    }
     if (action === 'click') {
       const role = safeText(body.role, 'role', 40);
       const name = safeText(body.name, 'name', 300);
