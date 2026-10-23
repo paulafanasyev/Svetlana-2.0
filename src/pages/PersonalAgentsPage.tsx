@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { aiGateway } from '../services/AIGateway';
 import CloudSyncPanel from './CloudSyncPanel';
+import BrowserWorkerSettings from './BrowserWorkerSettings';
 import McpPanel from '../components/McpPanel';
 import { createWorkspaceId, personalWorkspace, parseExplicitMemoryCommand, type PersonalAgent, type WorkspaceMessage, type WorkspaceThread } from '../services/PersonalWorkspaceStore';
 import { mcpSystemPrompt, parseMcpActions, runMcpLoop, MCP_REJECTED_TEXT } from '../services/mcp/McpManager';
@@ -346,6 +347,7 @@ export default function PersonalAgentsPage() {
         <div><strong className="text-sv-text">Хранение на этом устройстве.</strong> Диалоги, конфигурации и память сохраняются в локальном хранилище браузера/приложения. Сейчас нет автоматической облачной синхронизации между устройствами. {storageMode === 'unavailable' ? <span className="text-red-300">Хранилище недоступно — данные могут не сохраниться после перезапуска.</span> : !personalWorkspace.isPersisted() ? <span className="text-red-300">Последняя запись не сохранилась; освободите место или экспортируйте агента.</span> : <span className="text-emerald-300">Последнее сохранение прошло без ошибки.</span>}</div>
       </div>
       <CloudSyncPanel onSynced={handleCloudSynced} />
+      <BrowserWorkerSettings />
       {notice && <div role="status" className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 text-sm text-emerald-200">{notice}</div>}
       {error && <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-200">{error}</div>}
       {showIntegrations && <McpPanel onClose={() => setShowIntegrations(false)} />}
