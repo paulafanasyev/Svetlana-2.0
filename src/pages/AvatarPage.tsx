@@ -17,7 +17,7 @@ import type { ActionSource } from '../services/security/ActionGate';
 import { nearBottom, shouldAutoScroll } from '../services/ChatScroll';
 import { appPlatform } from '../platform';
 import { readChatAttachment, type ChatAttachmentMedia, type ChatAttachmentText } from '../services/FileAttachments';
-import { personalWorkspace, type WorkspaceMessage } from '../services/PersonalWorkspaceStore';
+import { createWorkspaceId, personalWorkspace, type WorkspaceMessage } from '../services/PersonalWorkspaceStore';
 import {
   Mic, Volume2, VolumeX, MessageCircle, Send, Paperclip, X,
   Sparkles, Heart, Smile, Frown, Laugh, AlertCircle, History, Trash2,
@@ -27,6 +27,7 @@ import {
 type Emotion = 'neutral' | 'happy' | 'sad' | 'laughing' | 'crying' | 'surprised' | 'talking';
 
 interface Message {
+  id: string;
   role: 'user' | 'svetlana';
   content: string;
   displayContent?: string;
@@ -37,10 +38,11 @@ interface Message {
   hasData?: boolean;
 }
 
-const greeting = (): Message => ({ role: 'svetlana', content: 'Привет! Я Светлана. Чем могу помочь?', emotion: 'happy', timestamp: Date.now() });
+const greeting = (): Message => ({ id: createWorkspaceId('chat'), role: 'svetlana', content: 'Привет! Я Светлана. Чем могу помочь?', emotion: 'happy', timestamp: Date.now() });
 
 function fromStoredMessage(message: WorkspaceMessage): Message {
   return {
+    id: message.id,
     role: message.role === 'user' ? 'user' : 'svetlana',
     content: message.content,
     displayContent: message.displayContent,
@@ -51,7 +53,7 @@ function fromStoredMessage(message: WorkspaceMessage): Message {
 }
 function toStoredMessages(messages: Message[]): WorkspaceMessage[] {
   return messages.slice(-500).map((message, index) => ({
-    id: 'chat_' + message.timestamp.toString(36) + '_' + index,
+    id: message.id,
     role: message.role === 'user' ? 'user' : 'assistant',
     content: message.content,
     displayContent: message.displayContent,
@@ -274,6 +276,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
     ].filter(Boolean).join('\n\n');
 
     const userMessage: Message = {
+      id: createWorkspaceId('chat'),
       role: 'user',
       content: modelText,
       displayContent: [text.trim(), ...attachments.map(file => '📎 ' + file.name + ' (' + Math.max(1, Math.ceil(file.size / 1024)) + ' КБ)')].filter(Boolean).join('\n'),
@@ -293,6 +296,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
         const reply = lines.join('\n');
         const ok = !reply.startsWith('⚠️');
         setMessages(prev => [...prev, {
+          id: createWorkspaceId('chat'),
           role: 'svetlana',
           content: reply,
           emotion: ok ? 'happy' : 'sad',
@@ -353,6 +357,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
       }
 
       const assistantMessage: Message = {
+        id: createWorkspaceId('chat'),
         role: 'svetlana',
         content: cleanContent,
         emotion: detectedEmotion,
@@ -374,6 +379,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
       const text = explainAiError(raw);
       setError(text);
       setMessages(prev => [...prev, {
+        id: createWorkspaceId('chat'),
         role: 'svetlana',
         content: `⚠️ ${text}`,
         emotion: 'sad',
