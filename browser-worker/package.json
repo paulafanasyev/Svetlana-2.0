@@ -1,0 +1,17 @@
+{
+  "name": "svetlana-browser-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test",
+    "test:e2e": "node smoke.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.56.0"
+  }
+}

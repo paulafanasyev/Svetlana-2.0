@@ -1,0 +1,37 @@
+name: Browser Worker
+
+on:
+  pull_request:
+    paths:
+      - "browser-worker/**"
+      - ".github/workflows/browser-worker.yml"
+  push:
+    branches:
+      - main
+      - svetlana-2.0-core-development-0416c
+    paths:
+      - "browser-worker/**"
+      - ".github/workflows/browser-worker.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  worker-security-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: browser-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: browser-worker/package.json
+      - run: npm install --no-audit --no-fund
+      - run: npm test
+      - name: Install Chromium for runtime smoke test
+        run: npx playwright install --with-deps chromium
+      - name: Exercise real Browser Worker runtime
+        run: npm run test:e2e

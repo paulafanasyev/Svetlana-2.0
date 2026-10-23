@@ -5,9 +5,11 @@ import {
 } from 'lucide-react';
 import { aiGateway } from '../services/AIGateway';
 import CloudSyncPanel from './CloudSyncPanel';
+import BrowserWorkerSettings from './BrowserWorkerSettings';
 import McpPanel from '../components/McpPanel';
 import { createWorkspaceId, personalWorkspace, parseExplicitMemoryCommand, type PersonalAgent, type WorkspaceMessage, type WorkspaceThread } from '../services/PersonalWorkspaceStore';
 import { mcpSystemPrompt, parseMcpActions, runMcpLoop, MCP_REJECTED_TEXT } from '../services/mcp/McpManager';
+import { setActiveAgentWorkspaceAgentId } from '../services/AgentWorkspaceTools';
 import { suggestMemoryCandidates } from '../services/MemorySuggestions';
 
 const STARTERS = [
@@ -231,6 +233,7 @@ export default function PersonalAgentsPage() {
     personalWorkspace.replaceMessages(threadId, withUser);
     setMessages(withUser);
     try {
+      setActiveAgentWorkspaceAgentId(selectedAgent.useMcp ? selectedAgent.id : null);
       const explicitMemory = parseExplicitMemoryCommand(text);
       if (explicitMemory) {
         setMemorySuggestions([]);
@@ -305,6 +308,7 @@ export default function PersonalAgentsPage() {
       personalWorkspace.replaceMessages(threadId, completed);
       setMessages(completed);
     } finally {
+      setActiveAgentWorkspaceAgentId(null);
       setLoading(false);
       refreshThreads(selectedAgentId);
     }
@@ -331,7 +335,7 @@ export default function PersonalAgentsPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2"><Bot className="w-7 h-7 text-indigo-400" /> Мои ИИ-агенты</h1>
-          <p className="text-sm text-sv-muted mt-1">Создавайте агентов с собственными инструкциями, моделью, памятью и доступом к MCP-интеграциям.</p>
+          <p className="text-sm text-sv-muted mt-1">Создавайте агентов с собственными инструкциями, моделью, памятью, MCP-интеграциями и браузером.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={() => setShowIntegrations(v => !v)} aria-expanded={showIntegrations} className="inline-flex items-center gap-2 min-h-11 px-3 rounded-lg bg-white/5 border border-white/10 text-sm"><Plug size={16}/> Интеграции MCP</button>
@@ -346,6 +350,7 @@ export default function PersonalAgentsPage() {
         <div><strong className="text-sv-text">Хранение на этом устройстве.</strong> Диалоги, конфигурации и память сохраняются в локальном хранилище браузера/приложения. Сейчас нет автоматической облачной синхронизации между устройствами. {storageMode === 'unavailable' ? <span className="text-red-300">Хранилище недоступно — данные могут не сохраниться после перезапуска.</span> : !personalWorkspace.isPersisted() ? <span className="text-red-300">Последняя запись не сохранилась; освободите место или экспортируйте агента.</span> : <span className="text-emerald-300">Последнее сохранение прошло без ошибки.</span>}</div>
       </div>
       <CloudSyncPanel onSynced={handleCloudSynced} />
+      <BrowserWorkerSettings />
       {notice && <div role="status" className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 text-sm text-emerald-200">{notice}</div>}
       {error && <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-200">{error}</div>}
       {showIntegrations && <McpPanel onClose={() => setShowIntegrations(false)} />}
@@ -396,7 +401,7 @@ export default function PersonalAgentsPage() {
                 </label>
                 <label className="flex items-start gap-3 rounded-lg border border-white/10 bg-white/[0.02] p-3 text-sm">
                   <input type="checkbox" checked={draft.useMcp} onChange={e => changeDraft('useMcp', e.target.checked)} className="mt-1" />
-                  <span><span className="font-medium flex items-center gap-2"><Plug size={16}/> Разрешить MCP-интеграции</span><span className="block text-xs text-sv-muted mt-1">Агент сможет запрашивать инструменты подключённых MCP-сервисов. Вызовы по-прежнему проходят существующую проверку и требуют подтверждения, когда это предусмотрено политикой. Включайте только для доверенных подключений.</span></span>
+                  <span><span className="font-medium flex items-center gap-2"><Plug size={16}/> Разрешить инструменты, браузер и хранилище</span><span className="block text-xs text-sv-muted mt-1">Агент сможет использовать подключённые MCP-сервисы, настроенный локальный браузер и своё приватное текстовое хранилище на этом устройстве. Хранилище не является общей папкой Android; запись, удаление и чтение содержимого требуют подтверждения.</span></span>
                 </label>
                 <div className="flex flex-wrap gap-2">
                   <button onClick={saveAgent} disabled={saving || !draft.name.trim()} className="inline-flex min-h-11 items-center gap-2 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm text-white"><Save size={16}/> {saving ? 'Сохранение…' : 'Сохранить агента'}</button>
@@ -440,7 +445,7 @@ export default function PersonalAgentsPage() {
             <div className="rounded-xl border border-dashed border-white/15 p-8 text-center space-y-4">
               <Bot className="w-12 h-12 mx-auto text-indigo-300"/>
               <h2 className="text-xl font-semibold">Создайте первого агента</h2>
-              <p className="text-sm text-sv-muted max-w-xl mx-auto">Задайте ему роль и инструкции, выберите модель, добавьте долговременные заметки и при необходимости разрешите доступ к подключённым MCP-инструментам.</p>
+              <p className="text-sm text-sv-muted max-w-xl mx-auto">Задайте ему роль и инструкции, выберите модель, добавьте долговременные заметки и при необходимости разрешите MCP и браузерные инструменты.</p>
               <button onClick={() => newAgent()} className="inline-flex items-center gap-2 min-h-11 px-4 rounded-lg bg-indigo-600 text-white"><Plus size={16}/> Создать агента</button>
             </div>
           )}

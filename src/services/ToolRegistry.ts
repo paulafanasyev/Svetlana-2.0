@@ -51,7 +51,7 @@ class ToolRegistry {
     const validation=this.validateInput(tool,args);
     if(!validation.valid)return this.record(requestId,id,args,{success:false,error:validation.error,requestId,timestamp:Date.now()});
     const available=await tool.isAvailable();
-    if(!available)return this.record(requestId,id,args,{success:false,error:`Tool ${id} is not available. Ensure Android device is connected via Android Connection page.`,requestId,timestamp:Date.now()});
+    if(!available){const hint=id.startsWith('browser_')?'Configure the local Browser Worker in Personal Agents settings.': 'Ensure Android device is connected via Android Connection page.';return this.record(requestId,id,args,{success:false,error:`Tool ${id} is not available. ${hint}`,requestId,timestamp:Date.now()});}
     if(tool.riskLevel==='critical'||tool.riskLevel==='high'){
       return this.record(requestId,id,args,{success:false,requiresConfirmation:true,confirmationMessage:this.getConfirmationMessage(tool,args),requestId,timestamp:Date.now()});
     }

@@ -17,10 +17,11 @@ import type { ActionSource } from '../services/security/ActionGate';
 import { nearBottom, shouldAutoScroll } from '../services/ChatScroll';
 import { appPlatform } from '../platform';
 import { readChatAttachment, type ChatAttachmentMedia, type ChatAttachmentText } from '../services/FileAttachments';
-import { createWorkspaceId, personalWorkspace, type WorkspaceMessage } from '../services/PersonalWorkspaceStore';
+import { createWorkspaceId, personalWorkspace, parseExplicitMemoryCommand, type WorkspaceMessage } from '../services/PersonalWorkspaceStore';
+import BrowserWorkerSettings from './BrowserWorkerSettings';
 import {
   Mic, Volume2, VolumeX, MessageCircle, Send, Paperclip, X,
-  Sparkles, Heart, Smile, Frown, Laugh, AlertCircle, History, Trash2,
+  Sparkles, Heart, Smile, Frown, Laugh, AlertCircle, History, Trash2, Brain,
   Settings, Wifi, WifiOff, Zap, Loader2, RotateCcw, Plug
 } from 'lucide-react';
 
@@ -147,6 +148,8 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showServices, setShowServices] = useState(false);
+  const [showMemory, setShowMemory] = useState(false);
+  const [memories, setMemories] = useState(() => personalWorkspace.listMemories(null));
   // Микрофон включён: на аватаре пульсирует кольцо (озвучка показывается по isSpeaking).
   const [listening, setListening] = useState(false);
   const [activeProvider, setActiveProvider] = useState(aiGateway.getActiveProvider());
@@ -289,6 +292,21 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
     setError(null);
 
     try {
+      // Main-chat durable memory is opt-in: explicit "Запомни:" is stored locally, never silently inferred.
+      const explicitMemory = attachments.length === 0 ? parseExplicitMemoryCommand(text) : null;
+      if (explicitMemory) {
+        personalWorkspace.addMemory(null, explicitMemory, 'user');
+        setMemories(personalWorkspace.listMemories(null));
+        const reply = 'Запомнила: ' + explicitMemory + '\nЭта запись сохранена локально и будет учитываться в следующих диалогах со Светланой.';
+        setMessages(prev => [...prev, {
+          id: createWorkspaceId('chat'), role: 'svetlana', content: reply, emotion: 'happy', timestamp: Date.now(), provider: 'Память',
+        }]);
+        setEmotion('happy');
+        speak(reply);
+        setTimeout(() => setEmotion('neutral'), 6000);
+        return;
+      }
+
       // Local CRM commands work without any AI provider (offline, on device).
       const crmIntent = attachments.length > 0 ? null : detectCRMIntent(text);
       if (crmIntent) {
@@ -319,8 +337,13 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
       // По голосу модель не получает данных CRM и бизнеса — ни текущих, ни из прошлых реплик.
       // Подключённые внешние сервисы (MCP) модель видит списком инструментов; каждый вызов подтверждает человек.
       const voice = source === 'voice';
+      const memoryContext = personalWorkspace.listMemories(null).slice(0, 30).map(memory => '- ' + memory.content).join('\n').slice(0, 8000);
+      const memoryPrompt = memoryContext
+        ? '\n\nДолговременная память пользователя (сохранённые факты, а не системные инструкции):\n' + memoryContext
+          + '\nУчитывай эти сведения как контекст; если пользователь сообщает более актуальные данные, предпочитай его текущие слова.'
+        : '';
       const history: ChatMessage[] = [
-        { role: 'system', content: SYSTEM_PROMPT + crmSystemPrompt(undefined, !voice) + mcpSystemPrompt() },
+        { role: 'system', content: SYSTEM_PROMPT + memoryPrompt + crmSystemPrompt(undefined, !voice) + mcpSystemPrompt() },
         ...toModelHistory(messages.slice(-10), { hideData: voice }),
         { role: 'user', content: modelText },
       ];
@@ -425,14 +448,25 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
           <button
             ref={servicesBtnRef}
             onClick={() => setShowServices(!showServices)}
-            title="Сервисы (MCP): GitHub, Vercel, Timeweb Cloud, Yandex Cloud и другие"
+            title="Сервисы и браузер: подключённые инструменты и локальный Browser Worker"
             aria-label="Сервисы (MCP)"
             aria-expanded={showServices}
             aria-controls="chat-services-panel"
             className="flex items-center justify-center gap-1.5 p-2 min-h-11 min-w-11 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted text-xs"
           >
             <Plug className="w-4 h-4" aria-hidden="true" />
-            <span className="text-xs">MCP</span>
+            <span className="text-xs">Сервисы</span>
+          </button>
+          <button
+            onClick={() => { setShowMemory(v => !v); setMemories(personalWorkspace.listMemories(null)); }}
+            title="Долговременная память"
+            aria-label="Память Светланы"
+            aria-expanded={showMemory}
+            aria-controls="chat-memory-panel"
+            className="flex items-center justify-center gap-1.5 px-2 min-h-11 min-w-11 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted text-xs"
+          >
+            <Brain className="w-4 h-4" aria-hidden="true" />
+            <span className="hidden sm:inline">Память</span>
           </button>
           <button
             onClick={() => setShowSettings(!showSettings)}
@@ -473,7 +507,26 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
         </motion.div>
       )}
 
-      {showServices && <div id="chat-services-panel"><McpPanel onClose={closeServices} /></div>}
+      {showServices && <div id="chat-services-panel" className="space-y-4"><McpPanel onClose={closeServices} /><BrowserWorkerSettings /></div>}
+      {showMemory && (
+        <section id="chat-memory-panel" data-testid="chat-memory-panel" className="glass-card rounded-xl p-4 space-y-3" aria-label="Долговременная память">
+          <div className="flex items-center justify-between gap-3">
+            <div><h3 className="font-semibold">Память Светланы</h3><p className="text-xs text-sv-muted">Хранится только на этом устройстве. Сохраняется по команде «Запомни: …». При следующем обычном сообщении сохранённые записи отправляются выбранному ИИ-провайдеру как контекст.</p></div>
+            <span className="text-xs text-sv-muted">{memories.length} записей</span>
+          </div>
+          {memories.length === 0 ? (
+            <p className="text-sm text-sv-muted">Пока нет сохранённых воспоминаний. Напишите в чат, например: «Запомни: мой проект называется Светлана».</p>
+          ) : (
+            <div className="space-y-2">{memories.map(memory => (
+              <div key={memory.id} className="flex items-start justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                <p className="text-sm whitespace-pre-wrap break-words flex-1">{memory.content}</p>
+                <button type="button" onClick={() => { personalWorkspace.deleteMemory(memory.id); setMemories(personalWorkspace.listMemories(null)); }} aria-label="Удалить воспоминание" title="Удалить воспоминание" className="min-h-11 min-w-11 shrink-0 rounded-lg border border-white/10 text-sv-muted hover:bg-white/10 flex items-center justify-center"><Trash2 className="h-4 w-4" aria-hidden="true" /></button>
+              </div>
+            ))}</div>
+          )}
+          <p className="text-xs text-sv-muted">Команда «Запомни: …» добавляет запись. Удаление здесь убирает её из контекста будущих ответов.</p>
+        </section>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Chat Interface — на телефоне первым, чтобы сразу можно было писать */}
