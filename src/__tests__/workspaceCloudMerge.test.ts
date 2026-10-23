@@ -33,6 +33,7 @@ describe('workspace cloud snapshot merge', () => {
     const thread = a.createThread(agent.id, 'Новый чат');
     a.replaceMessages(thread.id, [{ id: 'base', role: 'user', content: 'Начало', timestamp: 10 }]);
     b.mergeSyncSnapshot(a.exportSyncSnapshot());
+    console.log('workspace merge debug', JSON.stringify({ agentId: agent.id, threadId: thread.id, incomingAgents: a.exportSyncSnapshot().agents.map(item => item.id), incomingThreads: a.exportSyncSnapshot().threads.map(item => ({ id: item.id, agentId: item.agentId })), storedAgents: b.listAgents().map(item => item.id), storedThreads: b.exportSyncSnapshot().threads.map(item => ({ id: item.id, agentId: item.agentId })), tombstone: b.exportSyncSnapshot().tombstones.threads[thread.id] }));
 
     const threadA = a.getThread(thread.id)!;
     const threadB = b.getThread(thread.id)!;
