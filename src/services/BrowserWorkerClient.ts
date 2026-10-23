@@ -79,7 +79,7 @@ class BrowserWorkerClient {
     if (method === 'POST' && path === '/v1/sessions') {
       return await invoke('browser_create_session', (body || {}) as Record<string, unknown>) as T;
     }
-    const match = path.match(/^\/v1\/sessions\/([^/]+)(?:\/(navigate|snapshot|click|fill|wait|screenshot))?$/);
+    const match = path.match(/^\/v1\/sessions\/([^/]+)(?:\/(navigate|snapshot|click|fill|wait|screenshot|follow-link))?$/);
     if (!match) throw new Error('Неизвестная команда встроенного браузера.');
     const sessionId = decodeURIComponent(match[1]);
     const action = match[2];
@@ -89,7 +89,7 @@ class BrowserWorkerClient {
     if (method !== 'POST' || !action) throw new Error('Недопустимый метод браузерной команды.');
     const commandByAction: Record<string, string> = {
       navigate: 'browser_navigate', snapshot: 'browser_snapshot', click: 'browser_click',
-      fill: 'browser_fill', wait: 'browser_wait', screenshot: 'browser_screenshot',
+      fill: 'browser_fill', wait: 'browser_wait', screenshot: 'browser_screenshot', 'follow-link': 'browser_follow_link',
     };
     return await invoke(commandByAction[action], { sessionId, ...((body || {}) as Record<string, unknown>) }) as T;
   }
@@ -140,6 +140,9 @@ class BrowserWorkerClient {
   }
   async click(sessionId: string, role: string, name: string): Promise<{ success: boolean; observation: BrowserObservation }> {
     return this.request('/v1/sessions/' + encodeURIComponent(sessionId) + '/click', 'POST', { role, name });
+  }
+  async followLink(sessionId: string, name: string): Promise<{ success: boolean; observation: BrowserObservation }> {
+    return this.request('/v1/sessions/' + encodeURIComponent(sessionId) + '/follow-link', 'POST', { name });
   }
   async fill(sessionId: string, role: string, name: string, value: string): Promise<{ success: boolean; observation: BrowserObservation }> {
     return this.request('/v1/sessions/' + encodeURIComponent(sessionId) + '/fill', 'POST', { role, name, value });
