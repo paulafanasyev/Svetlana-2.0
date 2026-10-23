@@ -172,6 +172,14 @@ export class PersonalWorkspaceStore {
   constructor(private readonly storage: () => KV | null = defaultStorage) {
     this.load();
   }
+  private applyTombstones() {
+    const goneAgent = (id: string, timestamp: number) => (this.data.tombstones.agents[id] ?? -1) >= timestamp;
+    const goneThread = (id: string, timestamp: number) => (this.data.tombstones.threads[id] ?? -1) >= timestamp;
+    const goneMemory = (id: string, timestamp: number) => (this.data.tombstones.memories[id] ?? -1) >= timestamp;
+    this.data.agents = this.data.agents.filter(a => !goneAgent(a.id, a.updatedAt));
+    this.data.threads = this.data.threads.filter(t => !goneThread(t.id, t.updatedAt) && (t.agentId === null || !goneAgent(t.agentId, t.updatedAt)));
+    this.data.memories = this.data.memories.filter(m => !goneMemory(m.id, m.createdAt) && (m.agentId === null || !goneAgent(m.agentId, m.createdAt)));
+  }
   private load() {
     try {
       const raw = this.storage()?.getItem(KEY);
@@ -233,6 +241,7 @@ export class PersonalWorkspaceStore {
       createdAt: time,
       updatedAt: time,
     };
+    delete this.data.tombstones.agents[agent.id];
     this.data.agents.push(agent);
     this.save();
     return clone(agent);
@@ -251,6 +260,10 @@ export class PersonalWorkspaceStore {
   }
   deleteAgent(id: string): boolean {
     if (!this.data.agents.some(a => a.id === id)) return false;
+    const deletedAt = now();
+    this.data.tombstones.agents[id] = deletedAt;
+    for (const thread of this.data.threads.filter(t => t.agentId === id)) this.data.tombstones.threads[thread.id] = deletedAt;
+    for (const item of this.data.memories.filter(m => m.agentId === id)) this.data.tombstones.memories[item.id] = deletedAt;
     this.data.agents = this.data.agents.filter(a => a.id !== id);
     this.data.threads = this.data.threads.filter(t => t.agentId !== id);
     this.data.memories = this.data.memories.filter(m => m.agentId !== id);
@@ -285,6 +298,7 @@ export class PersonalWorkspaceStore {
     }
     const time = now();
     const thread: WorkspaceThread = { id: makeId('thread'), agentId, title: cleanText(title, 120) || 'Новый чат', messages: [], createdAt: time, updatedAt: time, archived: false };
+    delete this.data.tombstones.threads[thread.id];
     this.data.threads.push(thread);
     this.data.activeThreadIds[scopeKey(agentId)] = thread.id;
     this.save();
@@ -314,6 +328,7 @@ export class PersonalWorkspaceStore {
     if (duplicate) return clone(duplicate);
     if (this.data.memories.length >= MAX_MEMORIES) throw new Error('Достигнут лимит записей памяти.');
     const item: AgentMemory = { id: makeId('memory'), agentId, content: text, source, createdAt: now() };
+    delete this.data.tombstones.memories[item.id];
     this.data.memories.push(item);
     this.save();
     return clone(item);
@@ -325,6 +340,7 @@ export class PersonalWorkspaceStore {
     const before = this.data.memories.length;
     this.data.memories = this.data.memories.filter(m => m.id !== id);
     if (before === this.data.memories.length) return false;
+    this.data.tombstones.memories[id] = now();
     this.save();
     return true;
   }
@@ -332,6 +348,7 @@ export class PersonalWorkspaceStore {
     const thread = this.data.threads.find(t => t.id === id);
     if (!thread) return false;
     this.data.threads = this.data.threads.filter(t => t.id !== id);
+    this.data.tombstones.threads[id] = now();
     if (this.data.activeThreadIds[scopeKey(thread.agentId)] === id) delete this.data.activeThreadIds[scopeKey(thread.agentId)];
     return this.save();
   }
@@ -366,6 +383,60 @@ export class PersonalWorkspaceStore {
     }
     return agent;
   }
+  exportSyncSnapshot(): WorkspaceSyncSnapshot {
+    return clone({
+      schema: 'svetlana-workspace' as const,
+      version: 1 as const,
+      agents: this.data.agents,
+      threads: this.data.threads,
+      memories: this.data.memories,
+      tombstones: this.data.tombstones,
+    });
+  }
+
+  /** Merge a validated account snapshot without silently reviving locally deleted records. */
+  mergeSyncSnapshot(input: unknown): { agents: number; threads: number; memories: number } {
+    if (!isRecord(input) || input.schema !== 'svetlana-workspace' || input.version !== 1) {
+      throw new Error('Неподдерживаемый формат синхронизации.');
+    }
+    const remoteAgents = (Array.isArray(input.agents) ? input.agents : []).map(decodeAgent).filter((x): x is PersonalAgent => !!x).slice(-MAX_AGENTS);
+    const remoteThreads = (Array.isArray(input.threads) ? input.threads : []).map(decodeThread).filter((x): x is WorkspaceThread => !!x).slice(-MAX_THREADS);
+    const remoteMemories = (Array.isArray(input.memories) ? input.memories : []).map(decodeMemory).filter((x): x is AgentMemory => !!x).slice(-MAX_MEMORIES);
+    const remoteTombstones = decodeTombstones(input.tombstones);
+    const countBefore = { agents: this.data.agents.length, threads: this.data.threads.length, memories: this.data.memories.length };
+    for (const kind of ['agents', 'threads', 'memories'] as const) {
+      for (const [id, at] of Object.entries(remoteTombstones[kind])) {
+        this.data.tombstones[kind][id] = Math.max(this.data.tombstones[kind][id] ?? 0, at);
+      }
+    }
+    const mergeById = <T extends { id: string }>(
+      local: T[],
+      remote: T[],
+      kind: 'agents' | 'threads' | 'memories',
+      timestamp: (item: T) => number,
+    ): T[] => {
+      const merged = new Map(local.map(item => [item.id, item]));
+      for (const item of remote) {
+        const current = merged.get(item.id);
+        if (!current || timestamp(item) > timestamp(current)) merged.set(item.id, item);
+      }
+      return Array.from(merged.values()).filter(item => (this.data.tombstones[kind][item.id] ?? -1) < timestamp(item));
+    };
+    this.data.agents = mergeById(this.data.agents, remoteAgents, 'agents', item => (item as PersonalAgent).updatedAt).slice(-MAX_AGENTS);
+    this.data.threads = mergeById(this.data.threads, remoteThreads, 'threads', item => (item as WorkspaceThread).updatedAt).slice(-MAX_THREADS);
+    this.data.memories = mergeById(this.data.memories, remoteMemories, 'memories', item => (item as AgentMemory).createdAt).slice(-MAX_MEMORIES);
+    const ids = new Set(this.data.agents.map(a => a.id));
+    this.data.threads = this.data.threads.filter(t => t.agentId === null || ids.has(t.agentId));
+    this.data.memories = this.data.memories.filter(m => m.agentId === null || ids.has(m.agentId));
+    this.applyTombstones();
+    this.save();
+    return {
+      agents: Math.max(0, this.data.agents.length - countBefore.agents),
+      threads: Math.max(0, this.data.threads.length - countBefore.threads),
+      memories: Math.max(0, this.data.memories.length - countBefore.memories),
+    };
+  }
+
   clearAll() {
     this.data = emptyData();
     this.lastSaveSucceeded = true;
