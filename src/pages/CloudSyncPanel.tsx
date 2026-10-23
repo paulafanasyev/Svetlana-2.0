@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Cloud, CloudOff, RefreshCw, LogIn, LogOut, UserPlus, ShieldCheck, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import {
   boundWorkspaceOwnerId,
@@ -93,7 +93,7 @@ export default function CloudSyncPanel({ onSynced }: { onSynced?: () => void }) 
     return () => window.clearInterval(interval);
   }, [user?.id, boundId, runSync]);
 
-  const submitAuth = async (event: React.FormEvent) => {
+  const submitAuth = async (event: FormEvent) => {
     event.preventDefault();
     if (busy) return;
     if (!isSafeEmail(email)) { setError('Введите корректный адрес электронной почты.'); return; }
