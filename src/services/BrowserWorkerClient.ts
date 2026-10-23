@@ -1,8 +1,23 @@
 const URL_KEY = 'svetlana_browser_worker_url_v1';
 const TOKEN_KEY = 'svetlana_browser_worker_token_v1';
 
+type NativeBridge = {
+  invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+};
+type SvetlanaWindow = Window & {
+  __TAURI_INTERNALS__?: NativeBridge;
+  __SVETLANA_PLATFORM__?: string;
+};
+
+function appWindow(): SvetlanaWindow | null {
+  try { return typeof window !== 'undefined' ? window as SvetlanaWindow : null; } catch { return null; }
+}
 function storage(): Storage | null {
   try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; }
+}
+function nativeInvoke(): NativeBridge['invoke'] | null {
+  const bridge = appWindow()?.__TAURI_INTERNALS__;
+  return typeof bridge?.invoke === 'function' ? bridge.invoke.bind(bridge) : null;
 }
 function normalizeLoopbackEndpoint(input: string): string {
   const url = new URL(input);
@@ -17,6 +32,12 @@ export interface BrowserWorkerConfig { endpoint: string; token: string }
 export interface BrowserObservation { url: string; title: string; aria: string; text: string; timestamp: number }
 
 class BrowserWorkerClient {
+  /** Native Android and packaged Tauri builds manage their own browser runtime. */
+  usesNativeRuntime(): boolean {
+    const w = appWindow();
+    return w?.__SVETLANA_PLATFORM__ === 'android' || typeof w?.__TAURI_INTERNALS__?.invoke === 'function';
+  }
+
   getConfig(): BrowserWorkerConfig | null {
     const s = storage();
     if (!s) return null;
@@ -27,6 +48,7 @@ class BrowserWorkerClient {
       return { endpoint: normalizeLoopbackEndpoint(endpoint), token };
     } catch { return null; }
   }
+
   saveConfig(endpoint: string, token: string): void {
     const s = storage();
     if (!s) throw new Error('Локальное хранилище недоступно.');
@@ -35,15 +57,64 @@ class BrowserWorkerClient {
     s.setItem(URL_KEY, normalized);
     s.setItem(TOKEN_KEY, token.trim());
   }
+
   clearConfig(): void {
     const s = storage();
     s?.removeItem(URL_KEY);
     s?.removeItem(TOKEN_KEY);
   }
-  isConfigured(): boolean { return this.getConfig() !== null; }
+
+  isConfigured(): boolean {
+    const w = appWindow();
+    if (w?.__SVETLANA_PLATFORM__ === 'android' || typeof w?.__TAURI_INTERNALS__?.invoke === 'function') return true;
+    return this.getConfig() !== null;
+  }
+
+  private async nativeAndroidRequest<T>(path: string, method: string, body?: unknown): Promise<T> {
+    const invoke = nativeInvoke();
+    if (!invoke) throw new Error('Нативный мост Android недоступен.');
+    if (path === '/v1/status') {
+      return await invoke('browser_worker_status') as T;
+    }
+    if (method === 'POST' && path === '/v1/sessions') {
+      return await invoke('browser_create_session', (body || {}) as Record<string, unknown>) as T;
+    }
+    const match = path.match(/^\/v1\/sessions\/([^/]+)(?:\/(navigate|snapshot|click|fill|wait|screenshot))?$/);
+    if (!match) throw new Error('Неизвестная команда встроенного браузера.');
+    const sessionId = decodeURIComponent(match[1]);
+    const action = match[2];
+    if (method === 'DELETE' && !action) {
+      return await invoke('browser_close_session', { sessionId }) as T;
+    }
+    if (method !== 'POST' || !action) throw new Error('Недопустимый метод браузерной команды.');
+    const commandByAction: Record<string, string> = {
+      navigate: 'browser_navigate', snapshot: 'browser_snapshot', click: 'browser_click',
+      fill: 'browser_fill', wait: 'browser_wait', screenshot: 'browser_screenshot',
+    };
+    return await invoke(commandByAction[action], { sessionId, ...((body || {}) as Record<string, unknown>) }) as T;
+  }
+
+  private async desktopConfig(): Promise<BrowserWorkerConfig> {
+    const invoke = nativeInvoke();
+    if (!invoke) throw new Error('Нативный запуск Browser Worker недоступен.');
+    const value = await invoke('browser_worker_config') as Partial<BrowserWorkerConfig>;
+    if (!value || typeof value.endpoint !== 'string' || typeof value.token !== 'string' || value.token.length < 32) {
+      throw new Error('Приложение не смогло запустить встроенный браузерный runtime.');
+    }
+    return { endpoint: normalizeLoopbackEndpoint(value.endpoint), token: value.token };
+  }
+
   private async request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
-    const config = this.getConfig();
-    if (!config) throw new Error('Browser Worker не настроен. Откройте «Браузер агента» в персональных агентах.');
+    const w = appWindow();
+    if (w?.__SVETLANA_PLATFORM__ === 'android') {
+      return this.nativeAndroidRequest<T>(path, method, body);
+    }
+
+    const config = typeof w?.__TAURI_INTERNALS__?.invoke === 'function'
+      ? await this.desktopConfig()
+      : this.getConfig();
+    if (!config) throw new Error('Browser Worker не настроен. В веб-версии настройте локальный браузерный сервис; установленные приложения запускают runtime автоматически.');
+
     const response = await fetch(config.endpoint + path, {
       method,
       headers: { authorization: 'Bearer ' + config.token, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
@@ -54,6 +125,7 @@ class BrowserWorkerClient {
     if (!response.ok) throw new Error(typeof data?.error === 'string' ? data.error : 'Browser Worker HTTP ' + response.status);
     return data as T;
   }
+
   async testConnection(): Promise<{ ok: boolean; service: string }> {
     return this.request('/v1/status');
   }
