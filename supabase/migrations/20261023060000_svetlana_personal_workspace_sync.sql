@@ -42,8 +42,8 @@ begin
   end if;
   if p_payload is null
      or jsonb_typeof(p_payload) <> 'object'
-     or p_payload ->> 'schema' <> 'svetlana-workspace'
-     or p_payload ->> 'version' <> '1' then
+     or p_payload ->> 'schema' is distinct from 'svetlana-workspace'
+     or p_payload ->> 'version' is distinct from '1' then
     raise exception 'Invalid Svetlana workspace payload' using errcode = '22023';
   end if;
   if octet_length(p_payload::text) > 4000000 then
