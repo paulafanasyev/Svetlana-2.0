@@ -5,6 +5,8 @@ mod browser_worker;
 mod local_stt;
 mod secure_ai;
 
+use tauri::Manager;
+
 fn main() {
     let app = tauri::Builder::default()
         .manage(browser_worker::BrowserWorkerManager::default())
