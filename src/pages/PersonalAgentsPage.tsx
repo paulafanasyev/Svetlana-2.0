@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bot, Plus, Save, Trash2, MessageSquare, Brain, Plug, Download, Upload,
   Send, Loader2, Pencil, FileText, ShieldCheck, AlertTriangle,
