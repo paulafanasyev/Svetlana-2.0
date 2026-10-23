@@ -57,6 +57,34 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      # The released installer must contain its own Node runtime, Playwright dependencies and Chromium.
+      # This is prepared on the Windows runner and copied as Tauri resources; end users do not install Node.
+      - name: Prepare self-contained browser runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          npm install --prefix browser-worker --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw "Не удалось установить Browser Worker" }
+          $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:GITHUB_WORKSPACE "browser-worker/.browsers"
+          New-Item -ItemType Directory -Force $env:PLAYWRIGHT_BROWSERS_PATH | Out-Null
+          Push-Location browser-worker
+          try {
+            npx playwright install chromium
+            if ($LASTEXITCODE -ne 0) { throw "Не удалось скачать Chromium для Browser Worker" }
+          } finally {
+            Pop-Location
+          }
+          $nodeExe = (Get-Command node.exe).Source
+          Copy-Item $nodeExe "browser-worker/node.exe" -Force
+          if (-not (Test-Path "browser-worker/node.exe")) { throw "Не удалось подготовить автономный Node runtime" }
+          if (-not (Test-Path "browser-worker/.browsers")) { throw "Chromium не был подготовлен" }
+          Write-Host "Bundled Node: $nodeExe"
+          Write-Host "Bundled Chromium directory: browser-worker/.browsers"
+          npm run --prefix browser-worker test
+          if ($LASTEXITCODE -ne 0) { throw "Browser Worker security tests failed" }
+          npm run --prefix browser-worker test:e2e
+          if ($LASTEXITCODE -ne 0) { throw "Browser Worker runtime smoke test failed" }
+
       - name: Cargo.lock
         id: lock
         shell: pwsh
