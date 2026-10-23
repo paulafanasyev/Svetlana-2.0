@@ -17,6 +17,7 @@ describe('cloud workspace sync security contract', () => {
 
   it('authorizes RPC writes from auth.uid and rejects malformed/oversized payloads', () => {
     expect(migration).toContain('v_user_id uuid := auth.uid()');
+    expect(migration).toContain("set search_path = ''");
     expect(migration).toContain("is distinct from 'svetlana-workspace'");
     expect(migration).toContain("is distinct from '1'");
     expect(migration).toContain('octet_length(p_payload::text) > 4000000');
