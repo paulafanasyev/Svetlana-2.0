@@ -27,7 +27,7 @@ create or replace function public.sync_svetlana_workspace(
 returns table(ok boolean, revision bigint, payload jsonb)
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = ''
 as $$
 declare
   v_user_id uuid := auth.uid();
