@@ -92,7 +92,7 @@ export default function CloudSyncPanel({ onSynced }: { onSynced?: () => void }) 
     event.preventDefault();
     if (busy) return;
     if (!isSafeEmail(email)) { setError('Введите корректный адрес электронной почты.'); return; }
-    if (password.length < 10) { setError('Пароль должен содержать не менее 10 символов.'); return; }
+    if (!password || (registerMode && password.length < 10)) { setError(registerMode ? 'Пароль должен содержать не менее 10 символов.' : 'Введите пароль.'); return; }
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -164,6 +164,7 @@ export default function CloudSyncPanel({ onSynced }: { onSynced?: () => void }) 
             <li>Применить миграцию `supabase/migrations/20261023060000_svetlana_personal_workspace_sync.sql`.</li>
             <li>В окружение веб-сборки добавить `VITE_SUPABASE_URL` и публичный `VITE_SUPABASE_ANON_KEY`, затем пересобрать и развернуть приложение.</li>
           </ol>
+          <a href="https://github.com/paulafanasyev/Svetlana-2.0/blob/feat/personal-agents-memory-integrations/docs/CLOUD_SYNC_SETUP.md" target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center text-xs text-cyan-300 underline underline-offset-4">Подробная инструкция по настройке</a>
         </div>
       ) : !user ? (
         <form onSubmit={submitAuth} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -171,7 +172,7 @@ export default function CloudSyncPanel({ onSynced }: { onSynced?: () => void }) 
             <input type="email" autoComplete="email" maxLength={254} value={email} onChange={e => setEmail(e.target.value)} required className="mt-1 w-full min-h-11 rounded-lg bg-black/10 border border-white/10 px-3 py-2.5" placeholder="name@example.com"/>
           </label>
           <label className="text-sm sm:col-span-2">Пароль
-            <input type="password" autoComplete={registerMode ? 'new-password' : 'current-password'} minLength={10} maxLength={128} value={password} onChange={e => setPassword(e.target.value)} required className="mt-1 w-full min-h-11 rounded-lg bg-black/10 border border-white/10 px-3 py-2.5" placeholder="Не менее 10 символов"/>
+            <input type="password" autoComplete={registerMode ? 'new-password' : 'current-password'} minLength={registerMode ? 10 : 1} maxLength={128} value={password} onChange={e => setPassword(e.target.value)} required className="mt-1 w-full min-h-11 rounded-lg bg-black/10 border border-white/10 px-3 py-2.5" placeholder="Не менее 10 символов"/>
           </label>
           <div className="sm:col-span-2 flex flex-wrap items-center gap-2">
             <button disabled={busy} type="submit" className="inline-flex items-center gap-2 min-h-11 rounded-lg bg-indigo-600 px-4 text-sm text-white disabled:opacity-50">{registerMode ? <UserPlus size={16}/> : <LogIn size={16}/>} {busy ? 'Подождите…' : registerMode ? 'Создать аккаунт' : 'Войти'}</button>
