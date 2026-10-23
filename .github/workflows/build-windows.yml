@@ -84,6 +84,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Browser Worker security tests failed" }
           npm run --prefix browser-worker test:e2e
           if ($LASTEXITCODE -ne 0) { throw "Browser Worker runtime smoke test failed" }
+          # Re-run the E2E test with the exact node.exe that will ship in the installer.
+          & ".\browser-worker\node.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "Bundled Node runtime is not executable" }
+          & ".\browser-worker\node.exe" ".\browser-worker\smoke.mjs"
+          if ($LASTEXITCODE -ne 0) { throw "Bundled Node + Playwright + Chromium smoke test failed" }
 
       - name: Cargo.lock
         id: lock
