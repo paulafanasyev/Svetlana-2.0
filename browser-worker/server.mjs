@@ -164,6 +164,7 @@ const server = http.createServer(async (req, res) => {
   if (!constantTimeEqual(req.headers.authorization?.replace(/^Bearer\s+/i, '') || '', TOKEN)) {
     return json(res, 401, { error: 'Unauthorized' });
   }
+  if (req.method === 'GET' && url.pathname === '/v1/status') return json(res, 200, { ok: true, service: 'svetlana-browser-worker', sessions: sessions.size });
   try {
     if (req.method === 'POST' && url.pathname === '/v1/sessions') {
       const body = await readBody(req);
