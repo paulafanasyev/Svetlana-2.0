@@ -36,12 +36,26 @@ export interface AgentMemory {
   source: 'user' | 'chat';
   createdAt: number;
 }
-interface WorkspaceData {
+export interface WorkspaceTombstones {
+  agents: Record<string, number>;
+  threads: Record<string, number>;
+  memories: Record<string, number>;
+}
+export interface WorkspaceSyncSnapshot {
+  schema: 'svetlana-workspace';
   version: 1;
   agents: PersonalAgent[];
   threads: WorkspaceThread[];
   memories: AgentMemory[];
+  tombstones: WorkspaceTombstones;
+}
+interface WorkspaceData {
+  version: 2;
+  agents: PersonalAgent[];
+  threads: WorkspaceThread[];
+  memories: AgentMemory[];
   activeThreadIds: Record<string, string>;
+  tombstones: WorkspaceTombstones;
 }
 interface KV {
   getItem(key: string): string | null;
@@ -78,8 +92,23 @@ const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 function defaultStorage(): KV | null {
   try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; }
 }
+function emptyTombstones(): WorkspaceTombstones {
+  return { agents: {}, threads: {}, memories: {} };
+}
+function decodeTombstones(value: unknown): WorkspaceTombstones {
+  const result = emptyTombstones();
+  if (!isRecord(value)) return result;
+  for (const kind of ['agents', 'threads', 'memories'] as const) {
+    const source = value[kind];
+    if (!isRecord(source)) continue;
+    for (const [id, at] of Object.entries(source).slice(-5000)) {
+      if (typeof at === 'number' && Number.isFinite(at) && at >= 0) result[kind][cleanText(id, 100)] = at;
+    }
+  }
+  return result;
+}
 function emptyData(): WorkspaceData {
-  return { version: 1, agents: [], threads: [], memories: [], activeThreadIds: {} };
+  return { version: 2, agents: [], threads: [], memories: [], activeThreadIds: {}, tombstones: emptyTombstones() };
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -148,16 +177,18 @@ export class PersonalWorkspaceStore {
       const raw = this.storage()?.getItem(KEY);
       if (!raw) return;
       const parsed = safeJsonParse(raw, MAX_BYTES.storage);
-      if (!isRecord(parsed) || parsed.version !== 1) return;
+      if (!isRecord(parsed) || (parsed.version !== 1 && parsed.version !== 2)) return;
       this.data = {
-        version: 1,
+        version: 2,
         agents: (Array.isArray(parsed.agents) ? parsed.agents : []).map(decodeAgent).filter((x): x is PersonalAgent => !!x).slice(-MAX_AGENTS),
         threads: (Array.isArray(parsed.threads) ? parsed.threads : []).map(decodeThread).filter((x): x is WorkspaceThread => !!x).slice(-MAX_THREADS),
         memories: (Array.isArray(parsed.memories) ? parsed.memories : []).map(decodeMemory).filter((x): x is AgentMemory => !!x).slice(-MAX_MEMORIES),
         activeThreadIds: isRecord(parsed.activeThreadIds)
           ? Object.fromEntries(Object.entries(parsed.activeThreadIds).filter(([k, v]) => typeof k === 'string' && typeof v === 'string').slice(0, MAX_AGENTS + 1).map(([k, v]) => [cleanText(k, 100), cleanText(v, 100)]))
           : {},
+        tombstones: decodeTombstones(parsed.tombstones),
       };
+      this.applyTombstones();
       // Orphaned agent-bound data must not become globally visible.
       const ids = new Set(this.data.agents.map(a => a.id));
       this.data.threads = this.data.threads.filter(t => t.agentId === null || ids.has(t.agentId));
