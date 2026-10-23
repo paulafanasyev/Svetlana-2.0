@@ -39,7 +39,8 @@ Every endpoint except GET /health requires Authorization: Bearer <token>.
 - POST /v1/sessions — JSON {"agentId":"research-agent"}; returns an isolated sessionId.
 - POST /v1/sessions/:id/navigate — JSON {"url":"https://example.com"}; returns the new observation.
 - POST /v1/sessions/:id/snapshot — returns URL, title, ARIA snapshot and bounded visible text.
-- POST /v1/sessions/:id/click — JSON {"role":"link","name":"About"}; only semantic roles are accepted.
+- POST /v1/sessions/:id/follow-link — JSON {"name":"About"}; follows a public HTTP(S) link only when its label/URL does not resemble a consequential action. It navigates to the destination instead of invoking the page's click handler.
+- POST /v1/sessions/:id/click — JSON {"role":"link","name":"About"}; only semantic roles are accepted; LLM requests pass through ActionGate confirmation.
 - POST /v1/sessions/:id/fill — JSON {"role":"textbox","name":"Search","value":"query"}.
 - POST /v1/sessions/:id/wait — JSON {"ms":500}, limited to 10 seconds.
 - POST /v1/sessions/:id/screenshot — returns a JPEG image as base64.
@@ -56,7 +57,7 @@ The private text-file workspace in Svetlana is separate: it uses app-origin loca
 ## Verification status
 
 - Static implementation and TypeScript integration tests: covered by the repository CI.
-- Browser Worker runtime smoke test: CI installs Chromium, authenticates, creates an isolated session, snapshots the blank page, navigates to `https://example.com`, checks the returned page title, verifies that loopback navigation is rejected, and closes the session.
+- Browser Worker runtime smoke test: CI installs Chromium, authenticates, creates an isolated session, navigates to `https://example.com`, follows its safe IANA link through the navigation-only endpoint, verifies that loopback navigation is rejected, and closes the session. Unit tests cover the dangerous-link policy.
 - Windows installer packaging is configured to include Node.js, Playwright and the Chromium headless shell; app startup generates a per-launch token and launches the worker automatically.
 - Android automation uses a separate in-app WebView, with no page access to the trusted Svetlana bridge; commands and risk checks live in the native app process.
 - Installed-app runtime verification is performed by the Windows packaging smoke test and Android emulator smoke test; a physical-device test is still required before claiming device-specific validation.
