@@ -74,10 +74,10 @@ export default function PersonalAgentsPage() {
     const agent = personalWorkspace.getAgent(selectedAgentId);
     if (!agent) { setSelectedAgentId(null); return; }
     setDraft({ name: agent.name, description: agent.description, instructions: agent.instructions, providerId: agent.providerId, useMcp: agent.useMcp });
-    refreshThreads(selectedAgentId);
     refreshMemories(selectedAgentId);
     let thread = personalWorkspace.getActiveThread(selectedAgentId);
     if (!thread) thread = personalWorkspace.createThread(selectedAgentId, 'Новый чат');
+    refreshThreads(selectedAgentId);
     skipNextPersist.current = true;
     personalWorkspace.setActiveThread(selectedAgentId, thread.id);
     setThreadId(thread.id);
