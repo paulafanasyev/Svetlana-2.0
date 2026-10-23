@@ -19,7 +19,7 @@ describe('Windows desktop release', () => {
     const packageLock = JSON.parse(read('package-lock.json'));
     const androidGradle = read('android-hands/app/build.gradle.kts');
     const androidVersionName = androidGradle.match(/versionName\s*=\s*"([^"]+)"/)?.[1];
-    const androidVersionCode = androidGradle.match(/versionCode\s*=\s*(\\d+)/)?.[1];
+    const androidVersionCode = androidGradle.match(/versionCode\s*=\s*(\d+)/)?.[1];
     expect(tauri.version).toBe(APP_VERSION);
     expect(pkg.version).toBe(APP_VERSION);
     expect(cargo).toBe(APP_VERSION);
