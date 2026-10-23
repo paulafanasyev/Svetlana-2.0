@@ -6,7 +6,7 @@
 import { redactSecrets } from './security/Redact';
 
 const MAX_CANDIDATE_LENGTH = 220;
-const SENSITIVE_CONTEXT = /\b(?:diagnos(?:is|isы|а)?|medication|лекарств\w*|диагноз\w*|болезн\w*|симптом\w*|лечение\w*|терапи\w*|беременност\w*|религи\w*|вероисповедан\w*|политическ\w*|сексуальн\w*|кредитн\w*|банковск\w*|паспорт\w*|социальн\w* страхован\w*)\b/i;
+const SENSITIVE_CONTEXT = /diagnos|medication|лекарств|диагноз|болезн|симптом|лечени|терапи|беременност|религи|вероисповедан|политическ|сексуальн|кредитн|банковск|паспорт|социальн\s+страхован/i;
 const SECRET_CONTEXT = /(?:https?:\/\/|www\.|[\w.+-]+@[\w.-]+\.[a-z]{2,}|-----BEGIN (?:RSA |OPENSSH )?PRIVATE KEY-----|\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|password|passwd|client[_ -]?secret)\s*[:=]|\bBearer\s+\S{12,})/i;
 
 const STABLE_PREFERENCE_PATTERNS: RegExp[] = [
