@@ -752,8 +752,8 @@ export function mcpSystemPrompt(manager: McpManager = mcpManager): string {
   }
   if (browserEnabled) {
     for (const t of browserTools) {
-      const props = Object.entries(t.inputSchema.properties).map(([key, prop]) => `    - ${key}: ${prop.description}${t.inputSchema.required?.includes(key) ? ' (required)' : ''}`).join('\\n');
-      const line = `${t.id}: ${t.description}\\n  Risk: ${t.riskLevel}\\n  Category: ${t.category}\\n  Parameters:\\n${props}`;
+      const props = Object.entries(t.inputSchema.properties).map(([key, prop]) => `    - ${key}: ${prop.description}${t.inputSchema.required?.includes(key) ? ' (required)' : ''}`).join('\n');
+      const line = `${t.id}: ${t.description}\n  Risk: ${t.riskLevel}\n  Category: ${t.category}\n  Parameters:\n${props}`;
       if (size + line.length > MAX_PROMPT_CHARS) break;
       lines.push(line); size += line.length;
     }
