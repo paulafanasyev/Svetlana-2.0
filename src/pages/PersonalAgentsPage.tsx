@@ -6,7 +6,7 @@ import {
 import { aiGateway } from '../services/AIGateway';
 import CloudSyncPanel from './CloudSyncPanel';
 import McpPanel from '../components/McpPanel';
-import { personalWorkspace, parseExplicitMemoryCommand, type PersonalAgent, type WorkspaceMessage, type WorkspaceThread } from '../services/PersonalWorkspaceStore';
+import { createWorkspaceId, personalWorkspace, parseExplicitMemoryCommand, type PersonalAgent, type WorkspaceMessage, type WorkspaceThread } from '../services/PersonalWorkspaceStore';
 import { mcpSystemPrompt, parseMcpActions, runMcpLoop, MCP_REJECTED_TEXT } from '../services/mcp/McpManager';
 
 const STARTERS = [
@@ -209,7 +209,7 @@ export default function PersonalAgentsPage() {
     setChatInput('');
     setNotice(null);
     setError(null);
-    const userMessage: WorkspaceMessage = { id: 'msg_' + Date.now().toString(36), role: 'user', content: text, timestamp: Date.now() };
+    const userMessage: WorkspaceMessage = { id: createWorkspaceId('msg'), role: 'user', content: text, timestamp: Date.now() };
     const withUser = [...messages, userMessage].slice(-500);
     personalWorkspace.replaceMessages(threadId, withUser);
     setMessages(withUser);
@@ -219,7 +219,7 @@ export default function PersonalAgentsPage() {
         personalWorkspace.addMemory(selectedAgent.id, explicitMemory, 'user');
         refreshMemories(selectedAgent.id);
         const acknowledgement: WorkspaceMessage = {
-          id: 'msg_' + (Date.now() + 1).toString(36),
+          id: createWorkspaceId('msg'),
           role: 'assistant',
           content: ['Запомнила для агента «' + selectedAgent.name + '»: ' + explicitMemory, 'Эта запись сохранена отдельно от переписки и будет добавляться в контекст его следующих диалогов.'].join('\n'),
           timestamp: Date.now(),
@@ -261,7 +261,7 @@ export default function PersonalAgentsPage() {
         }
       }
       const assistantMessage: WorkspaceMessage = {
-        id: 'msg_' + (Date.now() + 1).toString(36),
+        id: createWorkspaceId('msg'),
         role: 'assistant',
         content: reply,
         timestamp: Date.now(),
@@ -274,7 +274,7 @@ export default function PersonalAgentsPage() {
       const message = safeError(e);
       setError(message);
       const failed: WorkspaceMessage = {
-        id: 'msg_' + (Date.now() + 2).toString(36),
+        id: createWorkspaceId('msg'),
         role: 'assistant',
         content: '⚠️ ' + message,
         timestamp: Date.now(),
