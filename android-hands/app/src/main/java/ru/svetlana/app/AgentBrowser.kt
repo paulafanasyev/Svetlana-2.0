@@ -338,7 +338,7 @@ class AgentBrowser(private val act: MainActivity, private val host: FrameLayout)
           (function(){
             const name=$nameJson;
             const links=Array.from(document.querySelectorAll('a[href]')).slice(0,1000);
-            const labelOf=e=>String(e.getAttribute('aria-label')||e.getAttribute('title')||e.innerText||e.textContent||'').replace(/\\s+/g,' ').trim().slice(0,240);
+            const labelOf=e=>String(e.getAttribute('aria-label')||e.getAttribute('title')||e.innerText||e.textContent||'').replace(/\s+/g,' ').trim().slice(0,240);
             const matches=links.filter(e=>labelOf(e)===name);
             if(matches.length!==1)return JSON.stringify({ok:false,error:matches.length?'Найдено несколько ссылок с таким именем':'Ссылка не найдена'});
             const url=new URL(matches[0].getAttribute('href'),location.href);
