@@ -31,3 +31,7 @@ jobs:
           cache-dependency-path: browser-worker/package.json
       - run: npm install --no-audit --no-fund
       - run: npm test
+      - name: Install Chromium for runtime smoke test
+        run: npx playwright install --with-deps chromium
+      - name: Exercise real Browser Worker runtime
+        run: npm run test:e2e
