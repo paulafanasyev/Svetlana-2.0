@@ -18,13 +18,17 @@ export default function EmbeddedBrowserPanel({ agentId, refreshKey, onSessionCha
   const configured = browserWorkerClient.isConfigured();
 
   const observe = useCallback(async (id: string) => {
-    const [page, image] = await Promise.all([
-      browserWorkerClient.snapshot(id),
-      browserWorkerClient.screenshot(id),
-    ]);
+    const page = await browserWorkerClient.snapshot(id);
     setObservation(page.observation);
     setUrl(page.observation.url || 'https://example.com');
-    setScreenshot(image.base64 ? 'data:' + (image.mimeType || 'image/jpeg') + ';base64,' + image.base64 : null);
+    try {
+      const image = await browserWorkerClient.screenshot(id);
+      setScreenshot(image.base64 ? 'data:' + (image.mimeType || 'image/jpeg') + ';base64,' + image.base64 : null);
+    } catch {
+      // Text/DOM access is the essential agent capability; a temporarily unavailable image
+      // must not make a successfully created native WebView session look broken.
+      setScreenshot(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -81,8 +85,10 @@ export default function EmbeddedBrowserPanel({ agentId, refreshKey, onSessionCha
       const result = await browserWorkerClient.navigate(sessionId, target);
       setObservation(result.observation);
       setUrl(result.observation.url);
-      const image = await browserWorkerClient.screenshot(sessionId);
-      setScreenshot(image.base64 ? 'data:' + (image.mimeType || 'image/jpeg') + ';base64,' + image.base64 : null);
+      try {
+        const image = await browserWorkerClient.screenshot(sessionId);
+        setScreenshot(image.base64 ? 'data:' + (image.mimeType || 'image/jpeg') + ';base64,' + image.base64 : null);
+      } catch { setScreenshot(null); }
       setStatus('Страница загружена. Агент может работать в этой же сессии.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Не удалось открыть страницу.');
