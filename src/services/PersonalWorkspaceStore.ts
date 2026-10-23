@@ -102,6 +102,7 @@ function decodeTombstones(value: unknown): WorkspaceTombstones {
     const source = value[kind];
     if (!isRecord(source)) continue;
     for (const [id, at] of Object.entries(source).slice(-5000)) {
+      if (id === '__proto__' || id === 'constructor' || id === 'prototype') continue;
       if (typeof at === 'number' && Number.isFinite(at) && at >= 0) result[kind][cleanText(id, 100)] = at;
     }
   }
