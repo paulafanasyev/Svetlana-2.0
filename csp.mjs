@@ -12,7 +12,7 @@ export const CLOUD_ORIGINS = [
   'https://anymodel.org', 'https://opencode.ai',
   // Внешние сервисы (src/services/mcp/McpCatalog.ts): GitHub MCP, Vercel API, Supabase, Linear, Stripe, Sentry, Neon, Context7, Hugging Face,
   // Timeweb Cloud, Yandex Cloud, Beget, REG.RU, Selectel.
-  'https://api.githubcopilot.com', 'https://api.vercel.com', 'https://mcp.supabase.com', 'https://mcp.linear.app',
+  'https://api.githubcopilot.com', 'https://api.vercel.com', 'https://mcp.supabase.com', 'https://*.supabase.co', 'https://mcp.linear.app',
   'https://mcp.stripe.com', 'https://mcp.sentry.dev', 'https://mcp.neon.tech', 'https://mcp.context7.com', 'https://huggingface.co',
   // Российские облака, хостинг и регистратор: Timeweb Cloud MCP, Yandex Cloud Toolkit MCP, Beget API, Рег.API, Selectel API и его сервер входа.
   'https://api.timeweb.cloud', 'https://toolkit.mcp.cloud.yandex.net', 'https://api.beget.com', 'https://api.reg.ru', 'https://api.selectel.ru', 'https://cloud.api.selcloud.ru',

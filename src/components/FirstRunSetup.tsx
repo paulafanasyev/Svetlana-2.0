@@ -1,4 +1,5 @@
-// Мастер первого запуска: один понятный шаг до первого ответа. Одинаковый на сайте, в Windows и в Android.
+// Мастер первого запуска: Светлана приветствует пользователя, помогает выбрать способ подключения и проверяет первый ответ.
+// Одинаковый на сайте, в Windows и в Android.
 // 1) «★ Светлана Сервер»: вставить ключ → ключ уходит в хранилище (Windows — Диспетчер учётных данных, Android — Keystore)
 //    → пробный запрос. Ключ сохраняется один раз: если пробный запрос не прошёл, «Повторить проверку» не
 //    спрашивает ключ заново. Если сохранить ключ не удалось («Отмена» в окне подтверждения), новый провайдер
@@ -147,7 +148,11 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState('');
   const dialogRef = useRef<HTMLDivElement>(null);
+  const guideTitleRef = useRef<HTMLHeadingElement>(null);
   const keyRef = useRef<HTMLInputElement>(null);
+  const serverSectionRef = useRef<HTMLElement | null>(null);
+  const gigaSectionRef = useRef<HTMLElement | null>(null);
+  const ollamaSectionRef = useRef<HTMLElement | null>(null);
   const readyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // На телефоне — адрес компьютера с Ollama в домашней сети. На ПК и сайте — этот же компьютер.
   const savedEndpoint = aiGateway.getProvider('ollama')?.endpoint ?? '';
@@ -165,6 +170,16 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
   const gRetryOnly = gSaved && !gKey.trim();
   const anyBusy = sv === 'busy' || gs === 'busy' || ol === 'busy';
 
+  /** Светлана направляет пользователя к выбранному варианту и переводит фокус на этот шаг. */
+  const guideTo = (target: 'server' | 'giga' | 'local') => {
+    const section = target === 'server' ? serverSectionRef.current
+      : target === 'giga' ? gigaSectionRef.current
+      : ollamaSectionRef.current;
+    if (!section) return;
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    section.focus({ preventScroll: true });
+  };
+
   // Системная кнопка «Назад» телефона = крестик «Закрыть».
   useEffect(() => onBack(close), []);
 
@@ -174,7 +189,8 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
     const opener = typeof document !== 'undefined' ? document.activeElement as HTMLElement | null : null;
     const root = dialogRef.current;
     const release = root ? isolateDialog(root) : () => undefined;
-    keyRef.current?.focus();
+    // Не открываем экранную клавиатуру автоматически при старте: сначала пользователь выбирает способ настройки.
+    guideTitleRef.current?.focus();
     return () => {
       if (readyTimer.current) clearTimeout(readyTimer.current);
       release();
@@ -344,7 +360,34 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
           <button onClick={close} className="p-2 rounded-lg hover:bg-slate-800 text-slate-400" title="Закрыть" aria-label="Закрыть"><X className="w-5 h-5" aria-hidden="true" /></button>
         </div>
 
-        <section aria-labelledby="setup-server-title" className="rounded-xl border border-indigo-500/40 bg-indigo-950/30 p-4 mb-4">
+        <section data-testid="setup-guide" aria-labelledby="setup-guide-title" className="rounded-xl border border-violet-400/40 bg-violet-950/30 p-4 mb-4">
+          <h3 id="setup-guide-title" ref={guideTitleRef} tabIndex={-1} className="font-semibold flex items-center gap-2"><Sparkles className="w-4 h-4 text-violet-300" aria-hidden="true" />Я Светлана. Давай настроим приложение вместе.</h3>
+          <p className="text-sm text-slate-300 mt-2">Не нужно разбираться в технических деталях. Выбери, как тебе удобнее начать: я переведу к нужному шагу, помогу подключить ИИ и проверю реальный ответ перед открытием чата.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
+            <button type="button" onClick={() => guideTo('server')} className="text-left rounded-lg border border-indigo-400/30 bg-indigo-500/10 hover:bg-indigo-500/20 p-3 min-h-16">
+              <span className="block text-sm font-medium">Рекомендуется: Светлана онлайн</span>
+              <span className="block text-xs text-slate-400 mt-1">Полный режим; нужен ключ доступа к серверу.</span>
+            </button>
+            {native ? (
+              <button type="button" onClick={() => guideTo('giga')} className="text-left rounded-lg border border-emerald-400/30 bg-emerald-500/10 hover:bg-emerald-500/20 p-3 min-h-16">
+                <span className="block text-sm font-medium">Бесплатный GigaChat</span>
+                <span className="block text-xs text-slate-400 mt-1">Для Windows и Android; нужен ключ из GigaChat Studio.</span>
+              </button>
+            ) : (
+              <button type="button" onClick={onOpenProviders} className="text-left rounded-lg border border-sky-400/30 bg-sky-500/10 hover:bg-sky-500/20 p-3 min-h-16">
+                <span className="block text-sm font-medium">Другой облачный ИИ</span>
+                <span className="block text-xs text-slate-400 mt-1">Можно выбрать поставщика и настроить его отдельно.</span>
+              </button>
+            )}
+            <button type="button" onClick={() => guideTo('local')} className="text-left rounded-lg border border-cyan-400/30 bg-cyan-500/10 hover:bg-cyan-500/20 p-3 min-h-16 sm:col-span-2">
+              <span className="block text-sm font-medium">Локальная модель — без отправки переписки в облако</span>
+              <span className="block text-xs text-slate-400 mt-1">Нужны Ollama и уже скачанная модель на компьютере. На Android телефон подключается к компьютеру в той же Wi‑Fi сети.</span>
+            </button>
+          </div>
+          <p className="text-xs text-slate-400 mt-3">После выбора я проверю соединение тестовым сообщением. Если проверка не пройдёт, покажу, что именно исправить. Настройки можно поменять позже.</p>
+        </section>
+
+        <section ref={serverSectionRef} tabIndex={-1} aria-labelledby="setup-server-title" className="rounded-xl border border-indigo-500/40 bg-indigo-950/30 p-4 mb-4">
           <h3 id="setup-server-title" className="font-semibold flex items-center gap-2"><Key className="w-4 h-4 text-indigo-300" aria-hidden="true" />★ Светлана Сервер (рекомендуется)</h3>
           <p className="text-xs text-slate-400 mt-1">Единая обученная Светлана на мир-самозанятых.рф, полный режим. Нужен ключ Светланы, который вы получили от владельца сервера.
             {keyStorageHint(platform)}
@@ -375,7 +418,7 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
         </section>
 
         {/* GigaChat: бесплатно, только в приложениях Windows и Android. */}
-        <section aria-labelledby="setup-giga-title" className="rounded-xl border border-emerald-500/40 bg-emerald-950/20 p-4 mb-4" data-testid="setup-gigachat">
+        <section ref={gigaSectionRef} tabIndex={-1} aria-labelledby="setup-giga-title" className="rounded-xl border border-emerald-500/40 bg-emerald-950/20 p-4 mb-4" data-testid="setup-gigachat">
           <h3 id="setup-giga-title" className="font-semibold flex items-center gap-2"><Gift className="w-4 h-4 text-emerald-300" aria-hidden="true" />GigaChat от Сбера: бесплатно</h3>
           <p className="text-xs text-slate-400 mt-1">Хорошо говорит по-русски, ничего устанавливать не нужно. {GIGACHAT_KEY_HINT}{native ? keyStorageHint(platform) : ''}</p>
           {native ? (
@@ -407,7 +450,7 @@ export default function FirstRunSetup({ onClose, onReady, onOpenProviders }: {
         </section>
 
         {/* Ollama: на ПК и сайте — этот компьютер, на телефоне — компьютер в той же Wi-Fi сети. */}
-        <section aria-labelledby="setup-ollama-title" className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-4 mb-4" data-testid="setup-ollama">
+        <section ref={ollamaSectionRef} tabIndex={-1} aria-labelledby="setup-ollama-title" className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-4 mb-4" data-testid="setup-ollama">
           <h3 id="setup-ollama-title" className="font-semibold flex items-center gap-2"><HardDrive className="w-4 h-4 text-cyan-300" aria-hidden="true" />Без интернета: локальная модель через Ollama (для опытных)</h3>
           {android ? (
             <p className="text-xs text-slate-400 mt-1">Модель работает на твоём компьютере, телефон обращается к нему по домашней Wi-Fi сети, в интернет переписка не уходит. На ПК нужна Ollama (ollama.com/download), модель («ollama pull qwen2.5:7b») и запуск с OLLAMA_HOST=0.0.0.0.</p>

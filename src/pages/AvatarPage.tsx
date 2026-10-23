@@ -17,15 +17,17 @@ import type { ActionSource } from '../services/security/ActionGate';
 import { nearBottom, shouldAutoScroll } from '../services/ChatScroll';
 import { appPlatform } from '../platform';
 import { readChatAttachment, type ChatAttachmentMedia, type ChatAttachmentText } from '../services/FileAttachments';
+import { createWorkspaceId, personalWorkspace, type WorkspaceMessage } from '../services/PersonalWorkspaceStore';
 import {
   Mic, Volume2, VolumeX, MessageCircle, Send, Paperclip, X,
-  Sparkles, Heart, Smile, Frown, Laugh, AlertCircle,
+  Sparkles, Heart, Smile, Frown, Laugh, AlertCircle, History, Trash2,
   Settings, Wifi, WifiOff, Zap, Loader2, RotateCcw, Plug
 } from 'lucide-react';
 
 type Emotion = 'neutral' | 'happy' | 'sad' | 'laughing' | 'crying' | 'surprised' | 'talking';
 
 interface Message {
+  id: string;
   role: 'user' | 'svetlana';
   content: string;
   displayContent?: string;
@@ -36,7 +38,29 @@ interface Message {
   hasData?: boolean;
 }
 
-const greeting = (): Message => ({ role: 'svetlana', content: 'Привет! Я Светлана. Чем могу помочь?', emotion: 'happy', timestamp: Date.now() });
+const greeting = (): Message => ({ id: createWorkspaceId('chat'), role: 'svetlana', content: 'Привет! Я Светлана. Чем могу помочь?', emotion: 'happy', timestamp: Date.now() });
+
+function fromStoredMessage(message: WorkspaceMessage): Message {
+  return {
+    id: message.id,
+    role: message.role === 'user' ? 'user' : 'svetlana',
+    content: message.content,
+    displayContent: message.displayContent,
+    emotion: message.role === 'assistant' ? detectEmotion(message.content) : undefined,
+    timestamp: message.timestamp,
+    provider: message.provider,
+  };
+}
+function toStoredMessages(messages: Message[]): WorkspaceMessage[] {
+  return messages.slice(-500).map(message => ({
+    id: message.id,
+    role: message.role === 'user' ? 'user' : 'assistant',
+    content: message.content,
+    displayContent: message.displayContent,
+    timestamp: message.timestamp,
+    provider: message.provider,
+  }));
+}
 
 const AVATAR_SRC = `${import.meta.env.BASE_URL}images/avatar/svetlana-master.jpg`;
 
@@ -107,7 +131,16 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
   const android = platform === 'android';
   const quick = QUICK_COMMANDS;
   const [emotion, setEmotion] = useState<Emotion>('neutral');
-  const [messages, setMessages] = useState<Message[]>(() => [greeting()]);
+  const [activeThreadId, setActiveThreadId] = useState<string>(() => {
+    const thread = personalWorkspace.getActiveThread(null) ?? personalWorkspace.createThread(null, 'Новый чат');
+    return thread.id;
+  });
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const thread = personalWorkspace.getActiveThread(null);
+    return thread?.messages.length ? thread.messages.map(fromStoredMessage) : [greeting()];
+  });
+  const [chatThreads, setChatThreads] = useState(() => personalWorkspace.listThreads(null));
+  const skipThreadSaveRef = useRef(false);
   const [input, setInput] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<Array<{ name: string; size: number; content: string; media?: ChatAttachmentMedia[]; note?: string }>>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -129,6 +162,13 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
   useEffect(() => {
     resetNativeConversation();
   }, []);
+
+  // Сохраняем каждый снимок переписки локально; это отдельная история чатов, не краткая память модели.
+  useEffect(() => {
+    if (skipThreadSaveRef.current) { skipThreadSaveRef.current = false; return; }
+    personalWorkspace.replaceMessages(activeThreadId, toStoredMessages(messages));
+    setChatThreads(personalWorkspace.listThreads(null));
+  }, [messages, activeThreadId]);
 
   // Новая реплика: крутим вниз только того, кто и так внизу или сам написал. Крутится только окно чата, не вся страница.
   useEffect(() => {
@@ -155,7 +195,45 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
     resetNativeConversation();
     stop();
     atBottomRef.current = true;
-    setMessages([greeting()]);
+    const thread = personalWorkspace.createThread(null, 'Новый чат');
+    const hello = greeting();
+    personalWorkspace.replaceMessages(thread.id, toStoredMessages([hello]));
+    skipThreadSaveRef.current = true;
+    setActiveThreadId(thread.id);
+    setMessages([hello]);
+    setChatThreads(personalWorkspace.listThreads(null));
+    setError(null);
+    setEmotion('neutral');
+  };
+
+  const selectChatHistory = (threadId: string) => {
+    if (isLoading || !threadId) return;
+    const thread = personalWorkspace.getThread(threadId);
+    if (!thread || thread.agentId !== null) return;
+    resetNativeConversation();
+    stop();
+    personalWorkspace.setActiveThread(null, threadId);
+    const restored = thread.messages.length ? thread.messages.map(fromStoredMessage) : [greeting()];
+    personalWorkspace.replaceMessages(threadId, toStoredMessages(restored));
+    skipThreadSaveRef.current = true;
+    setActiveThreadId(threadId);
+    setMessages(restored);
+    setChatThreads(personalWorkspace.listThreads(null));
+    atBottomRef.current = true;
+    setError(null);
+    setEmotion('neutral');
+  };
+
+  const deleteCurrentChat = () => {
+    if (isLoading || !window.confirm('Удалить текущий чат и его историю с этого устройства?')) return;
+    personalWorkspace.deleteThread(activeThreadId);
+    const thread = personalWorkspace.createThread(null, 'Новый чат');
+    const hello = greeting();
+    personalWorkspace.replaceMessages(thread.id, toStoredMessages([hello]));
+    skipThreadSaveRef.current = true;
+    setActiveThreadId(thread.id);
+    setMessages([hello]);
+    setChatThreads(personalWorkspace.listThreads(null));
     setError(null);
     setEmotion('neutral');
   };
@@ -198,6 +276,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
     ].filter(Boolean).join('\n\n');
 
     const userMessage: Message = {
+      id: createWorkspaceId('chat'),
       role: 'user',
       content: modelText,
       displayContent: [text.trim(), ...attachments.map(file => '📎 ' + file.name + ' (' + Math.max(1, Math.ceil(file.size / 1024)) + ' КБ)')].filter(Boolean).join('\n'),
@@ -217,6 +296,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
         const reply = lines.join('\n');
         const ok = !reply.startsWith('⚠️');
         setMessages(prev => [...prev, {
+          id: createWorkspaceId('chat'),
           role: 'svetlana',
           content: reply,
           emotion: ok ? 'happy' : 'sad',
@@ -277,6 +357,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
       }
 
       const assistantMessage: Message = {
+        id: createWorkspaceId('chat'),
         role: 'svetlana',
         content: cleanContent,
         emotion: detectedEmotion,
@@ -298,6 +379,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
       const text = explainAiError(raw);
       setError(text);
       setMessages(prev => [...prev, {
+        id: createWorkspaceId('chat'),
         role: 'svetlana',
         content: `⚠️ ${text}`,
         emotion: 'sad',
@@ -415,6 +497,12 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
+                <label className="flex items-center gap-1.5 min-w-0">
+                  <History className="w-4 h-4 text-sv-muted shrink-0" aria-hidden="true" />
+                  <select aria-label="История чатов" value={activeThreadId} onChange={e => selectChatHistory(e.target.value)} disabled={isLoading} className="max-w-[145px] sm:max-w-[220px] min-h-11 rounded-lg bg-white/5 border border-white/10 px-2 text-xs text-sv-text">
+                    {chatThreads.map(thread => <option key={thread.id} value={thread.id}>{thread.title.slice(0, 45)}</option>)}
+                  </select>
+                </label>
                 <button
                   onClick={newChat}
                   disabled={isLoading}
@@ -425,6 +513,13 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                   <RotateCcw className="w-4 h-4" aria-hidden="true" />
                   <span className="hidden sm:inline">Новый чат</span>
                 </button>
+                <button
+                  onClick={deleteCurrentChat}
+                  disabled={isLoading}
+                  title="Удалить историю текущего чата"
+                  aria-label="Удалить историю текущего чата"
+                  className="flex items-center justify-center min-h-11 min-w-11 rounded-lg bg-red-500/5 border border-red-500/20 text-red-300 disabled:opacity-50"
+                ><Trash2 className="w-4 h-4" aria-hidden="true" /></button>
                 <button
                   onClick={() => isSpeaking ? stop() : speak('Привет! Я Светлана.')}
                   title={isSpeaking ? 'Остановить голос' : 'Проверить голос'}
