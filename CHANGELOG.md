@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.1.3] - 2026-10-23
+
+### Added
+- Isolated local Browser Worker tools for personal agents: navigation, page snapshots, semantic click/fill, bounded waits and session cleanup.
+- Browser Worker runtime smoke verification in CI, including real Chromium startup, page navigation and rejection of loopback targets.
+
+### Fixed
+- Align npm, lockfile, Tauri, Cargo, Android and frontend release versions.
+
+### Deployment notes
+- Browser automation remains an opt-in local service. The Windows installer and Android APK do not bundle the Node.js/Playwright Chromium runtime; a compatible local worker must be installed and started separately. Browser automation is not available as an embedded Android-native browser in this release.
+- CI smoke tests verify the local worker runtime, but do not claim end-to-end verification on a physical user device.
+
 ## [2.1.2] - 2026-10-23
 
 ### Added
