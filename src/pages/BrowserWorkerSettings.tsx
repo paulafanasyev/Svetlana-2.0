@@ -33,6 +33,10 @@ export default function BrowserWorkerSettings({ onConfigChange }: { onConfigChan
     setStatus('Локальные настройки браузера удалены.');
   };
 
+  // Installed Android and Windows builds own their browser runtime; manual Worker settings
+  // are only relevant to the browser-based development build.
+  if (browserWorkerClient.usesNativeRuntime()) return null;
+
   return (
     <section className="glass-card rounded-xl p-5 space-y-4">
       <div>
