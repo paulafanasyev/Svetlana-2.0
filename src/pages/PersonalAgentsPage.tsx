@@ -291,7 +291,7 @@ export default function PersonalAgentsPage() {
   const handleCloudSynced = useCallback(() => {
     const freshAgents = personalWorkspace.listAgents();
     setAgents(freshAgents);
-    if (selectedAgentId && !freshAgents.some(agent => agent.id === selectedAgentId)) {
+    if (!selectedAgentId || !freshAgents.some(agent => agent.id === selectedAgentId)) {
       setSelectedAgentId(freshAgents[0]?.id ?? null);
     }
     setThreads(personalWorkspace.listThreads(selectedAgentId));
