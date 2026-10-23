@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bot, Plus, Save, Trash2, MessageSquare, Brain, Plug, Download, Upload,
-  Send, Loader2, Pencil, FileText, ShieldCheck, AlertTriangle, Copy, Archive,
+  Send, Loader2, Pencil, FileText, ShieldCheck, AlertTriangle,
 } from 'lucide-react';
 import { aiGateway } from '../services/AIGateway';
 import { personalWorkspace, type PersonalAgent, type WorkspaceMessage, type WorkspaceThread } from '../services/PersonalWorkspaceStore';
