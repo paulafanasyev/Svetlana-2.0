@@ -41,8 +41,8 @@
     "resources": {
       "../browser-worker/server.mjs": "browser-worker/server.mjs",
       "../browser-worker/package.json": "browser-worker/package.json",
-      "../browser-worker/node_modules/**/*": "browser-worker/node_modules/",
-      "../browser-worker/.browsers/**/*": "browser-worker/.browsers/",
+      "../browser-worker/node_modules": "browser-worker/node_modules",
+      "../browser-worker/.browsers": "browser-worker/.browsers",
       "../browser-worker/node.exe": "browser-worker/node.exe"
     },
     "shortDescription": "Светлана 2.0: ИИ-ассистент",
