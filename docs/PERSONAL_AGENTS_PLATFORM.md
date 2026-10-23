@@ -142,7 +142,7 @@ This document is an architecture and delivery contract only. It does not assert 
 The current feature branch includes a first implementation slice; the following are **implemented in code, pending CI confirmation**:
 
 - Local-first workspace persistence in `src/services/PersonalWorkspaceStore.ts` for agent definitions, scoped thread histories, messages, and agent memory notes, with schema validation, bounded record counts, and recognizable-secret redaction.
-- `src/pages/PersonalAgentsPage.tsx` provides agent create/edit/delete, provider selection, manual memory management, saved threads, and JSON import/export.
+- `src/pages/PersonalAgentsPage.tsx` provides agent create/edit/delete, provider selection, memory management (including explicit `Запомни: …` commands), saved threads, MCP connection panel, and JSON import/export.
 - `src/DesktopShell.tsx` exposes the workspace in the main app navigation.
 - `src/pages/AvatarPage.tsx` persists the default Svetlana chat and allows switching/deleting history threads.
 - `src/__tests__/personalWorkspace.test.ts` covers store reload, scope isolation, secret redaction, export/import, and agent deletion.
