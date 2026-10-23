@@ -135,3 +135,18 @@ Use these labels in PRs and reports:
 - **NOT PROVEN** — no adequate evidence exists.
 
 This document is an architecture and delivery contract only. It does not assert that history, durable memory, agent creation, or integrations have already been implemented.
+
+
+## Implementation checkpoint — 2026-10-23
+
+The current feature branch includes a first implementation slice; the following are **implemented in code, pending CI confirmation**:
+
+- Local-first workspace persistence in `src/services/PersonalWorkspaceStore.ts` for agent definitions, scoped thread histories, messages, and agent memory notes, with schema validation, bounded record counts, and recognizable-secret redaction.
+- `src/pages/PersonalAgentsPage.tsx` provides agent create/edit/delete, provider selection, manual memory management, saved threads, and JSON import/export.
+- `src/DesktopShell.tsx` exposes the workspace in the main app navigation.
+- `src/pages/AvatarPage.tsx` persists the default Svetlana chat and allows switching/deleting history threads.
+- `src/__tests__/personalWorkspace.test.ts` covers store reload, scope isolation, secret redaction, export/import, and agent deletion.
+
+**Known limits (not implemented yet):** cloud sync/authentication, server-side tenancy and shared workspaces, automatic memory extraction, semantic/vector retrieval, per-tool granular MCP allowlists from this page, OAuth connection setup, and real-device E2E. Local storage is not a substitute for a secured multi-user backend. Tool execution remains subject to the existing MCP/security path; the new workspace must not bypass it.
+
+CI should determine whether the current code compiles and tests pass. Until those checks complete, the UI and store are implementation-present but **not yet VERIFIED at runtime**.
