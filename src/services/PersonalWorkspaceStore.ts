@@ -75,6 +75,9 @@ const makeId = (prefix: string) => {
   } catch { /* fallback below */ }
   return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 12);
 };
+
+/** Create a stable ID once when a message/record is created; keep it unchanged on every save. */
+export const createWorkspaceId = (prefix = 'item'): string => makeId(prefix);
 const now = () => Date.now();
 const cleanText = (value: unknown, max = MAX_TEXT) => {
   const text = stripControl(typeof value === 'string' ? value : String(value ?? '')).slice(0, max);
