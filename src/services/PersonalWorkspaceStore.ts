@@ -310,7 +310,7 @@ export class PersonalWorkspaceStore {
   importAgent(json: string): PersonalAgent {
     const parsed = safeJsonParse(json, 200_000);
     if (!isRecord(parsed) || parsed.schema !== 'svetlana-agent' || parsed.version !== 1 || !isRecord(parsed.agent)) throw new Error('Неподдерживаемый формат агента.');
-    const input = decodeAgent({ ...parsed.agent, id: undefined });
+    const input = decodeAgent({ ...parsed.agent, id: 'imported' });
     const agent = this.createAgent({
       name: input?.name || 'Импортированный агент',
       description: input?.description || '',
