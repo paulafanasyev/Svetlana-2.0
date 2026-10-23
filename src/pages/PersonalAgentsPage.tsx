@@ -61,6 +61,7 @@ export default function PersonalAgentsPage() {
   const [showIntegrations, setShowIntegrations] = useState(false);
   const [browserSessionId, setBrowserSessionId] = useState<string | null>(null);
   const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
+  const [, setBrowserConfigVersion] = useState(0);
   const handleBrowserSessionChange = useCallback((id: string | null) => setBrowserSessionId(id), []);
   const skipNextPersist = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -288,9 +289,9 @@ export default function PersonalAgentsPage() {
             chat: async extra => (await aiGateway.chat([...history, ...extra], { temperature: 0.4, max_tokens: 1400 }, provider.id)).content,
           });
           reply = [reply, ...loop.notes, loop.summary].filter(Boolean).join('\n\n');
-          if (browserSessionId) setBrowserRefreshKey(current => current + 1);
         }
       }
+      if (browserSessionId) setBrowserRefreshKey(current => current + 1);
       const assistantMessage: WorkspaceMessage = {
         id: createWorkspaceId('msg'),
         role: 'assistant',
@@ -356,7 +357,7 @@ export default function PersonalAgentsPage() {
         <div><strong className="text-sv-text">Хранение на этом устройстве.</strong> Диалоги, конфигурации и память сохраняются в локальном хранилище браузера/приложения. Сейчас нет автоматической облачной синхронизации между устройствами. {storageMode === 'unavailable' ? <span className="text-red-300">Хранилище недоступно — данные могут не сохраниться после перезапуска.</span> : !personalWorkspace.isPersisted() ? <span className="text-red-300">Последняя запись не сохранилась; освободите место или экспортируйте агента.</span> : <span className="text-emerald-300">Последнее сохранение прошло без ошибки.</span>}</div>
       </div>
       <CloudSyncPanel onSynced={handleCloudSynced} />
-      <BrowserWorkerSettings />
+      <BrowserWorkerSettings onConfigChange={() => setBrowserConfigVersion(version => version + 1)} />
       {notice && <div role="status" className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 text-sm text-emerald-200">{notice}</div>}
       {error && <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-200">{error}</div>}
       {showIntegrations && <McpPanel onClose={() => setShowIntegrations(false)} />}
