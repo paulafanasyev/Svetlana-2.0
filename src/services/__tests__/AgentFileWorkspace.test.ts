@@ -24,7 +24,8 @@ describe('AgentFileWorkspaceStore', () => {
   });
 
   it('requires an explicit workspace creation and an explicit overwrite', () => {
-    const store = new AgentFileWorkspaceStore(makeStorage());
+    const storage = makeStorage();
+    const store = new AgentFileWorkspaceStore(() => storage);
     expect(() => store.writeFile('agent_a', 'note.md', 'data')).toThrow(/Сначала вызовите agent_workspace_create/);
     store.createWorkspace('agent_a');
     store.writeFile('agent_a', 'note.md', 'first');
@@ -34,7 +35,8 @@ describe('AgentFileWorkspaceStore', () => {
   });
 
   it('rejects path traversal and unsupported sizes', () => {
-    const store = new AgentFileWorkspaceStore(makeStorage());
+    const storage = makeStorage();
+    const store = new AgentFileWorkspaceStore(() => storage);
     store.createWorkspace('agent_a');
     for (const path of ['../secret.txt', '/etc/passwd', 'notes/../../secret', 'C:/secret.txt', 'notes\\\\secret.txt']) {
       expect(() => store.writeFile('agent_a', path, 'x')).toThrow();
@@ -43,7 +45,8 @@ describe('AgentFileWorkspaceStore', () => {
   });
 
   it('rejects attempts to read another agent by using an invalid or missing scope', () => {
-    const store = new AgentFileWorkspaceStore(makeStorage());
+    const storage = makeStorage();
+    const store = new AgentFileWorkspaceStore(() => storage);
     store.createWorkspace('agent_a');
     store.writeFile('agent_a', 'private.txt', 'private');
     expect(() => store.readFile('agent_b', 'private.txt')).toThrow(/ещё нет локального хранилища/);
@@ -51,7 +54,8 @@ describe('AgentFileWorkspaceStore', () => {
   });
 
   it('deletes one file or the entire private workspace', () => {
-    const store = new AgentFileWorkspaceStore(makeStorage());
+    const storage = makeStorage();
+    const store = new AgentFileWorkspaceStore(() => storage);
     store.createWorkspace('agent_a');
     store.writeFile('agent_a', 'one.md', '1');
     store.writeFile('agent_a', 'two.md', '2');
