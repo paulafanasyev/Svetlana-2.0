@@ -448,14 +448,14 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
           <button
             ref={servicesBtnRef}
             onClick={() => setShowServices(!showServices)}
-            title="Сервисы (MCP): GitHub, Vercel, Timeweb Cloud, Yandex Cloud и другие"
+            title="Сервисы и браузер: подключённые инструменты и локальный Browser Worker"
             aria-label="Сервисы (MCP)"
             aria-expanded={showServices}
             aria-controls="chat-services-panel"
             className="flex items-center justify-center gap-1.5 p-2 min-h-11 min-w-11 rounded-lg bg-white/5 hover:bg-white/10 text-sv-muted text-xs"
           >
             <Plug className="w-4 h-4" aria-hidden="true" />
-            <span className="text-xs">MCP</span>
+            <span className="text-xs">Сервисы</span>
           </button>
           <button
             onClick={() => { setShowMemory(v => !v); setMemories(personalWorkspace.listMemories(null)); }}
@@ -511,7 +511,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
       {showMemory && (
         <section id="chat-memory-panel" data-testid="chat-memory-panel" className="glass-card rounded-xl p-4 space-y-3" aria-label="Долговременная память">
           <div className="flex items-center justify-between gap-3">
-            <div><h3 className="font-semibold">Память Светланы</h3><p className="text-xs text-sv-muted">Хранится только на этом устройстве. Сохраняется по команде «Запомни: …».</p></div>
+            <div><h3 className="font-semibold">Память Светланы</h3><p className="text-xs text-sv-muted">Хранится только на этом устройстве. Сохраняется по команде «Запомни: …». При следующем обычном сообщении сохранённые записи отправляются выбранному ИИ-провайдеру как контекст.</p></div>
             <span className="text-xs text-sv-muted">{memories.length} записей</span>
           </div>
           {memories.length === 0 ? (
