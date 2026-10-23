@@ -460,5 +460,6 @@ export const searchWebTool: Tool = {
 };
 
 import { toolRegistry } from './ToolRegistry';
-export function registerRealTools(){[openAppTool,readContactsTool,tapElementTool,typeTextTool,captureScreenTool,sendMessageTool,swipeTool,pressKeyTool,goHomeTool,goBackTool,searchWebTool].forEach(t=>toolRegistry.registerTool(t));}
+import { registerBrowserTools } from './BrowserTools';
+export function registerRealTools(){[openAppTool,readContactsTool,tapElementTool,typeTextTool,captureScreenTool,sendMessageTool,swipeTool,pressKeyTool,goHomeTool,goBackTool,searchWebTool].forEach(t=>toolRegistry.registerTool(t));registerBrowserTools();}
 registerRealTools();
