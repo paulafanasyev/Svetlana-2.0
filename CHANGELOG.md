@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.1.2] - 2026-10-23
+
+### Added
+- Guided first-run setup: Svetlana recommends an AI connection method, navigates to that step, and explains how to test the connection.
+- Personal agents, per-agent conversation history and explicit long-term memory notes.
+- Local reviewable memory suggestions; nothing is saved until the user approves it.
+- Opt-in account-based workspace synchronization through Supabase, with owner-scoped RLS and deletion tombstones.
+
+### Fixed
+- Align application, Tauri, Cargo, npm lockfile and Android versions for the release.
+- Keep first-run setup from automatically opening the mobile keyboard before the user chooses a setup path.
+
+### Deployment notes
+- Cloud sync remains disabled until a Supabase project is configured, the migration is applied, and the public Supabase URL and anon key are set in the build environment.
+- This release does not claim physical-device E2E verification from CI builds alone.
+
 ## [2.1.1] - 2026-10-22
 
 ### Added
