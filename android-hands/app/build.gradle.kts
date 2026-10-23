@@ -59,8 +59,8 @@ android {
         applicationId = "ru.svetlana.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 213
-        versionName = "2.1.3"
+        versionCode = 214
+        versionName = "2.1.4"
         // Модель речи (ONNX Runtime): только архитектуры реальных телефонов и эмулятора, чтобы APK был меньше.
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
