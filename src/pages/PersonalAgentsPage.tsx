@@ -4,6 +4,7 @@ import {
   Send, Loader2, Pencil, FileText, ShieldCheck, AlertTriangle,
 } from 'lucide-react';
 import { aiGateway } from '../services/AIGateway';
+import McpPanel from '../components/McpPanel';
 import { personalWorkspace, type PersonalAgent, type WorkspaceMessage, type WorkspaceThread } from '../services/PersonalWorkspaceStore';
 import { mcpSystemPrompt, parseMcpActions, runMcpLoop, MCP_REJECTED_TEXT } from '../services/mcp/McpManager';
 
@@ -51,6 +52,7 @@ export default function PersonalAgentsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [memoryOpen, setMemoryOpen] = useState(true);
+  const [showIntegrations, setShowIntegrations] = useState(false);
   const skipNextPersist = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
@@ -279,6 +281,7 @@ export default function PersonalAgentsPage() {
           <p className="text-sm text-sv-muted mt-1">Создавайте агентов с собственными инструкциями, моделью, памятью и доступом к MCP-интеграциям.</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button onClick={() => setShowIntegrations(v => !v)} aria-expanded={showIntegrations} className="inline-flex items-center gap-2 min-h-11 px-3 rounded-lg bg-white/5 border border-white/10 text-sm"><Plug size={16}/> Интеграции MCP</button>
           <button onClick={() => newAgent()} className="inline-flex items-center gap-2 min-h-11 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm"><Plus size={16}/> Новый агент</button>
           <button onClick={() => fileInput.current?.click()} className="inline-flex items-center gap-2 min-h-11 px-3 rounded-lg bg-white/5 border border-white/10 text-sm"><Upload size={16}/> Импорт JSON</button>
           <input ref={fileInput} type="file" accept="application/json,.json" className="hidden" aria-label="Импорт конфигурации агента" onChange={e => void importAgent(e.currentTarget.files?.[0])}/>
@@ -291,6 +294,7 @@ export default function PersonalAgentsPage() {
       </div>
       {notice && <div role="status" className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 text-sm text-emerald-200">{notice}</div>}
       {error && <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-200">{error}</div>}
+      {showIntegrations && <McpPanel onClose={() => setShowIntegrations(false)} />}
 
       <div className="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-4">
         <aside className="rounded-xl border border-white/10 bg-white/[0.025] p-3 space-y-3">
