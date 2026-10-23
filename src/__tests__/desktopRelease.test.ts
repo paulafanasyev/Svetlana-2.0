@@ -15,11 +15,11 @@ describe('Windows desktop release', () => {
 
   it('has one version everywhere', () => {
     const pkg = JSON.parse(read('package.json'));
-    const cargo = read('src-tauri/Cargo.toml').match(/^version\\s*=\\s*"([^"]+)"/m)?.[1];
+    const cargo = read('src-tauri/Cargo.toml').match(/^version\s*=\s*"([^"]+)"/m)?.[1];
     const packageLock = JSON.parse(read('package-lock.json'));
     const androidGradle = read('android-hands/app/build.gradle.kts');
-    const androidVersionName = androidGradle.match(/versionName\\s*=\\s*"([^"]+)"/)?.[1];
-    const androidVersionCode = androidGradle.match(/versionCode\\s*=\\s*(\\d+)/)?.[1];
+    const androidVersionName = androidGradle.match(/versionName\s*=\s*"([^"]+)"/)?.[1];
+    const androidVersionCode = androidGradle.match(/versionCode\s*=\s*(\\d+)/)?.[1];
     expect(tauri.version).toBe(APP_VERSION);
     expect(pkg.version).toBe(APP_VERSION);
     expect(cargo).toBe(APP_VERSION);
@@ -28,7 +28,7 @@ describe('Windows desktop release', () => {
     expect(packageLock.packages[""].name).toBe(pkg.name);
     expect(packageLock.packages[""].version).toBe(APP_VERSION);
     expect(androidVersionName).toBe(APP_VERSION);
-    expect(androidVersionCode).toBe(APP_VERSION.replace(/\\./g, ""));
+    expect(androidVersionCode).toBe(APP_VERSION.replace(/\./g, ""));
     expect(read('CHANGELOG.md')).toContain(`## [${APP_VERSION}]`);
   });
 
