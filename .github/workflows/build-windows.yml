@@ -80,6 +80,10 @@ jobs:
           if (-not (Test-Path "browser-worker/.browsers")) { throw "Chromium не был подготовлен" }
           Write-Host "Bundled Node: $nodeExe"
           Write-Host "Bundled Chromium directory: browser-worker/.browsers"
+          npm run --prefix browser-worker test
+          if ($LASTEXITCODE -ne 0) { throw "Browser Worker security tests failed" }
+          npm run --prefix browser-worker test:e2e
+          if ($LASTEXITCODE -ne 0) { throw "Browser Worker runtime smoke test failed" }
 
       - name: Cargo.lock
         id: lock
