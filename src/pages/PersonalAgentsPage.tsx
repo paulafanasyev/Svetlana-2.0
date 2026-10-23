@@ -332,7 +332,7 @@ export default function PersonalAgentsPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2"><Bot className="w-7 h-7 text-indigo-400" /> Мои ИИ-агенты</h1>
-          <p className="text-sm text-sv-muted mt-1">Создавайте агентов с собственными инструкциями, моделью, памятью и доступом к MCP-интеграциям.</p>
+          <p className="text-sm text-sv-muted mt-1">Создавайте агентов с собственными инструкциями, моделью, памятью, MCP-интеграциями и браузером.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={() => setShowIntegrations(v => !v)} aria-expanded={showIntegrations} className="inline-flex items-center gap-2 min-h-11 px-3 rounded-lg bg-white/5 border border-white/10 text-sm"><Plug size={16}/> Интеграции MCP</button>
@@ -398,7 +398,7 @@ export default function PersonalAgentsPage() {
                 </label>
                 <label className="flex items-start gap-3 rounded-lg border border-white/10 bg-white/[0.02] p-3 text-sm">
                   <input type="checkbox" checked={draft.useMcp} onChange={e => changeDraft('useMcp', e.target.checked)} className="mt-1" />
-                  <span><span className="font-medium flex items-center gap-2"><Plug size={16}/> Разрешить MCP-интеграции</span><span className="block text-xs text-sv-muted mt-1">Агент сможет запрашивать инструменты подключённых MCP-сервисов. Вызовы по-прежнему проходят существующую проверку и требуют подтверждения, когда это предусмотрено политикой. Включайте только для доверенных подключений.</span></span>
+                  <span><span className="font-medium flex items-center gap-2"><Plug size={16}/> Разрешить MCP и браузер</span><span className="block text-xs text-sv-muted mt-1">Агент сможет запрашивать инструменты подключённых MCP-сервисов и локального браузера, если Browser Worker настроен. Вызовы проходят существующую проверку; действия с последствиями требуют подтверждения.</span></span>
                 </label>
                 <div className="flex flex-wrap gap-2">
                   <button onClick={saveAgent} disabled={saving || !draft.name.trim()} className="inline-flex min-h-11 items-center gap-2 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm text-white"><Save size={16}/> {saving ? 'Сохранение…' : 'Сохранить агента'}</button>
@@ -442,7 +442,7 @@ export default function PersonalAgentsPage() {
             <div className="rounded-xl border border-dashed border-white/15 p-8 text-center space-y-4">
               <Bot className="w-12 h-12 mx-auto text-indigo-300"/>
               <h2 className="text-xl font-semibold">Создайте первого агента</h2>
-              <p className="text-sm text-sv-muted max-w-xl mx-auto">Задайте ему роль и инструкции, выберите модель, добавьте долговременные заметки и при необходимости разрешите доступ к подключённым MCP-инструментам.</p>
+              <p className="text-sm text-sv-muted max-w-xl mx-auto">Задайте ему роль и инструкции, выберите модель, добавьте долговременные заметки и при необходимости разрешите MCP и браузерные инструменты.</p>
               <button onClick={() => newAgent()} className="inline-flex items-center gap-2 min-h-11 px-4 rounded-lg bg-indigo-600 text-white"><Plus size={16}/> Создать агента</button>
             </div>
           )}
