@@ -4,6 +4,7 @@
 
 ### Added
 - Isolated local Browser Worker tools for personal agents: navigation, page snapshots, semantic click/fill, bounded waits and session cleanup.
+- Explicit durable memory in the main «Чат со Светланой»: save with «Запомни: …», review saved entries and delete them; selected memories are injected into later chat context.
 - Browser Worker runtime smoke verification in CI, including real Chromium startup, page navigation and rejection of loopback targets.
 
 ### Fixed
