@@ -87,6 +87,7 @@ const READ_ONLY = new Set([
   'crm_find_contacts', 'crm_stats',
   'biz_receivables', 'biz_tax_summary', 'biz_find_support', 'biz_analytics', 'biz_check_inn',
   'biz_free_slots', 'biz_agenda', 'biz_booking_reminders',
+  'browser_create_session', 'browser_navigate', 'browser_snapshot', 'browser_wait',
 ]);
 
 /**
