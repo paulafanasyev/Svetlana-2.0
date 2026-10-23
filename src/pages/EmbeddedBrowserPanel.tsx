@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ExternalLink, Globe, Loader2, RefreshCw, Send, X } from 'lucide-react';
+import { ExternalLink, Globe, Loader2, RefreshCw, Send } from 'lucide-react';
 import { browserWorkerClient, type BrowserObservation } from '../services/BrowserWorkerClient';
 
 interface Props {
