@@ -73,6 +73,14 @@ try {
   assert.match(navigated.data.observation.title, /Example Domain/i);
   assert.match(navigated.data.observation.url, /^https:\/\/example\.com\/?$/i);
 
+  const followed = await request(`/v1/sessions/${sessionId}/follow-link`, {
+    method: 'POST',
+    body: { name: 'More information...' },
+    timeoutMs: 60_000,
+  });
+  assert.equal(followed.status, 200, JSON.stringify(followed.data));
+  assert.match(followed.data.observation.url, /iana\.org\/domains\/example/i);
+
   const blocked = await request(`/v1/sessions/${sessionId}/navigate`, {
     method: 'POST',
     body: { url: `http://127.0.0.1:${port}/health` },
@@ -84,7 +92,7 @@ try {
   assert.equal(closed.status, 200);
   assert.equal(closed.data.closed, true);
   sessionId = undefined;
-  console.log('PASS: authenticated Chromium session, navigation, observation, loopback block, cleanup');
+  console.log('PASS: authenticated Chromium session, navigation, safe link following, loopback block, cleanup');
 } finally {
   if (sessionId) {
     try { await request(`/v1/sessions/${sessionId}`, { method: 'DELETE' }); } catch { /* best effort */ }
