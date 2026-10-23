@@ -172,7 +172,8 @@ export async function syncBoundWorkspace(): Promise<SyncResult> {
 }
 
 export async function clearLocalWorkspaceAndBinding(): Promise<void> {
+  // Do not destroy local data if signing out fails before the explicit cleanup can complete.
+  await signOutCloud();
   personalWorkspace.clearAll();
   clearWorkspaceOwnerBinding();
-  await signOutCloud();
 }
