@@ -8,6 +8,7 @@ import CloudSyncPanel from './CloudSyncPanel';
 import McpPanel from '../components/McpPanel';
 import { createWorkspaceId, personalWorkspace, parseExplicitMemoryCommand, type PersonalAgent, type WorkspaceMessage, type WorkspaceThread } from '../services/PersonalWorkspaceStore';
 import { mcpSystemPrompt, parseMcpActions, runMcpLoop, MCP_REJECTED_TEXT } from '../services/mcp/McpManager';
+import { suggestMemoryCandidates } from '../services/MemorySuggestions';
 
 const STARTERS = [
   { name: 'Исследователь', description: 'Ищет и сопоставляет сведения', instructions: 'Ты — исследователь. Разделяй подтверждённые факты, выводы и неизвестное. При наличии источников указывай их; не выдумывай ссылки. Отвечай на русском языке.' },
@@ -46,6 +47,7 @@ export default function PersonalAgentsPage() {
   const [threadId, setThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<WorkspaceMessage[]>([]);
   const [memories, setMemories] = useState(() => personalWorkspace.listMemories(selectedAgentId));
+  const [memorySuggestions, setMemorySuggestions] = useState<string[]>([]);
   const [memoryInput, setMemoryInput] = useState('');
   const [chatInput, setChatInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -66,6 +68,7 @@ export default function PersonalAgentsPage() {
   const refreshMemories = (agentId: string | null) => setMemories(personalWorkspace.listMemories(agentId));
 
   useEffect(() => {
+    setMemorySuggestions([]);
     if (!selectedAgentId) {
       setDraft(emptyDraft());
       setThreadId(null);
@@ -175,6 +178,20 @@ export default function PersonalAgentsPage() {
     } catch (e) { setError(safeError(e)); }
   };
 
+  const acceptMemorySuggestion = (suggestion: string) => {
+    try {
+      personalWorkspace.addMemory(selectedAgentId, suggestion, 'chat');
+      refreshMemories(selectedAgentId);
+      setMemorySuggestions(current => current.filter(item => item !== suggestion));
+      setNotice('Предложение сохранено в память после подтверждения.');
+      setError(null);
+    } catch (e) { setError(safeError(e)); }
+  };
+
+  const dismissMemorySuggestion = (suggestion: string) => {
+    setMemorySuggestions(current => current.filter(item => item !== suggestion));
+  };
+
   const exportAgent = () => {
     if (!selectedAgentId) return;
     try {
@@ -216,6 +233,7 @@ export default function PersonalAgentsPage() {
     try {
       const explicitMemory = parseExplicitMemoryCommand(text);
       if (explicitMemory) {
+        setMemorySuggestions([]);
         personalWorkspace.addMemory(selectedAgent.id, explicitMemory, 'user');
         refreshMemories(selectedAgent.id);
         const acknowledgement: WorkspaceMessage = {
@@ -230,6 +248,10 @@ export default function PersonalAgentsPage() {
         setNotice('Добавлена явная команда сохранения в память.');
         return;
       }
+      setMemorySuggestions(suggestMemoryCandidates(
+        text,
+        personalWorkspace.listMemories(selectedAgent.id).map(memory => memory.content),
+      ));
       const provider = selectedAgent.providerId ? providers.find(p => p.id === selectedAgent.providerId) : activeProvider;
       if (!provider) throw new Error('Для агента не выбрана доступная модель. Откройте «Модели ИИ» и настройте провайдера.');
       const mem = personalWorkspace.listMemories(selectedAgent.id).map(m => '- ' + m.content).join('\n');
@@ -384,7 +406,8 @@ export default function PersonalAgentsPage() {
               <div className="rounded-xl border border-white/10 bg-white/[0.025] p-4 sm:p-5">
                 <button onClick={() => setMemoryOpen(v => !v)} aria-expanded={memoryOpen} className="w-full text-left flex items-center justify-between gap-3"><span className="font-semibold flex items-center gap-2"><Brain size={18} className="text-purple-300"/> Память агента <span className="text-xs text-sv-muted">({memories.length})</span></span><span className="text-xs text-sv-muted">{memoryOpen ? 'Свернуть' : 'Развернуть'}</span></button>
                 {memoryOpen && <div className="mt-4 space-y-3">
-                  <p className="text-xs text-sv-muted">Эти заметки сохраняются отдельно от переписки и добавляются в контекст агента. Пока записи создаются вручную — автоматическое извлечение воспоминаний не включено.</p>
+                  <p className="text-xs text-sv-muted">Заметки добавляются в контекст агента отдельно от переписки. Подсказки из сообщений пользователя вычисляются локально; они не сохраняются, пока вы не нажмёте «Сохранить».</p>
+                  {memorySuggestions.length > 0 && <div className="space-y-2" aria-label="Предложения для памяти агента"><p className="text-xs font-medium text-purple-200">Возможно, стоит запомнить</p>{memorySuggestions.map(suggestion => <div key={suggestion} className="rounded-lg border border-purple-400/20 bg-purple-500/5 p-3 space-y-2"><p className="text-sm break-words">{suggestion}</p><div className="flex flex-wrap gap-2"><button type="button" onClick={() => acceptMemorySuggestion(suggestion)} className="min-h-10 px-3 rounded-lg bg-purple-600 text-white text-xs">Сохранить в память</button><button type="button" onClick={() => dismissMemorySuggestion(suggestion)} className="min-h-10 px-3 rounded-lg border border-white/10 text-xs">Не сохранять</button></div></div>)}</div>}
                   <div className="flex gap-2"><input value={memoryInput} onChange={e => setMemoryInput(e.target.value)} maxLength={2000} onKeyDown={e => e.key === 'Enter' && addMemory()} placeholder="Например: предпочитает краткие ответы и таблицы" className="min-w-0 flex-1 rounded-lg bg-black/10 border border-white/10 px-3 py-2.5 min-h-11 text-sm"/><button onClick={addMemory} disabled={!memoryInput.trim()} className="min-h-11 px-3 rounded-lg bg-purple-600 disabled:opacity-50 text-white" aria-label="Добавить запись памяти"><Plus size={18}/></button></div>
                   {memories.length === 0 ? <p className="text-xs text-sv-muted">Память пока пуста.</p> : <ul className="space-y-2">{memories.map(memory => <li key={memory.id} className="flex items-start gap-3 p-3 rounded-lg bg-white/5 border border-white/5"><FileText size={16} className="mt-0.5 shrink-0 text-purple-300"/><span className="flex-1 text-sm whitespace-pre-wrap break-words">{memory.content}<span className="block text-[11px] text-sv-muted mt-1">{new Date(memory.createdAt).toLocaleString()}</span></span><button onClick={() => { personalWorkspace.deleteMemory(memory.id); refreshMemories(selectedAgentId); }} className="min-w-11 min-h-11 flex items-center justify-center rounded-md hover:bg-white/10" aria-label="Удалить воспоминание"><Trash2 size={15}/></button></li>)}</ul>}
                 </div>}
@@ -423,7 +446,7 @@ export default function PersonalAgentsPage() {
           )}
         </section>
       </div>
-      <p className="text-xs text-sv-muted flex items-start gap-2"><AlertTriangle size={14} className="shrink-0 mt-0.5"/> Версия 1 хранит данные локально в одном профиле устройства. Удаление приложения/данных браузера может удалить историю. Для облачной синхронизации, межпользовательских ролей и автоматического извлечения памяти нужен отдельный серверный этап.</p>
+      <p className="text-xs text-sv-muted flex items-start gap-2"><AlertTriangle size={14} className="shrink-0 mt-0.5"/> Данные этого профиля хранятся локально; удаление приложения или данных браузера может удалить историю. Подсказки памяти — ограниченная локальная эвристика, а не смысловой анализ моделью. Каждая запись требует подтверждения. Облачная синхронизация работает только после настройки Supabase и переменных окружения.</p>
     </div>
   );
 }
