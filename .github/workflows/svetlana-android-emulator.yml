@@ -62,7 +62,10 @@ jobs:
           target: google_apis
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: bash android-hands/scripts/emulator-smoke.sh
+          script: |
+            bash android-hands/scripts/emulator-smoke.sh
+            cd android-hands
+            gradle connectedDebugAndroidTest --no-daemon
       - name: Verify screenshot and logcat evidence
         if: success()
         run: |
@@ -70,6 +73,16 @@ jobs:
           signature=$(od -An -tx1 -N8 smoke/screen.png | tr -d ' \n')
           test "$signature" = "89504e470d0a1a0a"
           test -s smoke/logcat.txt
+      - name: Upload instrumentation test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-browser-instrumentation-results
+          path: |
+            android-hands/app/build/reports/androidTests/connected/
+            android-hands/app/build/outputs/androidTest-results/connected/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload screenshot and logcat
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
