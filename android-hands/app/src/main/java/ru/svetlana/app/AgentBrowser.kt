@@ -66,7 +66,12 @@ class AgentBrowser(private val act: MainActivity, private val host: FrameLayout)
                 "browser_worker_status" -> done(true, JSONObject().put("ok", true).put("service", "android-webview-browser").put("sessions", sessions.size))
                 "browser_create_session" -> createSession(args.optString("agentId"), done)
                 "browser_navigate" -> navigate(args.optString("sessionId"), args.optString("url"), done)
-                "browser_snapshot" -> withSession(args.optString("sessionId"), done) { s -> observe(s, done) }
+                "browser_snapshot" -> withSession(args.optString("sessionId"), done) { s ->
+                    observe(s) { ok, observation ->
+                        if (ok) done(true, JSONObject().put("success", true).put("observation", observation))
+                        else done(false, observation)
+                    }
+                }
                 "browser_follow_link" -> followLink(args.optString("sessionId"), args.optString("name"), done)
                 "browser_click" -> click(args.optString("sessionId"), args.optString("role"), args.optString("name"), done)
                 "browser_fill" -> fill(args.optString("sessionId"), args.optString("role"), args.optString("name"), args.optString("value"), done)
