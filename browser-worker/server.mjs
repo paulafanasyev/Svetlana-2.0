@@ -41,17 +41,29 @@ function isPrivateAddress(address) {
   const family = net.isIP(address);
   if (family === 4) {
     const p = address.split('.').map(Number);
-    return p[0] === 0 || p[0] === 10 || p[0] === 127 || p[0] >= 224
-      || (p[0] === 169 && p[1] === 254)
-      || (p[0] === 172 && p[1] >= 16 && p[1] <= 31)
-      || (p[0] === 192 && p[1] === 168)
-      || (p[0] === 100 && p[1] >= 64 && p[1] <= 127)
-      || (p[0] === 198 && (p[1] === 18 || p[1] === 19));
+    const [a, b, c] = p;
+    // Deny non-global, special-purpose, documentation, benchmarking and multicast ranges.
+    return a === 0 || a === 10 || a === 127 || a >= 224
+      || (a === 100 && b >= 64 && b <= 127)
+      || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && b === 0)
+      || (a === 192 && b === 168)
+      || (a === 192 && b === 88 && c === 99)
+      || (a === 198 && (b === 18 || b === 19 || b === 51 && c === 100))
+      || (a === 203 && b === 0 && c === 113)
+      || a === 255;
   }
   if (family === 6) {
-    const v = address.toLowerCase();
-    return v === '::' || v === '::1' || v.startsWith('fc') || v.startsWith('fd')
-      || /^fe[89ab]/.test(v) || v.startsWith('::ffff:');
+    const v = address.toLowerCase().split('%')[0];
+    // Be conservative: only global-unicast 2000::/3 is allowed. This rejects
+    // unspecified, loopback, link-local, ULA, multicast, mapped and transition ranges.
+    const first = parseInt(v.split(':')[0] || '0', 16);
+    const bytes = v.split(':').join('');
+    const isGlobalUnicast = first >= 0x2000 && first <= 0x3fff;
+    const isDocumentation = /^2001:db8(?::|$)/i.test(v);
+    const isMappedOrCompatible = v.startsWith('::ffff:') || v.startsWith('::');
+    return !isGlobalUnicast || isDocumentation || isMappedOrCompatible;
   }
   return true;
 }
@@ -61,7 +73,10 @@ async function assertPublicUrl(input) {
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Only HTTP and HTTPS URLs are allowed');
   if (url.username || url.password) throw new Error('URLs containing credentials are not allowed');
   const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) {
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')
+    || host.endsWith('.lan') || host.endsWith('.home') || host.endsWith('.corp')
+    || host.endsWith('.test') || host.endsWith('.example') || host.endsWith('.invalid')
+    || host.endsWith('.home.arpa') || host.endsWith('.onion') || host.endsWith('.localdomain')) {
     throw new Error('Local and internal hostnames are blocked');
   }
   if (net.isIP(host)) {
