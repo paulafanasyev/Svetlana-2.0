@@ -7,6 +7,7 @@ on:
       - main
       - svetlana-2.0-core-development-0416c
       - feature/windows-hands-mcp-skeleton
+      - feat/embedded-agent-browser
   pull_request:
     paths:
       - "src-tauri/**"
