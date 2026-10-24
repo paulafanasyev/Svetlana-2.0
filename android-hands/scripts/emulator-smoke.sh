@@ -46,15 +46,28 @@ if [ -z "$REMOTE_APK" ]; then
   exit 1
 fi
 adb pull "$REMOTE_APK" "$OUT/installed.apk" >/dev/null
-if ! unzip -p "$OUT/installed.apk" classes.dex | strings | grep -q 'browser_create_session'; then
+
+# Ищем строки во всех DEX-файлах: реализации может быть больше одного classesN.dex.
+DEX_LIST=$(unzip -Z1 "$OUT/installed.apk" | grep -E '^classes([0-9]+)?\.dex$' || true)
+if [ -z "$DEX_LIST" ]; then
+  echo "::error::В установленном APK нет DEX-файлов"
+  exit 1
+fi
+DEX_TEXT=$(while IFS= read -r dex; do unzip -p "$OUT/installed.apk" "$dex" | strings; done <<< "$DEX_LIST")
+if ! grep -q 'browser_create_session' <<< "$DEX_TEXT"; then
   echo "::error::В установленном APK не найден код команды создания браузерной сессии"
   exit 1
 fi
-if ! unzip -p "$OUT/installed.apk" classes.dex | strings | grep -q 'android-webview-browser'; then
+if ! grep -q 'android-webview-browser' <<< "$DEX_TEXT"; then
   echo "::error::В установленном APK не найден Android WebView-адаптер браузера"
   exit 1
 fi
 
 adb shell dumpsys package "$PKG" | grep -E 'versionName=|versionCode=' > "$OUT/package-version.txt" || true
+if ! grep -q 'versionName=2.1.4' "$OUT/package-version.txt"; then
+  echo "::error::Установлена не ожидаемая версия 2.1.4"
+  cat "$OUT/package-version.txt"
+  exit 1
+fi
 
-echo "Дымовая проверка пройдена: приложение запущено, не упало, APK содержит адаптер браузера агента"
+echo "Дымовая проверка пройдена: приложение запущено, не упало, APK версии 2.1.4 содержит адаптер браузера агента"
