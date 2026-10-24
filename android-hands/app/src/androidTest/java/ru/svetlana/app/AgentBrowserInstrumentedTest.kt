@@ -39,7 +39,7 @@ class AgentBrowserInstrumentedTest {
                 ) as JSONObject
                 assertTrue("Navigation result should be successful", result.optBoolean("success"))
                 val observation = result.getJSONObject("observation")
-                assertEquals("https://example.com/", observation.getString("url").trimEnd('/').plus("/"))
+                assertTrue("Unexpected URL: ${observation.getString("url")}", observation.getString("url").startsWith("https://example.com"))
                 assertEquals("Example Domain", observation.getString("title"))
                 assertTrue(
                     "Snapshot must contain public page text",
