@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.1.4] - 2026-10-23
+
+### Added
+- Native Android in-app browser sessions using Android System WebView, controlled by browser tools from the personal-agent chat without a separate worker.
+- Windows installer runtime packaging for Node.js, Playwright, and headless Chromium, with automatic local worker startup/shutdown and a per-launch bearer token.
+- Browser runtime and Android emulator smoke checks are part of the release validation path.
+
+### Security
+- Keep browsed pages isolated from Svetlana's privileged application bridge; disable browser cookies and downloads in the Android agent browser.
+- Require explicit confirmation for consequential web actions and block password/payment credential entry.
+
+### Verification
+- CI builds, browser runtime smoke tests, and Android emulator smoke are required before publication.
+- Physical-device testing remains a separate acceptance check; CI does not claim it.
+
 ## [2.1.3] - 2026-10-23
 
 ### Added

@@ -7,6 +7,7 @@ on:
       - main
       - svetlana-2.0-core-development-0416c
       - feature/windows-hands-mcp-skeleton
+      - feat/embedded-agent-browser
   pull_request:
     paths:
       - "src-tauri/**"
@@ -56,6 +57,39 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+      # The released installer must contain its own Node runtime, Playwright dependencies and Chromium.
+      # This is prepared on the Windows runner and copied as Tauri resources; end users do not install Node.
+      - name: Prepare self-contained browser runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          npm install --prefix browser-worker --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw "Не удалось установить Browser Worker" }
+          $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:GITHUB_WORKSPACE "browser-worker/.browsers"
+          New-Item -ItemType Directory -Force $env:PLAYWRIGHT_BROWSERS_PATH | Out-Null
+          Push-Location browser-worker
+          try {
+            npx playwright install --only-shell chromium
+            if ($LASTEXITCODE -ne 0) { throw "Не удалось скачать Chromium для Browser Worker" }
+          } finally {
+            Pop-Location
+          }
+          $nodeExe = (Get-Command node.exe).Source
+          Copy-Item $nodeExe "browser-worker/node.exe" -Force
+          if (-not (Test-Path "browser-worker/node.exe")) { throw "Не удалось подготовить автономный Node runtime" }
+          if (-not (Test-Path "browser-worker/.browsers")) { throw "Chromium не был подготовлен" }
+          Write-Host "Bundled Node: $nodeExe"
+          Write-Host "Bundled Chromium directory: browser-worker/.browsers"
+          npm run --prefix browser-worker test
+          if ($LASTEXITCODE -ne 0) { throw "Browser Worker security tests failed" }
+          npm run --prefix browser-worker test:e2e
+          if ($LASTEXITCODE -ne 0) { throw "Browser Worker runtime smoke test failed" }
+          # Re-run the E2E test with the exact node.exe that will ship in the installer.
+          & ".\browser-worker\node.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "Bundled Node runtime is not executable" }
+          & ".\browser-worker\node.exe" ".\browser-worker\smoke.mjs"
+          if ($LASTEXITCODE -ne 0) { throw "Bundled Node + Playwright + Chromium smoke test failed" }
 
       - name: Cargo.lock
         id: lock
@@ -129,9 +163,10 @@ jobs:
   # Публикация в Releases (тег app-v<версия>, постоянное имя файла): на него ведёт «Скачать для Windows» на сайте.
   # Отдельная работа с правом записи: сама сборка и чужой код зависимостей с этим правом не запускаются.
   # Одна очередь svetlana-release на все ветки и оба приложения: в один тег никто не пишет одновременно.
+  # Final publication is intentionally gated by [publish-release] after device acceptance.
   release:
     needs: build-windows
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main') && contains(github.event.head_commit.message, '[publish-release]')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:

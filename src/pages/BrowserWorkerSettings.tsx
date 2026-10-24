@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { browserWorkerClient } from '../services/BrowserWorkerClient';
 
-export default function BrowserWorkerSettings() {
+export default function BrowserWorkerSettings({ onConfigChange }: { onConfigChange?: () => void }) {
   const [endpoint, setEndpoint] = useState('http://127.0.0.1:4178');
   const [token, setToken] = useState('');
   const [status, setStatus] = useState('');
@@ -10,6 +10,7 @@ export default function BrowserWorkerSettings() {
   const save = () => {
     try {
       browserWorkerClient.saveConfig(endpoint, token);
+      onConfigChange?.();
       setStatus('Настройки сохранены локально. Проверьте соединение.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Не удалось сохранить настройки.');
@@ -27,9 +28,14 @@ export default function BrowserWorkerSettings() {
   };
   const clear = () => {
     browserWorkerClient.clearConfig();
+    onConfigChange?.();
     setToken('');
     setStatus('Локальные настройки браузера удалены.');
   };
+
+  // Installed Android and Windows builds own their browser runtime; manual Worker settings
+  // are only relevant to the browser-based development build.
+  if (browserWorkerClient.usesNativeRuntime()) return null;
 
   return (
     <section className="glass-card rounded-xl p-5 space-y-4">

@@ -40,6 +40,15 @@ const browserSnapshot: Tool = {
   async verify(_p, r) { return r.success === true && typeof r.observation?.url === 'string'; },
   async isAvailable() { return browserWorkerClient.isConfigured(); },
 };
+const browserFollowLink: Tool = {
+  id: 'browser_follow_link', name: 'Follow browser link',
+  description: 'Переходит по безопасной навигационной ссылке с точным доступным именем. Ссылки, похожие на выход, оплату, отправку, удаление или подтверждение операции, блокируются; для намеренного действия используйте browser_click, который требует подтверждения.',
+  category: 'navigation', riskLevel: 'low',
+  inputSchema: { type: 'object', properties: { sessionId: sessionProp, name: { type: 'string', description: 'Точное доступное имя ссылки' } }, required: ['sessionId', 'name'] },
+  async execute(p) { try { return result(await browserWorkerClient.followLink(sessionId(p), p.name)); } catch (e) { return errorResult(e); } },
+  async verify(_p, r) { return r.success === true && typeof r.observation?.url === 'string'; },
+  async isAvailable() { return browserWorkerClient.isConfigured(); },
+};
 const browserClick: Tool = {
   id: 'browser_click', name: 'Click browser element',
   description: 'Нажимает один однозначно указанный элемент по семантической роли и точному имени. Для отправки, удаления, оплаты и других последствий требуется подтверждение.',
@@ -84,6 +93,6 @@ const browserCloseSession: Tool = {
   async execute(p) { try { return result(await browserWorkerClient.closeSession(sessionId(p))); } catch (e) { return errorResult(e); } },
   async isAvailable() { return browserWorkerClient.isConfigured(); },
 };
-export const browserTools: Tool[] = [browserCreateSession, browserNavigate, browserSnapshot, browserClick, browserFill, browserWait, browserCloseSession];
+export const browserTools: Tool[] = [browserCreateSession, browserNavigate, browserSnapshot, browserFollowLink, browserClick, browserFill, browserWait, browserCloseSession];
 export function registerBrowserTools(): void { browserTools.forEach((tool) => toolRegistry.registerTool(tool)); }
 registerBrowserTools();

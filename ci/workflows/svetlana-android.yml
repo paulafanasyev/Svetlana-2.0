@@ -116,11 +116,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Публикация в тот же релиз app-v<версия>, что и Windows: на него ведёт «Скачать APK» на сайте.
+  # Публикация в тот же релиз app-v<версия>, что и Windows: только отдельный commit с [publish-release] после приёмки устройства.
   # Версия из того же tauri.conf.json и одна очередь svetlana-release на все ветки: один тег, без гонки.
   release:
     needs: build
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main') && needs.build.outputs.signed == 'true'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/svetlana-2.0-core-development-0416c' || github.ref == 'refs/heads/main') && needs.build.outputs.signed == 'true' && contains(github.event.head_commit.message, '[publish-release]')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
