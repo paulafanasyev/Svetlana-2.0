@@ -64,8 +64,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
             bash android-hands/scripts/emulator-smoke.sh
-            cd android-hands
-            gradle connectedDebugAndroidTest --no-daemon
+            cd android-hands && gradle connectedDebugAndroidTest --no-daemon
       - name: Verify screenshot and logcat evidence
         if: success()
         run: |
