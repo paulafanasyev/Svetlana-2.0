@@ -609,7 +609,7 @@ class AgentBrowser(private val act: MainActivity, private val host: FrameLayout)
                 (a == 203 && b == 0 && c == 113) || a == 255)
         } else if (address is Inet6Address) {
             val a = bytes[0]; val b = bytes.getOrElse(1) { 0 }
-            val isGlobalUnicast = (a and 0xfe) == 0x20 // 2000::/3
+            val isGlobalUnicast = a in 0x20..0x3f // 2000::/3
             val isDocumentation = a == 0x20 && b == 0x01 &&
                 bytes.getOrElse(2) { 0 } == 0x0d && bytes.getOrElse(3) { 0 } == 0xb8
             val isMappedOrCompatible = bytes.take(10).all { it == 0 } &&
