@@ -1,6 +1,6 @@
 name: svetlana-android-emulator
-# Дымовая проверка на настоящем Android (эмулятор x86_64, API 34): APK ставится, запускается и не падает.
-# Скриншот и logcat — в артефакте emulator-smoke. Скрипт проверки: android-hands/scripts/emulator-smoke.sh.
+# Проверка Android (эмулятор x86_64, API 34): APK запускается, а инструмент браузера открывает example.com и возвращает DOM-текст.
+# Скриншот/logcat и отчёты instrumentation — в артефактах. Скрипт запуска: android-hands/scripts/emulator-smoke.sh.
 on:
   workflow_dispatch: {}
   push:
