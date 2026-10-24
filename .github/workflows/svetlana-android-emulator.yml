@@ -1,6 +1,7 @@
 name: svetlana-android-emulator
 # Проверка Android (эмулятор x86_64, API 34): APK запускается, а инструмент браузера открывает example.com и возвращает DOM-текст.
 # Скриншот/logcat и отчёты instrumentation — в артефактах. Скрипт запуска: android-hands/scripts/emulator-smoke.sh.
+# Release gate: emulator test must prove real WebView navigation and DOM text readback.
 on:
   workflow_dispatch: {}
   push:
