@@ -59,12 +59,12 @@ jobs:
         run: gradle testDebugUnitTest assembleDebug --no-daemon
       - name: Upload test report
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: android-unit-test-report
           path: android-hands/app/build/reports/tests/
           retention-days: 7
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: svetlana-hands-debug
           path: android-hands/app/build/outputs/apk/debug/*.apk
@@ -109,7 +109,7 @@ jobs:
         run: echo "::warning::Ключ подписи не задан в секретах, APK в Releases не публикуется (отладочная сборка остаётся только артефактом)."
       - name: Upload APK for Releases
         if: steps.sign.outputs.signed == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: svetlana-apk-release
           path: release-apk/Svetlana-2.0-Android.apk
