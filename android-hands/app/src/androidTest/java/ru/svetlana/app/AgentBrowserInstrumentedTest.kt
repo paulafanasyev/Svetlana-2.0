@@ -42,7 +42,7 @@ class AgentBrowserInstrumentedTest {
                 assertTrue("Unexpected URL: ${observation.getString("url")}", observation.getString("url").startsWith("https://example.com"))
                 assertEquals("Example Domain", observation.getString("title"))
                 assertTrue(
-                    "Snapshot must contain public page text",
+                    "Snapshot must contain public page text; observation=$observation",
                     observation.getString("text").contains("Example Domain")
                 )
             } finally {
