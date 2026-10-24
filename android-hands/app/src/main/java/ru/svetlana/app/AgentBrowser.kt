@@ -289,7 +289,7 @@ class AgentBrowser(private val act: MainActivity, private val host: FrameLayout)
                 return String(label).replace(/\s+/g,' ').trim().slice(0,240);
               };
               const aria=nodes.map(e=>{const r=roleOf(e),l=labelOf(e);return r&&l?(r+': '+l):'';}).filter(Boolean).join('\n').slice(0,24000);
-              return JSON.stringify({url:location.href,title:document.title||'',text:(document.body&&document.body.innerText||'').slice(0,12000),aria:aria,timestamp:Date.now()});
+              return JSON.stringify({url:location.href,title:document.title||'',text:(document.body&&(document.body.innerText||document.body.textContent)||'').replace(/\\s+/g,' ').trim().slice(0,12000),aria:aria,timestamp:Date.now()});
             })()
         """.trimIndent()
         session.view.evaluateJavascript(js) { raw ->
