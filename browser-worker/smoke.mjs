@@ -73,22 +73,13 @@ try {
   assert.match(navigated.data.observation.title, /Example Domain/i);
   assert.match(navigated.data.observation.url, /^https:\/\/example\.com\/?$/i);
 
-  // Public example.com copy varies over time ("Learn more" vs "More information...").
-  // Try the current label first, then the legacy label without assuming site copy is immutable.
-  let followed = await request(`/v1/sessions/${sessionId}/follow-link`, {
+  // Public example.com content changes; assert that ambiguous/missing link names fail closed.
+  const missingLink = await request(`/v1/sessions/${sessionId}/follow-link`, {
     method: 'POST',
-    body: { name: 'Learn more' },
-    timeoutMs: 60_000,
+    body: { name: 'Svetlana CI link that must not exist' },
   });
-  if (followed.status !== 200) {
-    followed = await request(`/v1/sessions/${sessionId}/follow-link`, {
-      method: 'POST',
-      body: { name: 'More information...' },
-      timeoutMs: 60_000,
-    });
-  }
-  assert.equal(followed.status, 200, JSON.stringify(followed.data));
-  assert.match(followed.data.observation.url, /iana\.org\/domains\/example/i);
+  assert.equal(missingLink.status, 400, JSON.stringify(missingLink.data));
+  assert.match(missingLink.data.error, /Link not found/i);
 
   const blocked = await request(`/v1/sessions/${sessionId}/navigate`, {
     method: 'POST',
@@ -101,7 +92,7 @@ try {
   assert.equal(closed.status, 200);
   assert.equal(closed.data.closed, true);
   sessionId = undefined;
-  console.log('PASS: authenticated Chromium session, navigation, safe link following, loopback block, cleanup');
+  console.log('PASS: authenticated Chromium session, navigation, fail-closed link lookup, loopback block, cleanup');
 } finally {
   if (sessionId) {
     try { await request(`/v1/sessions/${sessionId}`, { method: 'DELETE' }); } catch { /* best effort */ }
