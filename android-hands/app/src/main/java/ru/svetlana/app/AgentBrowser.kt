@@ -288,7 +288,8 @@ class AgentBrowser(private val act: MainActivity, private val host: FrameLayout)
                   e.innerText || e.value || e.getAttribute('name') || e.id || '';
                 return String(label).replace(/\s+/g,' ').trim().slice(0,240);
               };
-              const aria=nodes.map(e=>{const r=roleOf(e),l=labelOf(e);return r&&l?(r+': '+l):'';}).filter(Boolean).join('\n'              const body=document.body,root=document.documentElement;
+              const aria=nodes.map(e=>{const r=roleOf(e),l=labelOf(e);return r&&l?(r+': '+l):'';}).filter(Boolean).join('\n').slice(0,24000);
+              const body=document.body,root=document.documentElement;
               const candidates=[body&&body.innerText,body&&body.textContent,root&&root.innerText,root&&root.textContent];
               const pageText=candidates.find(v=>typeof v==='string'&&v.trim().length>0)||'';
               return JSON.stringify({url:location.href,title:document.title||'',text:String(pageText).replace(/\s+/g,' ').trim().slice(0,12000),aria:aria,timestamp:Date.now()});
