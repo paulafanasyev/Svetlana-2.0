@@ -260,7 +260,9 @@ class AgentBrowser(private val act: MainActivity, private val host: FrameLayout)
         action(session)
     }
 
-    private fun observe(session: Session, done: Done, attempt: Int = 0) {
+    private fun observe(session: Session, done: Done) = observeAttempt(session, 0, done)
+
+    private fun observeAttempt(session: Session, attempt: Int, done: Done) {
         val js = """
             (function(){
               const nodes=Array.from(document.querySelectorAll('a,button,input,textarea,select,[role],[tabindex]')).slice(0,500);
@@ -305,7 +307,7 @@ class AgentBrowser(private val act: MainActivity, private val host: FrameLayout)
                     (session.view.url?.startsWith("https://") == true || session.view.url?.startsWith("http://") == true)) {
                     // Some WebView providers report onPageFinished before page text is exposed.
                     // Retry briefly so the agent receives document content rather than an empty snapshot.
-                    main.postDelayed({ observe(session, done, attempt + 1) }, 300L)
+                    main.postDelayed({ observeAttempt(session, attempt + 1, done) }, 300L)
                     return@evaluateJavascript
                 }
                 parsed.put("url", parsed.optString("url", session.view.url ?: ""))
