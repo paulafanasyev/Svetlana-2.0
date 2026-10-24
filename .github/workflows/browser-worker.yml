@@ -9,6 +9,7 @@ on:
     branches:
       - main
       - svetlana-2.0-core-development-0416c
+      - feat/embedded-agent-browser
     paths:
       - "browser-worker/**"
       - ".github/workflows/browser-worker.yml"
