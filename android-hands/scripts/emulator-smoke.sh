@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Дымовая проверка на эмуляторе (svetlana-android-emulator.yml): ставим APK, запускаем, ждём 25 секунд
 # и проверяем, что приложение живо, не упало и открыло общий интерфейс (WebView с адресом приложения).
-# Скриншот и logcat сохраняются в smoke/ для артефакта.
+# Скриншот, logcat, UI dump и установленный APK сохраняются в smoke/ для артефакта.
+# Дополнительно проверяем, что Android APK действительно содержит адаптер браузера агента.
 set -euo pipefail
 
 PKG=ru.svetlana.app
@@ -38,4 +39,22 @@ if grep -q "Обновите Android System WebView" "$OUT/ui.xml" 2>/dev/null; 
   exit 1
 fi
 
-echo "Дымовая проверка пройдена: приложение запущено и работает"
+# Убедиться, что проверяемый установленный APK содержит нативный адаптер браузера агента.
+REMOTE_APK=$(adb shell pm path "$PKG" | head -n 1 | tr -d '\r' | sed 's/^package://')
+if [ -z "$REMOTE_APK" ]; then
+  echo "::error::Не удалось определить путь установленного APK"
+  exit 1
+fi
+adb pull "$REMOTE_APK" "$OUT/installed.apk" >/dev/null
+if ! unzip -p "$OUT/installed.apk" classes.dex | strings | grep -q 'browser_create_session'; then
+  echo "::error::В установленном APK не найден код команды создания браузерной сессии"
+  exit 1
+fi
+if ! unzip -p "$OUT/installed.apk" classes.dex | strings | grep -q 'android-webview-browser'; then
+  echo "::error::В установленном APK не найден Android WebView-адаптер браузера"
+  exit 1
+fi
+
+adb shell dumpsys package "$PKG" | grep -E 'versionName=|versionCode=' > "$OUT/package-version.txt" || true
+
+echo "Дымовая проверка пройдена: приложение запущено, не упало, APK содержит адаптер браузера агента"
