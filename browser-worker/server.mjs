@@ -5,6 +5,7 @@ import net from 'node:net';
 import { chromium } from 'playwright';
 import { isPotentiallyConsequentialLink } from './browser-policy.mjs';
 import { isPrivateAddress, isBlockedHost } from './network-policy.mjs';
+// Network policy is unit-tested separately; every top-level and subresource request is checked.
 
 const HOST = process.env.SVETLANA_BROWSER_HOST || '127.0.0.1';
 const PORT = Number(process.env.SVETLANA_BROWSER_PORT || 4178);
