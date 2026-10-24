@@ -3,7 +3,7 @@ name: CI
 on:
   workflow_dispatch:
   push:
-    branches: [ main, develop, 'svetlana-2.0-core-development-*' ]
+    branches: [ main, develop, 'svetlana-2.0-core-development-*', 'feat/embedded-agent-browser' ]
   pull_request:
     branches: [ main, develop, 'svetlana-2.0-core-development-*' ]
 
