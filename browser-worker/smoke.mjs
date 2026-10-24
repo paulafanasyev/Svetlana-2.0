@@ -73,11 +73,20 @@ try {
   assert.match(navigated.data.observation.title, /Example Domain/i);
   assert.match(navigated.data.observation.url, /^https:\/\/example\.com\/?$/i);
 
-  const followed = await request(`/v1/sessions/${sessionId}/follow-link`, {
+  // Public example.com copy varies over time ("Learn more" vs "More information...").
+  // Try the current label first, then the legacy label without assuming site copy is immutable.
+  let followed = await request(`/v1/sessions/${sessionId}/follow-link`, {
     method: 'POST',
-    body: { name: 'More information...' },
+    body: { name: 'Learn more' },
     timeoutMs: 60_000,
   });
+  if (followed.status !== 200) {
+    followed = await request(`/v1/sessions/${sessionId}/follow-link`, {
+      method: 'POST',
+      body: { name: 'More information...' },
+      timeoutMs: 60_000,
+    });
+  }
   assert.equal(followed.status, 200, JSON.stringify(followed.data));
   assert.match(followed.data.observation.url, /iana\.org\/domains\/example/i);
 
