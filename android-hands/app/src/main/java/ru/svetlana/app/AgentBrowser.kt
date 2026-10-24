@@ -260,7 +260,7 @@ class AgentBrowser(private val act: MainActivity, private val host: FrameLayout)
         action(session)
     }
 
-    private fun observe(session: Session, done: Done) {
+    private fun observe(session: Session, done: Done, attempt: Int = 0) {
         val js = """
             (function(){
               const nodes=Array.from(document.querySelectorAll('a,button,input,textarea,select,[role],[tabindex]')).slice(0,500);
@@ -288,8 +288,10 @@ class AgentBrowser(private val act: MainActivity, private val host: FrameLayout)
                   e.innerText || e.value || e.getAttribute('name') || e.id || '';
                 return String(label).replace(/\s+/g,' ').trim().slice(0,240);
               };
-              const aria=nodes.map(e=>{const r=roleOf(e),l=labelOf(e);return r&&l?(r+': '+l):'';}).filter(Boolean).join('\n').slice(0,24000);
-              return JSON.stringify({url:location.href,title:document.title||'',text:(document.body&&(document.body.innerText||document.body.textContent)||'').replace(/\s+/g,' ').trim().slice(0,12000),aria:aria,timestamp:Date.now()});
+              const aria=nodes.map(e=>{const r=roleOf(e),l=labelOf(e);return r&&l?(r+': '+l):'';}).filter(Boolean).join('\n'              const body=document.body,root=document.documentElement;
+              const candidates=[body&&body.innerText,body&&body.textContent,root&&root.innerText,root&&root.textContent];
+              const pageText=candidates.find(v=>typeof v==='string'&&v.trim().length>0)||'';
+              return JSON.stringify({url:location.href,title:document.title||'',text:String(pageText).replace(/\s+/g,' ').trim().slice(0,12000),aria:aria,timestamp:Date.now()});
             })()
         """.trimIndent()
         session.view.evaluateJavascript(js) { raw ->
@@ -298,6 +300,13 @@ class AgentBrowser(private val act: MainActivity, private val host: FrameLayout)
             if (parsed == null) {
                 done(false, "Не удалось прочитать содержимое страницы")
             } else {
+                if (parsed.optString("text").isBlank() && attempt < 3 &&
+                    (session.view.url?.startsWith("https://") == true || session.view.url?.startsWith("http://") == true)) {
+                    // Some WebView providers report onPageFinished before page text is exposed.
+                    // Retry briefly so the agent receives document content rather than an empty snapshot.
+                    main.postDelayed({ observe(session, done, attempt + 1) }, 300L)
+                    return@evaluateJavascript
+                }
                 parsed.put("url", parsed.optString("url", session.view.url ?: ""))
                     .put("title", parsed.optString("title", session.view.title ?: ""))
                     .put("timestamp", System.currentTimeMillis())
