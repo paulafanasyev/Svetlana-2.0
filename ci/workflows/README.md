@@ -11,7 +11,9 @@
 | `svetlana-android-emulator.yml` | запуск на эмуляторе Android: не падает, открывает интерфейс |
 | `svetlana-android-keygen.yml` | один раз вручную: создаёт ключ подписи Android в зашифрованном архиве (новый файл) |
 
-Релиз: каждый push в основную ветку обновляет релиз `app-v<версия>` файлами
+Релиз-кандидат: push в основную ветку собирает подписанный APK и установщик как Actions artifacts, но не публикует их автоматически.
+Финальная публикация выполняется только отдельным commit, сообщение которого содержит `[publish-release]`, после приёмки на реальном Android-устройстве.
+Этот commit должен затрагивать `.github/workflows/svetlana-android.yml`, чтобы запустить Android workflow. Публикация создаёт/обновляет `app-v<версия>` файлами
 `Svetlana-2.0-Windows-setup.exe` и `Svetlana-2.0-Android.apk` (на них ведут кнопки сайта). Новая версия —
 поднять `version` в `package.json` и `src-tauri/tauri.conf.json`.
 
