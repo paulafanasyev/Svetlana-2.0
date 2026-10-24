@@ -414,10 +414,21 @@ class AgentBrowser(private val act: MainActivity, private val host: FrameLayout)
             const matches=nodes.filter(e=>roleOf(e)===role&&labelOf(e)===name);
             if(matches.length!==1)return JSON.stringify({ok:false,error:matches.length?'Найдено несколько одинаковых элементов':'Элемент не найден'});
             const e=matches[0];if(e.disabled||e.getAttribute('aria-disabled')==='true')return JSON.stringify({ok:false,error:'Элемент отключён'});
-            let ancestor=e,context=[];
-            for(let i=0;ancestor&&i<5;i++,ancestor=ancestor.parentElement){context.push(labelOf(ancestor));}
-            const dangerous=/(delete|remove|purchase|checkout|pay|submit|send|transfer|confirm|subscribe|sign ?out|logout|erase|wipe|удал|оплат|покуп|купить|перевод|отправ|подтвер|подпис|списат|разреш|сброс)/i.test(context.join(' '));
-            if(dangerous&&!confirmed)return JSON.stringify({ok:false,needConfirm:true,context:context.filter(Boolean).join(' ← ').slice(0,160)});
+            let ancestor=e,context=[],metadata=[];
+            for(let i=0;ancestor&&i<6;i++,ancestor=ancestor.parentElement){
+              context.push(labelOf(ancestor));
+              metadata.push(ancestor.getAttribute('href')||'',ancestor.getAttribute('action')||'',
+                ancestor.getAttribute('formaction')||'',ancestor.getAttribute('name')||'',
+                ancestor.getAttribute('type')||'',ancestor.getAttribute('aria-label')||'',
+                ancestor.getAttribute('data-testid')||'');
+            }
+            const form=e.closest('form');
+            if(form)metadata.push(form.getAttribute('action')||'',form.getAttribute('method')||'',form.innerText||'');
+            const signals=context.concat(metadata).join(' ');
+            const dangerous=/(delete|remove|purchase|checkout|pay(?:ment)?|submit|send|transfer|confirm|subscribe|sign[ -]?out|logout|erase|wipe|approve|authorize|accept|agree|place order|complete order|save changes|unsubscribe|revoke|reset|удал|оплат|покуп|купить|перевод|отправ|подтвер|подпис|списат|разреш|соглас|принять|оформить|заказ|сохранить измен|отмен|сброс)/i.test(signals)
+              || (e.tagName==='INPUT'&&['submit','image'].includes((e.type||'').toLowerCase()))
+              || (e.tagName==='BUTTON'&&((e.type||'').toLowerCase()==='submit'||!!form));
+            if(dangerous&&!confirmed)return JSON.stringify({ok:false,needConfirm:true,context:context.filter(Boolean).join(' ← ').slice(0,240)});
             e.click();return JSON.stringify({ok:true});
           })()
         """.trimIndent()
@@ -586,13 +597,24 @@ class AgentBrowser(private val act: MainActivity, private val host: FrameLayout)
         if (address.isAnyLocalAddress || address.isLoopbackAddress || address.isLinkLocalAddress || address.isSiteLocalAddress || address.isMulticastAddress) return false
         val bytes = address.address.map { it.toInt() and 0xff }
         return if (address is Inet4Address) {
-            val a = bytes[0]; val b = bytes[1]
-            !(a == 0 || a >= 224 || (a == 169 && b == 254) || (a == 172 && b in 16..31) ||
-                (a == 192 && b == 168) || (a == 100 && b in 64..127) ||
-                (a == 198 && b in 18..19) || (a == 192 && b == 0))
+            val a = bytes[0]; val b = bytes[1]; val c = bytes[2]
+            // Deny non-global, special-purpose, documentation, benchmarking and multicast ranges.
+            !(a == 0 || a == 10 || a == 127 || a >= 224 ||
+                (a == 100 && b in 64..127) ||
+                (a == 169 && b == 254) ||
+                (a == 172 && b in 16..31) ||
+                (a == 192 && (b == 0 || b == 168)) ||
+                (a == 192 && b == 88 && c == 99) ||
+                (a == 198 && (b == 18 || b == 19 || b == 51 && c == 100)) ||
+                (a == 203 && b == 0 && c == 113) || a == 255)
         } else if (address is Inet6Address) {
             val a = bytes[0]; val b = bytes.getOrElse(1) { 0 }
-            !(a == 0xfc || a == 0xfd || (a == 0xfe && (b and 0xc0) == 0x80))
+            val isGlobalUnicast = (a and 0xfe) == 0x20 // 2000::/3
+            val isDocumentation = a == 0x20 && b == 0x01 &&
+                bytes.getOrElse(2) { 0 } == 0x0d && bytes.getOrElse(3) { 0 } == 0xb8
+            val isMappedOrCompatible = bytes.take(10).all { it == 0 } &&
+                (bytes.getOrElse(10) { 0 } == 0xff || bytes.getOrElse(10) { 0 } == 0)
+            isGlobalUnicast && !isDocumentation && !isMappedOrCompatible
         } else false
     }
 
