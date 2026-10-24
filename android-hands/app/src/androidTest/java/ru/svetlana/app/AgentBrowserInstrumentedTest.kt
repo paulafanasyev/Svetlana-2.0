@@ -42,8 +42,23 @@ class AgentBrowserInstrumentedTest {
                 assertTrue("Unexpected URL: ${observation.getString("url")}", observation.getString("url").startsWith("https://example.com"))
                 assertEquals("Example Domain", observation.getString("title"))
                 assertTrue(
-                    "Snapshot must contain public page body text; observation=$observation",
+                    "Navigation snapshot must contain public page body text; observation=$observation",
                     observation.getString("text").contains("This domain is for use in documentation examples")
+                )
+
+                // The chat panel calls browser_snapshot immediately after session creation;
+                // ensure the native adapter preserves the shared { success, observation } contract.
+                val snapshotResult = call(
+                    scenario,
+                    "browser_snapshot",
+                    JSONObject().put("sessionId", sessionId)
+                ) as JSONObject
+                assertTrue("Snapshot tool result must have success=true", snapshotResult.optBoolean("success"))
+                val snapshot = snapshotResult.getJSONObject("observation")
+                assertTrue("Snapshot tool must return a URL", snapshot.getString("url").startsWith("https://example.com"))
+                assertTrue(
+                    "Snapshot tool must return body text; snapshot=$snapshot",
+                    snapshot.getString("text").contains("This domain is for use in documentation examples")
                 )
             } finally {
                 call(scenario, "browser_close_session", JSONObject().put("sessionId", sessionId))
