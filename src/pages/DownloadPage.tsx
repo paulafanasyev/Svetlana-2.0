@@ -4,9 +4,13 @@
 import { Download, Smartphone, Monitor, ShieldCheck } from 'lucide-react';
 import { APP_VERSION } from '../version';
 
-const RELEASE = `https://github.com/paulafanasyev/Svetlana-2.0/releases/download/app-v${APP_VERSION}`;
+const RELEASE_TAG = `app-v${APP_VERSION}`;
+const RELEASE = `https://github.com/paulafanasyev/Svetlana-2.0/releases/download/${RELEASE_TAG}`;
+export const RELEASE_PAGE_URL = `https://github.com/paulafanasyev/Svetlana-2.0/releases/tag/${RELEASE_TAG}`;
 export const WINDOWS_SETUP_URL = `${RELEASE}/Svetlana-2.0-Windows-setup.exe`;
 export const ANDROID_APK_URL = `${RELEASE}/Svetlana-2.0-Android.apk`;
+export const ANDROID_CHECKSUMS_URL = `${RELEASE}/android-checksums.txt`;
+export const CHECKSUMS_URL = `${RELEASE}/checksums.txt`;
 /** Отдельное приложение-лаунчер и мост телефон↔ПК (вкладка «Телефон» в Windows). */
 export const ANDROID_RELEASE_URL = 'https://github.com/paulafanasyev/Svetlana-Home/releases/latest';
 
@@ -44,7 +48,15 @@ export default function DownloadPage() {
           </ol>
         </div>
       </div>
-      <p className="text-xs text-slate-500 flex items-center gap-2"><ShieldCheck className="w-4 h-4" />Файлы скачиваются напрямую из официального репозитория проекта на GitHub. SHA-256 — в файлах checksums в том же релизе.</p>
+      <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-2 text-sm text-slate-300">
+        <p className="flex items-center gap-2"><ShieldCheck className="w-4 h-4 shrink-0" />Файлы скачиваются напрямую из официального GitHub-релиза <strong className="text-white">app-v{APP_VERSION}</strong>.</p>
+        <div className="flex flex-wrap gap-x-4 gap-y-2">
+          <a className="underline underline-offset-4" href={RELEASE_PAGE_URL} target="_blank" rel="noreferrer">Открыть релиз на GitHub</a>
+          <a className="underline underline-offset-4" href={ANDROID_CHECKSUMS_URL} target="_blank" rel="noreferrer">SHA-256 Android</a>
+          <a className="underline underline-offset-4" href={CHECKSUMS_URL} target="_blank" rel="noreferrer">SHA-256 всех файлов</a>
+        </div>
+        <p className="text-xs text-slate-400">Windows-установщик сейчас не имеет цифровой подписи; Windows SmartScreen может показать предупреждение. Перед запуском можно сверить SHA-256 с файлом checksums.txt.</p>
+      </div>
     </div>
   );
 }
