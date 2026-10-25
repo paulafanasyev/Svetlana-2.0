@@ -153,13 +153,14 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
   // Микрофон включён: на аватаре пульсирует кольцо (озвучка показывается по isSpeaking).
   const [listening, setListening] = useState(false);
   const [activeProvider, setActiveProvider] = useState(aiGateway.getActiveProvider());
-  const { speak, stop, isSpeaking, voices, speechText } = useSpeech();
+  const { speak, stop, isSpeaking, voices, speechText, selectedVoiceName, setSelectedVoiceName, activeVoiceName } = useSpeech();
   const logRef = useRef<HTMLDivElement>(null);
   /** Человек внизу переписки (не читает старое): новые реплики прокручивают чат. */
   const atBottomRef = useRef(true);
   const servicesBtnRef = useRef<HTMLButtonElement>(null);
   const usable = activeProvider ?? null;
   const labels = voiceLabels(platform, voices.length);
+  const russianVoices = voices.filter(voice => voice.lang.toLowerCase().startsWith('ru'));
 
   // Каждый открытый чат — новый разговор для нативной части: разрешение на облако не переносится между чатами.
   useEffect(() => {
@@ -764,6 +765,29 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
                 <span className={`w-2 h-2 rounded-full ${labels.ok ? 'bg-emerald-400' : 'bg-yellow-400'}`} aria-hidden="true" />
                 <span className={`text-xs ${labels.ok ? 'text-emerald-400' : 'text-yellow-400'}`}>{labels.status}</span>
               </div>
+              {!android && russianVoices.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  <label htmlFor="svetlana-tts-voice" className="block text-xs text-sv-muted">Голос для Светланы</label>
+                  <select
+                    id="svetlana-tts-voice"
+                    data-testid="tts-voice-select"
+                    aria-label="Голос для Светланы"
+                    value={selectedVoiceName}
+                    onChange={event => setSelectedVoiceName(event.target.value)}
+                    className="w-full min-h-11 rounded-lg bg-slate-900 border border-white/10 px-2 text-xs text-sv-text"
+                  >
+                    <option value="">Автоматически — лучший русский женский голос</option>
+                    {russianVoices.map(voice => <option key={voice.name} value={voice.name}>{voice.name} ({voice.lang})</option>)}
+                  </select>
+                  <p data-testid="tts-active-voice" className="text-xs text-sv-muted">Сейчас: {activeVoiceName || 'русский голос не найден'}</p>
+                  <button
+                    type="button"
+                    onClick={() => speak('Здравствуйте! Я Светлана. Рада помочь вам. Давайте обсудим, что вам нужно.', undefined)}
+                    className="w-full min-h-11 rounded-lg bg-purple-500/15 border border-purple-400/30 px-3 py-2 text-xs text-purple-200 hover:bg-purple-500/25"
+                  >Прослушать выбранный голос</button>
+                </div>
+              )}
+              {android && <p className="mt-3 text-xs text-sv-muted">На Android используется лучший доступный русский женский голос из системного синтеза речи. Для улучшения качества откройте настройки телефона → Синтез речи → установите/выберите качественный русский голос.</p>}
             </div>
             <div className="p-4 rounded-lg bg-white/5 border border-white/10">
               <h4 className="text-sm font-medium text-yellow-400 mb-2">ИИ</h4>
