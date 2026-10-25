@@ -7,6 +7,7 @@ import { listenVerified, verifiedVoiceReady } from '../services/voice/VoiceGuard
 import { hasWakeWord, normalizeSpoken, pickRussianVoice } from '../services/voice/VoiceText';
 import { speakText, speakingNow, stopSpeaking, ttsAvailable } from '../services/voice/Tts';
 import { explainVoiceError } from '../services/AiErrors';
+import AnimatedAvatarFace from './AnimatedAvatarFace';
 import { isAndroidApp } from '../platform';
 
 type Emotion = 'neutral' | 'happy' | 'sad' | 'laughing' | 'crying' | 'surprised' | 'talking';
@@ -29,9 +30,11 @@ interface AvatarProps {
   talking?: boolean;
   /** Микрофон включён: пульсирующее кольцо. */
   listening?: boolean;
+  /** Текст текущей озвучки для синхронизации формы рта. */
+  speechText?: string;
 }
 
-export default function Avatar({ size = 'lg', interactive = false, emotion: externalEmotion, onEmotionChange, talking = false, listening = false }: AvatarProps) {
+export default function Avatar({ size = 'lg', interactive = false, emotion: externalEmotion, onEmotionChange, talking = false, listening = false, speechText = '' }: AvatarProps) {
   const [currentEmotion, setCurrentEmotion] = useState<Emotion>(externalEmotion || 'neutral');
   const isTalking = talking;
   const isListening = listening;
@@ -87,23 +90,13 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
         {...pressable}
       >
         {/* Single master identity with state overlays */}
-        <motion.img
+        <AnimatedAvatarFace
           src={MASTER_AVATAR}
-          alt="Светлана"
-          className={`w-full h-full object-cover transition-all duration-300 ${overlay.overlay || ''}`}
-          animate={pulse ? { scale: [1, 1.02, 1] } : {}}
-          transition={pulse ? { duration: 2, repeat: Infinity } : {}}
+          emotion={currentEmotion}
+          talking={isTalking}
+          speechText={speechText}
+          reducedMotion={still}
         />
-
-        {/* Talking overlay animation */}
-        {isTalking && (
-          <motion.div
-            data-testid="avatar-talking"
-            className="absolute bottom-0 left-0 right-0 h-1/3 bg-gradient-to-t from-indigo-500/20 to-transparent"
-            animate={still ? { opacity: 0.5 } : { opacity: [0.3, 0.6, 0.3] }}
-            transition={still ? { duration: 0 } : { duration: 0.5, repeat: Infinity }}
-          />
-        )}
 
         {/* Listening indicator */}
         {isListening && (
