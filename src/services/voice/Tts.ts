@@ -54,8 +54,9 @@ export function speakText(text: string, opts: { voice?: SpeechSynthesisVoice; on
   chunks.forEach((chunk, i) => {
     const u = new SpeechSynthesisUtterance(chunk);
     u.lang = 'ru-RU';
-    u.rate = 1;
-    u.pitch = 1.1;
+    // A slightly calmer rate and restrained pitch sound less synthetic in Russian.
+    u.rate = 0.96;
+    u.pitch = 1.04;
     if (voice) u.voice = voice;
     if (i === 0) u.onstart = () => opts.onStart?.();
     if (i === chunks.length - 1) u.onend = () => opts.onEnd?.();
