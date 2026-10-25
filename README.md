@@ -2,6 +2,15 @@
 
 AI-агент для управления Android устройствами через MCP (Model Context Protocol).
 
+## Скачать Svetlana 2.0 — версия 2.1.4
+
+- **Android APK:** [Скачать Svetlana-2.0-Android.apk](https://github.com/paulafanasyev/Svetlana-2.0/releases/download/app-v2.1.4/Svetlana-2.0-Android.apk)
+- **Windows:** [Скачать Svetlana-2.0-Windows-setup.exe](https://github.com/paulafanasyev/Svetlana-2.0/releases/download/app-v2.1.4/Svetlana-2.0-Windows-setup.exe)
+- **Страница релиза и все файлы:** [GitHub Releases — app-v2.1.4](https://github.com/paulafanasyev/Svetlana-2.0/releases/tag/app-v2.1.4)
+- **SHA-256:** [Android checksums](https://github.com/paulafanasyev/Svetlana-2.0/releases/download/app-v2.1.4/android-checksums.txt) · [Все checksums](https://github.com/paulafanasyev/Svetlana-2.0/releases/download/app-v2.1.4/checksums.txt)
+
+Сайт содержит вкладку «Скачать приложения» с прямыми ссылками на установщики из релиза. Установщик Windows не подписан цифровой подписью, поэтому SmartScreen может предупредить о запуске; перед установкой рекомендуется сверить SHA-256.
+
 ## 🎯 Возможности
 
 - **Управление приложениями**: запуск, закрытие, переключение
