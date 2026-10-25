@@ -4,7 +4,7 @@ import { SVETLANA_IDENTITY } from '../services/AvatarIdentity';
 import { Mic, MicOff } from 'lucide-react';
 import { listen, sttSupport, recordedRecognizer, type Listener, type ListenOptions } from '../services/voice/SpeechEngine';
 import { listenVerified, verifiedVoiceReady } from '../services/voice/VoiceGuard';
-import { hasWakeWord, normalizeSpoken, pickRussianVoice } from '../services/voice/VoiceText';
+import { hasWakeWord, normalizeSpoken, pickRussianVoice, speakable } from '../services/voice/VoiceText';
 import { speakText, speakingNow, stopSpeaking, ttsAvailable } from '../services/voice/Tts';
 import { explainVoiceError } from '../services/AiErrors';
 import AnimatedAvatarFace from './AnimatedAvatarFace';
@@ -306,7 +306,7 @@ export function useSpeech() {
 
   const speak = (text: string, voiceIndex?: number) => {
     const voice = voiceIndex !== undefined ? voices[voiceIndex] : pickRussianVoice(voices);
-    setSpeechText(text);
+    setSpeechText(speakable(text));
     speakText(text, {
       voice,
       onStart: () => setIsSpeaking(true),
