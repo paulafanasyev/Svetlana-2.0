@@ -116,7 +116,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Публикация в тот же релиз app-v<версия>, что и Windows: только отдельный commit с [publish-release] после приёмки устройства.
+  # Публикация в тот же релиз app-v<версия>, что и Windows: отдельный commit с [publish-release] после подтверждённой пользователем приёмки устройства.
   # Версия из того же tauri.conf.json и одна очередь svetlana-release на все ветки: один тег, без гонки.
   release:
     needs: build
