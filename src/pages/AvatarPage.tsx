@@ -153,7 +153,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
   // Микрофон включён: на аватаре пульсирует кольцо (озвучка показывается по isSpeaking).
   const [listening, setListening] = useState(false);
   const [activeProvider, setActiveProvider] = useState(aiGateway.getActiveProvider());
-  const { speak, stop, isSpeaking, voices } = useSpeech();
+  const { speak, stop, isSpeaking, voices, speechText } = useSpeech();
   const logRef = useRef<HTMLDivElement>(null);
   /** Человек внизу переписки (не читает старое): новые реплики прокручивают чат. */
   const atBottomRef = useRef(true);
@@ -712,7 +712,7 @@ export default function AvatarPage({ onConnectAi }: { onConnectAi?: () => void }
             animate={{ opacity: 1, scale: 1 }}
             className="glass-card rounded-2xl p-4 sm:p-8 flex flex-col items-center"
           >
-            <Avatar size={android ? 'lg' : 'xl'} emotion={emotion} interactive={true} onEmotionChange={setEmotion} talking={isSpeaking} listening={listening} />
+            <Avatar size={android ? 'lg' : 'xl'} emotion={emotion} interactive={true} onEmotionChange={setEmotion} talking={isSpeaking} listening={listening} speechText={speechText} />
 
             <div className="mt-12 hidden sm:flex flex-wrap justify-center gap-2" role="group" aria-label="Эмоция аватара">
               {emotionButtons.map(btn => (
