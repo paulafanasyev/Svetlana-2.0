@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { SVETLANA_IDENTITY, getAvatarStateOverlay, getAvatarStateFromEmotion } from '../services/AvatarIdentity';
+import { SVETLANA_IDENTITY } from '../services/AvatarIdentity';
 import { Mic, MicOff } from 'lucide-react';
 import { listen, sttSupport, recordedRecognizer, type Listener, type ListenOptions } from '../services/voice/SpeechEngine';
 import { listenVerified, verifiedVoiceReady } from '../services/voice/VoiceGuard';
@@ -41,8 +41,6 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
   const [showControls, setShowControls] = useState(false);
   // В системе включено «Уменьшить движение»: индикаторы стоят на месте, без пульсации.
   const still = useReducedMotion() ?? false;
-  const overlay = getAvatarStateOverlay(getAvatarStateFromEmotion(currentEmotion));
-  const pulse = !still && overlay.animation === 'pulse';
 
   useEffect(() => {
     if (externalEmotion) setCurrentEmotion(externalEmotion);
