@@ -8,10 +8,12 @@ const read = (p: string) => readFileSync(resolve(p), 'utf8');
 
 describe('avatar respects «reduce motion»', () => {
   const avatar = read('src/components/Avatar.tsx');
+  const face = read('src/components/AnimatedAvatarFace.tsx');
   it('no looping animations when the system asks for less motion', () => {
     expect(avatar).toContain('useReducedMotion');
-    expect(avatar).toContain('const pulse = !still && overlay.animation');
-    expect(avatar).toContain('animate={still ? { opacity: 0.5 } : { opacity: [0.3, 0.6, 0.3] }}');
+    expect(face).toContain('animate={reducedMotion ? {} : talking');
+    expect(face).toContain('if (reducedMotion)');
+    expect(face).toContain('transition={reducedMotion ? { duration: 0 }');
     expect(avatar).toContain('{isListening && !still && (');
   });
 });

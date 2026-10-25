@@ -118,9 +118,36 @@ export function chunkForSpeech(text: string, max = 180): string[] {
   return out.flatMap(c => (c.length <= max ? [c] : (c.match(new RegExp(`.{1,${max}}(\\s|$)`, 'g')) ?? [c]).map(x => x.trim())));
 }
 
-/** Лучший русский голос: женские голоса Microsoft/Google/Apple, иначе любой ru. */
+/**
+ * Prefer a natural Russian female voice when the device has one installed.
+ * "Neural/Natural/Online" variants rank above older/local voices; always fall back
+ * to any Russian system voice so speech continues on devices with limited voices.
+ */
 export function pickRussianVoice<T extends { lang: string; name: string }>(voices: T[]): T | undefined {
-  const ru = voices.filter(v => v.lang.toLowerCase().startsWith('ru'));
-  const preferred = /(svetlana|dariya|irina|milena|alena|алена|алёна|милена|ирина|светлана|female|жен)/i;
-  return ru.find(v => preferred.test(v.name)) ?? ru.find(v => /google/i.test(v.name)) ?? ru[0];
+  const ru = voices.filter(v => /^ru(?:-|$)/i.test(v.lang));
+  if (!ru.length) return undefined;
+
+  const score = (voice: T): number => {
+    const name = voice.name.toLowerCase();
+    let points = 0;
+
+    // Keep the preferred persona at the top, while allowing a neural variant
+    // of another supported female voice to outrank an older standard voice.
+    if (/svetlana|светлана/.test(name)) points += 100;
+    else if (/dariya|daria|дарья/.test(name)) points += 92;
+    else if (/masha|маш[а-я]|maria|мария/.test(name)) points += 87;
+    else if (/irina|ирина|alena|alyona|алена|алёна|milena|милена/.test(name)) points += 80;
+    else if (/\bruf\b|female|женск/.test(name)) points += 68;
+
+    if (/neural/.test(name)) points += 38;
+    else if (/natural/.test(name)) points += 34;
+    else if (/online/.test(name)) points += 28;
+    if (/microsoft/.test(name)) points += 7;
+    if (/google/.test(name)) points += 5;
+    if (/compact|robot|basic/.test(name)) points -= 12;
+    if (/^ru-ru/i.test(voice.lang)) points += 3;
+    return points;
+  };
+
+  return ru.slice().sort((a, b) => score(b) - score(a))[0];
 }

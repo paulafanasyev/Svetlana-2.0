@@ -6,6 +6,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.speech.tts.Voice
 import android.speech.tts.UtteranceProgressListener
 import java.util.Locale
 
@@ -48,6 +49,21 @@ class NativeVoice(private val act: MainActivity) : TextToSpeech.OnInitListener {
             val t = tts ?: return@post
             if (status != TextToSpeech.SUCCESS) return@post
             t.setLanguage(Locale("ru", "RU"))
+            // Prefer a high-quality Russian female voice already installed on the device.
+            // Voice names differ by TTS engine; if none is identifiable, keep Android's default.
+            val ruVoices = t.voices.orEmpty().filter { it.locale.language.equals("ru", ignoreCase = true) }
+            val femaleMarkers = listOf("svetlana", "dariya", "daria", "masha", "irina", "alena", "alyona", "milena", "ruf", "female")
+            val preferred = ruVoices
+                .filter { voice -> femaleMarkers.any { marker -> voice.name.lowercase(Locale.ROOT).contains(marker) } }
+                .maxByOrNull { voice ->
+                    (if (voice.quality >= Voice.QUALITY_HIGH) 30 else voice.quality) +
+                        (if (voice.locale.country.equals("RU", ignoreCase = true)) 5 else 0) +
+                        (if (voice.name.lowercase(Locale.ROOT).contains("network")) 1 else 0)
+                }
+            if (preferred != null) t.voice = preferred
+            // Avoid an overly bright, rushed tone; keep settings compatible with system TTS engines.
+            t.setPitch(1.04f)
+            t.setSpeechRate(0.96f)
             t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {}
                 override fun onDone(utteranceId: String?) = finish(utteranceId)

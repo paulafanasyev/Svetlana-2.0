@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { SVETLANA_IDENTITY, getAvatarStateOverlay, getAvatarStateFromEmotion } from '../services/AvatarIdentity';
+import { SVETLANA_IDENTITY } from '../services/AvatarIdentity';
 import { Mic, MicOff } from 'lucide-react';
 import { listen, sttSupport, recordedRecognizer, type Listener, type ListenOptions } from '../services/voice/SpeechEngine';
 import { listenVerified, verifiedVoiceReady } from '../services/voice/VoiceGuard';
-import { hasWakeWord, normalizeSpoken, pickRussianVoice } from '../services/voice/VoiceText';
+import { hasWakeWord, normalizeSpoken, pickRussianVoice, speakable } from '../services/voice/VoiceText';
 import { speakText, speakingNow, stopSpeaking, ttsAvailable } from '../services/voice/Tts';
 import { explainVoiceError } from '../services/AiErrors';
+import AnimatedAvatarFace from './AnimatedAvatarFace';
 import { isAndroidApp } from '../platform';
 
 type Emotion = 'neutral' | 'happy' | 'sad' | 'laughing' | 'crying' | 'surprised' | 'talking';
@@ -29,17 +30,17 @@ interface AvatarProps {
   talking?: boolean;
   /** Микрофон включён: пульсирующее кольцо. */
   listening?: boolean;
+  /** Текст текущей озвучки для синхронизации формы рта. */
+  speechText?: string;
 }
 
-export default function Avatar({ size = 'lg', interactive = false, emotion: externalEmotion, onEmotionChange, talking = false, listening = false }: AvatarProps) {
+export default function Avatar({ size = 'lg', interactive = false, emotion: externalEmotion, onEmotionChange, talking = false, listening = false, speechText = '' }: AvatarProps) {
   const [currentEmotion, setCurrentEmotion] = useState<Emotion>(externalEmotion || 'neutral');
   const isTalking = talking;
   const isListening = listening;
   const [showControls, setShowControls] = useState(false);
   // В системе включено «Уменьшить движение»: индикаторы стоят на месте, без пульсации.
   const still = useReducedMotion() ?? false;
-  const overlay = getAvatarStateOverlay(getAvatarStateFromEmotion(currentEmotion));
-  const pulse = !still && overlay.animation === 'pulse';
 
   useEffect(() => {
     if (externalEmotion) setCurrentEmotion(externalEmotion);
@@ -87,23 +88,13 @@ export default function Avatar({ size = 'lg', interactive = false, emotion: exte
         {...pressable}
       >
         {/* Single master identity with state overlays */}
-        <motion.img
+        <AnimatedAvatarFace
           src={MASTER_AVATAR}
-          alt="Светлана"
-          className={`w-full h-full object-cover transition-all duration-300 ${overlay.overlay || ''}`}
-          animate={pulse ? { scale: [1, 1.02, 1] } : {}}
-          transition={pulse ? { duration: 2, repeat: Infinity } : {}}
+          emotion={currentEmotion}
+          talking={isTalking}
+          speechText={speechText}
+          reducedMotion={still}
         />
-
-        {/* Talking overlay animation */}
-        {isTalking && (
-          <motion.div
-            data-testid="avatar-talking"
-            className="absolute bottom-0 left-0 right-0 h-1/3 bg-gradient-to-t from-indigo-500/20 to-transparent"
-            animate={still ? { opacity: 0.5 } : { opacity: [0.3, 0.6, 0.3] }}
-            transition={still ? { duration: 0 } : { duration: 0.5, repeat: Infinity }}
-          />
-        )}
 
         {/* Listening indicator */}
         {isListening && (
@@ -300,6 +291,10 @@ export function VoiceControl({ onCommand, onListeningChange }: { onCommand?: (co
 // Text-to-Speech
 export function useSpeech() {
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speechText, setSpeechText] = useState('');
+  const [selectedVoiceName, setSelectedVoiceNameState] = useState(() => {
+    try { return localStorage.getItem('svetlana_tts_voice') ?? ''; } catch { return ''; }
+  });
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   useEffect(() => {
@@ -312,15 +307,29 @@ export function useSpeech() {
     return () => synth.removeEventListener?.('voiceschanged', loadVoices);
   }, []);
 
+  const setSelectedVoiceName = (name: string) => {
+    setSelectedVoiceNameState(name);
+    try { localStorage.setItem('svetlana_tts_voice', name); } catch { /* privacy mode */ }
+  };
+
   const speak = (text: string, voiceIndex?: number) => {
-    const voice = voiceIndex !== undefined ? voices[voiceIndex] : pickRussianVoice(voices);
-    speakText(text, { voice, onStart: () => setIsSpeaking(true), onEnd: () => setIsSpeaking(false) });
+    const voice = voiceIndex !== undefined
+      ? voices[voiceIndex]
+      : voices.find(item => item.name === selectedVoiceName) ?? pickRussianVoice(voices);
+    setSpeechText(speakable(text));
+    speakText(text, {
+      voice,
+      onStart: () => setIsSpeaking(true),
+      onEnd: () => { setIsSpeaking(false); setSpeechText(''); },
+    });
   };
 
   const stop = () => {
     stopSpeaking();
     setIsSpeaking(false);
+    setSpeechText('');
   };
 
-  return { speak, stop, isSpeaking, voices };
+  const activeVoiceName = (voices.find(item => item.name === selectedVoiceName) ?? pickRussianVoice(voices))?.name ?? '';
+  return { speak, stop, isSpeaking, voices, speechText, selectedVoiceName, setSelectedVoiceName, activeVoiceName };
 }
