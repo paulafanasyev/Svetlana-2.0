@@ -291,6 +291,7 @@ export function VoiceControl({ onCommand, onListeningChange }: { onCommand?: (co
 // Text-to-Speech
 export function useSpeech() {
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speechText, setSpeechText] = useState('');
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   useEffect(() => {
@@ -305,13 +306,19 @@ export function useSpeech() {
 
   const speak = (text: string, voiceIndex?: number) => {
     const voice = voiceIndex !== undefined ? voices[voiceIndex] : pickRussianVoice(voices);
-    speakText(text, { voice, onStart: () => setIsSpeaking(true), onEnd: () => setIsSpeaking(false) });
+    setSpeechText(text);
+    speakText(text, {
+      voice,
+      onStart: () => setIsSpeaking(true),
+      onEnd: () => { setIsSpeaking(false); setSpeechText(''); },
+    });
   };
 
   const stop = () => {
     stopSpeaking();
     setIsSpeaking(false);
+    setSpeechText('');
   };
 
-  return { speak, stop, isSpeaking, voices };
+  return { speak, stop, isSpeaking, voices, speechText };
 }
