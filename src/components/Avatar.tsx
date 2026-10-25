@@ -292,6 +292,9 @@ export function VoiceControl({ onCommand, onListeningChange }: { onCommand?: (co
 export function useSpeech() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speechText, setSpeechText] = useState('');
+  const [selectedVoiceName, setSelectedVoiceNameState] = useState(() => {
+    try { return localStorage.getItem('svetlana_tts_voice') ?? ''; } catch { return ''; }
+  });
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   useEffect(() => {
@@ -304,8 +307,15 @@ export function useSpeech() {
     return () => synth.removeEventListener?.('voiceschanged', loadVoices);
   }, []);
 
+  const setSelectedVoiceName = (name: string) => {
+    setSelectedVoiceNameState(name);
+    try { localStorage.setItem('svetlana_tts_voice', name); } catch { /* privacy mode */ }
+  };
+
   const speak = (text: string, voiceIndex?: number) => {
-    const voice = voiceIndex !== undefined ? voices[voiceIndex] : pickRussianVoice(voices);
+    const voice = voiceIndex !== undefined
+      ? voices[voiceIndex]
+      : voices.find(item => item.name === selectedVoiceName) ?? pickRussianVoice(voices);
     setSpeechText(speakable(text));
     speakText(text, {
       voice,
@@ -320,5 +330,6 @@ export function useSpeech() {
     setSpeechText('');
   };
 
-  return { speak, stop, isSpeaking, voices, speechText };
+  const activeVoiceName = (voices.find(item => item.name === selectedVoiceName) ?? pickRussianVoice(voices))?.name ?? '';
+  return { speak, stop, isSpeaking, voices, speechText, selectedVoiceName, setSelectedVoiceName, activeVoiceName };
 }
