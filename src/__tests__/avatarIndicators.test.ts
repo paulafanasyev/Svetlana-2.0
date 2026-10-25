@@ -8,6 +8,7 @@ const read = (p: string) => readFileSync(resolve(p), 'utf8');
 
 describe('avatar shows when Svetlana listens and talks', () => {
   const avatar = read('src/components/Avatar.tsx');
+  const face = read('src/components/AnimatedAvatarFace.tsx');
   const page = read('src/pages/AvatarPage.tsx');
 
   it('indicators come from props, not from frozen state', () => {
@@ -15,7 +16,10 @@ describe('avatar shows when Svetlana listens and talks', () => {
     expect(avatar).not.toMatch(/const \[isListening\] = useState/);
     expect(avatar).toContain('talking = false, listening = false');
     expect(avatar).toContain('data-testid="avatar-listening"');
-    expect(avatar).toContain('data-testid="avatar-talking"');
+    expect(avatar).toContain('<AnimatedAvatarFace');
+    expect(avatar).toContain('talking={isTalking}');
+    expect(face).toContain('data-testid="animated-avatar-face"');
+    expect(face).toContain('data-testid="avatar-mouth"');
     expect(avatar).toContain('role="status" data-testid="avatar-state"');
   });
 
@@ -28,6 +32,7 @@ describe('avatar shows when Svetlana listens and talks', () => {
   it('chat page wires microphone and speech to the avatar', () => {
     expect(page).toContain('const [listening, setListening] = useState(false);');
     expect(page).toContain('talking={isSpeaking} listening={listening}');
+    expect(page).toContain('speechText={speechText}');
     expect(page).toContain('<VoiceControl onCommand={handleVoiceCommand} onListeningChange={setListening} />');
   });
 });
